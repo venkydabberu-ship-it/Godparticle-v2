@@ -44,9 +44,9 @@ export default function Analysis() {
       const parsed = parseNSEOptionChain(text);
       const count = Object.keys(parsed).length;
       if (!count) { setUploadMsg('No valid data found in CSV!'); return; }
-      const result = await uploadMarketData(indexName, expiry, csvDate, parsed, user.id);
+      const res = await uploadMarketData(indexName, expiry, csvDate, parsed, user.id);
       if (isAdmin) {
-        if (result.status === 'duplicate') {
+        if (res.status === 'duplicate') {
           setUploadMsg(`⚠️ Data already exists for ${indexName} | ${expiry} | ${csvDate} — Skipped!`);
         } else {
           setUploadMsg(`✅ Saved ${count} strikes for ${indexName} | ${expiry} | ${csvDate}`);
@@ -65,7 +65,7 @@ export default function Analysis() {
     if (!user || !profile) return;
     if (!strike) { setError('Enter a strike price!'); return; }
     if (!expiry) { setError('Enter expiry!'); return; }
-    if (profile.role !== 'premium' && profile.role !== 'admin' && (profile.credits ?? 0) < 2) {
+    if (profile.role !== 'premium' && profile.role !== 'admin' && profile.role !== 'pro' && (profile.credits ?? 0) < 2) {
       setError('Not enough credits! Buy more credits to continue.');
       return;
     }
@@ -96,7 +96,7 @@ export default function Analysis() {
         return;
       }
 
-      if (profile.role !== 'premium' && profile.role !== 'admin') {
+      if (profile.role !== 'premium' && profile.role !== 'admin' && profile.role !== 'pro') {
         await useCredits(user.id, 2);
         await refreshProfile();
       }
@@ -104,7 +104,7 @@ export default function Analysis() {
       const computed = computeGodParticle(data, parseFloat(strike), optType, expiry, indexName);
       await saveAnalysis(user.id, indexName, parseFloat(strike), optType, expiry, computed);
       setResult(computed);
-      setActiveTab(isAdmin ? 'raw' : 'story');
+      setActiveTab('raw');
       setStep('result');
     } catch (err: any) {
       setError(err.message || 'Analysis failed!');
@@ -115,8 +115,8 @@ export default function Analysis() {
 
   const adminTabs = ['raw','decomp','gp','story','matrix','ig'];
   const adminTabLabels = ['📊 Raw','🔀 Decomp','⚛ God Particle','📖 Story','🎯 Matrix','📸 Instagram'];
-  const customerTabs = ['story','matrix'];
-  const customerTabLabels = ['📖 Analysis','🎯 Trade Levels'];
+  const customerTabs = ['raw','story','matrix'];
+  const customerTabLabels = ['📊 Raw Data','📖 Analysis','🎯 Trade Levels'];
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-[#e8e8f0]">
@@ -131,7 +131,7 @@ export default function Analysis() {
         <div className="flex items-center gap-3">
           <div className="text-xs font-mono text-[#6b6b85]">
             Credits: <span className="text-[#f0c040] font-bold">
-              {profile?.role === 'premium' || profile?.role === 'admin' ? '∞' : profile?.credits ?? 0}
+              {profile?.role === 'premium' || profile?.role === 'admin' || profile?.role === 'pro' ? '∞' : profile?.credits ?? 0}
             </span>
           </div>
           <Link to="/dashboard" className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040]">
@@ -155,7 +155,7 @@ export default function Analysis() {
                     className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]">
                     <option value="NIFTY50">Nifty 50</option>
                     <option value="SENSEX">Sensex</option>
-                    {['premium','admin'].includes(profile?.role ?? '') && <>
+                    {['premium','admin','pro'].includes(profile?.role ?? '') && <>
                       <option value="BANKNIFTY">Bank Nifty</option>
                       <option value="FINNIFTY">Fin Nifty</option>
                       <option value="MIDCAPNIFTY">MidCap Nifty</option>
@@ -174,6 +174,8 @@ export default function Analysis() {
                     <option value="28-Apr-2026">28 Apr 2026</option>
                     <option value="05-May-2026">05 May 2026</option>
                     <option value="12-May-2026">12 May 2026</option>
+                    <option value="26-May-2026">26 May 2026</option>
+                    <option value="30-Jun-2026">30 Jun 2026</option>
                   </select>
                 </div>
                 <div>
@@ -236,6 +238,8 @@ export default function Analysis() {
                     <option value="28-Apr-2026">28 Apr 2026</option>
                     <option value="05-May-2026">05 May 2026</option>
                     <option value="12-May-2026">12 May 2026</option>
+                    <option value="26-May-2026">26 May 2026</option>
+                    <option value="30-Jun-2026">30 Jun 2026</option>
                   </select>
                 </div>
               </div>
@@ -280,17 +284,24 @@ export default function Analysis() {
                   <div className="text-xs font-mono"><span className="text-[#6b6b85] mr-2">OI-WAP</span>₹{result.oiwap.toFixed(1)}</div>
                   <div className="text-xs font-mono"><span className="text-[#6b6b85] mr-2">Last Close</span>₹{result.lc.toFixed(2)}</div>
                   <div className="text-xs font-mono"><span className="text-[#6b6b85] mr-2">Days to Expiry</span>{result.dte}d</div>
+                  <div className="text-xs font-mono"><span className="text-[#6b6b85] mr-2">OI Growth</span>{result.oiGrowthMultiple}x</div>
                 </div>
               </div>
             )}
 
-            {/* CUSTOMER — Simple Card with PCB only */}
+            {/* CUSTOMER — Themed Card with PCB */}
             {!isAdmin && (
               <div className="rounded-2xl p-6 mb-6 text-center relative overflow-hidden"
                 style={{
-                  background: result.optType === 'CE' ? 'linear-gradient(135deg, #0a1a0a, #0a0a0f)' : 'linear-gradient(135deg, #1a0a0a, #0a0a0f)',
-                  border: result.optType === 'CE' ? '1px solid rgba(57,217,138,0.3)' : '1px solid rgba(255,77,109,0.3)',
-                  boxShadow: result.optType === 'CE' ? '0 0 40px rgba(57,217,138,0.05)' : '0 0 40px rgba(255,77,109,0.05)'
+                  background: result.optType === 'CE'
+                    ? 'linear-gradient(135deg, #0a1a0a, #0a0a0f)'
+                    : 'linear-gradient(135deg, #1a0a0a, #0a0a0f)',
+                  border: result.optType === 'CE'
+                    ? '1px solid rgba(57,217,138,0.3)'
+                    : '1px solid rgba(255,77,109,0.3)',
+                  boxShadow: result.optType === 'CE'
+                    ? '0 0 40px rgba(57,217,138,0.05)'
+                    : '0 0 40px rgba(255,77,109,0.05)'
                 }}>
                 {/* Watermark */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
@@ -311,8 +322,12 @@ export default function Analysis() {
                   </div>
                   <div className="inline-block px-8 py-4 rounded-xl"
                     style={{
-                      background: result.optType === 'CE' ? 'rgba(57,217,138,0.1)' : 'rgba(255,77,109,0.1)',
-                      border: result.optType === 'CE' ? '1px solid rgba(57,217,138,0.3)' : '1px solid rgba(255,77,109,0.3)'
+                      background: result.optType === 'CE'
+                        ? 'rgba(57,217,138,0.1)'
+                        : 'rgba(255,77,109,0.1)',
+                      border: result.optType === 'CE'
+                        ? '1px solid rgba(57,217,138,0.3)'
+                        : '1px solid rgba(255,77,109,0.3)'
                     }}>
                     <div className="text-xs font-mono text-[#6b6b85] mb-1 uppercase tracking-widest">⚛ God Particle</div>
                     <div className="text-4xl font-black"
@@ -334,8 +349,8 @@ export default function Analysis() {
               ))}
             </div>
 
-            {/* RAW DATA — Admin only */}
-            {activeTab === 'raw' && isAdmin && (
+            {/* RAW DATA — All users */}
+            {activeTab === 'raw' && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-hidden overflow-x-auto">
                 <table className="w-full text-xs font-mono">
                   <thead><tr className="border-b border-[#1e1e2e]">
@@ -394,7 +409,6 @@ export default function Analysis() {
             {/* GOD PARTICLE VALIDATION — Admin only */}
             {activeTab === 'gp' && isAdmin && (
               <div>
-                {/* Insights */}
                 {result.insights && result.insights.length > 0 && (
                   <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 mb-4">
                     <div className="text-sm font-black mb-3 text-[#f0c040]">🔬 Critical Insights</div>
@@ -407,12 +421,10 @@ export default function Analysis() {
                     </div>
                   </div>
                 )}
-
-                {/* PCB Validation Table */}
                 <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-hidden overflow-x-auto">
                   <table className="w-full text-xs font-mono">
                     <thead><tr className="border-b border-[#1e1e2e]">
-                      {['Date','Close','vs PCB','Zone','Interpretation'].map(h => (
+                      {['Date','Close','vs PCB','Zone','Signal'].map(h => (
                         <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase tracking-widest font-normal">{h}</th>
                       ))}
                     </tr></thead>
@@ -429,7 +441,7 @@ export default function Analysis() {
                               {d.zone}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-[#6b6b85]">{d.signal}</td>
+                          <td className="px-4 py-3 text-[#6b6b85] text-xs">{d.signal}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -438,15 +450,22 @@ export default function Analysis() {
               </div>
             )}
 
-            {/* STORY */}
+            {/* STORY — All users */}
             {activeTab === 'story' && (
               <div className="rounded-xl p-6 text-sm leading-relaxed"
                 style={{
-                  background: isAdmin ? 'var(--surface)' : (result.optType === 'CE' ? 'linear-gradient(135deg, #0a1a0a, #0a0a0f)' : 'linear-gradient(135deg, #1a0a0a, #0a0a0f)'),
-                  border: isAdmin ? '1px solid #1e1e2e' : (result.optType === 'CE' ? '1px solid rgba(57,217,138,0.2)' : '1px solid rgba(255,77,109,0.2)')
+                  background: isAdmin
+                    ? '#111118'
+                    : result.optType === 'CE'
+                    ? 'linear-gradient(135deg, #0a1a0a, #0a0a0f)'
+                    : 'linear-gradient(135deg, #1a0a0a, #0a0a0f)',
+                  border: isAdmin
+                    ? '1px solid #1e1e2e'
+                    : result.optType === 'CE'
+                    ? '1px solid rgba(57,217,138,0.2)'
+                    : '1px solid rgba(255,77,109,0.2)'
                 }}>
                 {isAdmin ? (
-                  // Admin full story
                   <div className="space-y-4 font-mono text-xs">
                     {result.story.split('\n\n').map((para: string, i: number) => (
                       <div key={i}>
@@ -464,29 +483,30 @@ export default function Analysis() {
                     ))}
                   </div>
                 ) : (
-                  // Customer simplified story
                   <div className="space-y-3 font-mono text-xs">
                     <div className="text-center mb-4">
-                      <span className="text-xs tracking-widest"
+                      <span className="text-xs tracking-widest font-bold"
                         style={{color: result.optType === 'CE' ? '#39d98a' : '#ff4d6d'}}>
                         ⚛ MARKET ANALYSIS
                       </span>
                     </div>
                     {result.insights && result.insights.slice(0, 3).map((ins: string, i: number) => (
-                      <div key={i} className="text-[#e8e8f0] leading-relaxed border-l-2 pl-3"
+                      <div key={i} className="text-[#e8e8f0] leading-relaxed border-l-2 pl-3 py-1"
                         style={{borderColor: result.optType === 'CE' ? 'rgba(57,217,138,0.4)' : 'rgba(255,77,109,0.4)'}}>
                         {ins}
                       </div>
                     ))}
-                    <div className="mt-4 text-[10px] text-center text-[#6b6b85]">
-                      Not Financial Advice · God Particle ⚛
+                    <div className="mt-6 text-center">
+                      <div className="text-[10px] font-mono text-[#6b6b85]">
+                        Not Financial Advice · God Particle ⚛
+                      </div>
                     </div>
                   </div>
                 )}
               </div>
             )}
 
-            {/* MATRIX */}
+            {/* MATRIX — All users */}
             {activeTab === 'matrix' && (
               <div>
                 {result.dte <= 2 && isAdmin && (
@@ -496,7 +516,6 @@ export default function Analysis() {
                 )}
 
                 {isAdmin ? (
-                  // Admin full matrix
                   <div>
                     {[
                       { label: '📈 GAP UP', color: '#39d98a', border: 'border-[#39d98a]/20', bg: 'bg-[#39d98a]/10',
@@ -538,12 +557,18 @@ export default function Analysis() {
                     ))}
                   </div>
                 ) : (
-                  // CUSTOMER — Stunning dark card like the image
+                  // CUSTOMER CARD
                   <div className="relative rounded-2xl overflow-hidden p-8"
                     style={{
-                      background: result.optType === 'CE' ? 'linear-gradient(135deg, #0a0a0f 0%, #0a1a0a 50%, #0a0a0f 100%)' : 'linear-gradient(135deg, #0a0a0f 0%, #1a0a0a 50%, #0a0a0f 100%)',
-                      border: result.optType === 'CE' ? '1px solid rgba(57,217,138,0.3)' : '1px solid rgba(255,77,109,0.3)',
-                      boxShadow: result.optType === 'CE' ? '0 0 60px rgba(57,217,138,0.08)' : '0 0 60px rgba(255,77,109,0.08)'
+                      background: result.optType === 'CE'
+                        ? 'linear-gradient(135deg, #0a0a0f 0%, #0a1a0a 50%, #0a0a0f 100%)'
+                        : 'linear-gradient(135deg, #0a0a0f 0%, #1a0a0a 50%, #0a0a0f 100%)',
+                      border: result.optType === 'CE'
+                        ? '1px solid rgba(57,217,138,0.3)'
+                        : '1px solid rgba(255,77,109,0.3)',
+                      boxShadow: result.optType === 'CE'
+                        ? '0 0 60px rgba(57,217,138,0.08)'
+                        : '0 0 60px rgba(255,77,109,0.08)'
                     }}>
                     {/* Watermark */}
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
