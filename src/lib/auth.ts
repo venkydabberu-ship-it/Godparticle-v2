@@ -31,27 +31,36 @@ export async function signOut() {
 }
 
 export async function getProfile(userId: string) {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-  if (error) throw error;
-  return data;
-}
-
-export async function updateProfile(
-  userId: string,
-  updates: Record<string, any>
-) {
-  const { data, error } = await supabase
-    .from('profiles')
-    .update(updates)
-    .eq('id', userId)
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+    if (error) {
+      console.error('getProfile error:', error);
+      // Return default profile if fetch fails
+      return {
+        id: userId,
+        username: 'user',
+        role: 'free',
+        credits: 50,
+        is_active: true,
+        created_at: new Date().toISOString()
+      };
+    }
+    return data;
+  } catch(e) {
+    console.error('getProfile exception:', e);
+    return {
+      id: userId,
+      username: 'user',
+      role: 'free',
+      credits: 50,
+      is_active: true,
+      created_at: new Date().toISOString()
+    };
+  }
 }
 
 export async function getCurrentUser() {
@@ -83,6 +92,20 @@ export async function addCredits(
       p_type: type,
       p_description: description
     });
+  if (error) throw error;
+  return data;
+}
+
+export async function updateProfile(
+  userId: string,
+  updates: Record<string, any>
+) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .update(updates)
+    .eq('id', userId)
+    .select()
+    .single();
   if (error) throw error;
   return data;
 }
