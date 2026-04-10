@@ -28,44 +28,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function refreshProfile() {
-    if (user) {
-      try {
-        const p = await getProfile(user.id);
-        setProfile(p);
-      } catch (e) {
-        console.error('Error refreshing profile:', e);
-      }
+  async function fetchProfile(userId: string) {
+    try {
+      const p = await getProfile(userId);
+      setProfile(p as Profile);
+    } catch (e) {
+      console.error('fetchProfile error:', e);
+      // Set default profile so app doesn't hang
+      setProfile({
+        id: userId,
+        username: 'user',
+        role: 'free',
+        credits: 50,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        phone: null
+      } as Profile);
+    } finally {
+      setLoading(false);
     }
   }
 
+  async function refreshProfile() {
+    if (user) await fetchProfile(user.id);
+  }
+
   useEffect(() => {
+    // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        getProfile(session.user.id)
-          .then(setProfile)
-          .catch(console.error)
-          .finally(() => setLoading(false));
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+      if (currentUser) {
+        fetchProfile(currentUser.id);
       } else {
         setLoading(false);
       }
     });
 
+    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          try {
-            const p = await getProfile(session.user.id);
-            setProfile(p);
-          } catch (e) {
-            console.error(e);
-          }
+        const currentUser = session?.user ?? null;
+        setUser(currentUser);
+        if (currentUser) {
+          await fetchProfile(currentUser.id);
         } else {
           setProfile(null);
+          setLoading(false);
         }
-        setLoading(false);
       }
     );
 
