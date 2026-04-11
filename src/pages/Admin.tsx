@@ -434,9 +434,11 @@ export default function Admin() {
                     }`}>
                       <span>{r.index} | {r.expiry}</span>
                       <span>
-                        {r.status === 'saved' ? '✅ Saved' :
-                         r.status === 'duplicate' ? '⚠️ Already exists' :
-                         r.status === 'fetched' ? '✅ Fetched' : '❌ Error'}
+                        {r.status === 'saved' ? `✅ Saved (${r.strikes} strikes)` :
+ r.status === 'duplicate' ? '⚠️ Already exists' :
+ r.status === 'empty' ? '⏸ Market closed' :
+ r.status === 'fetched' ? '✅ Fetched' : `❌ ${r.error || 'Error'}`}
+
                       </span>
                     </div>
                   ))}
