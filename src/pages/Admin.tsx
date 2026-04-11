@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { runDailyAutoFetch } from '../lib/autofetch';
 
 export default function Admin() {
   const { user, profile } = useAuth();
@@ -18,6 +19,9 @@ export default function Admin() {
   const [stats, setStats] = useState<any>({});
   const [queryFilter, setQueryFilter] = useState('All');
   const [uploadingAnswer, setUploadingAnswer] = useState<string | null>(null);
+  const [fetchLoading, setFetchLoading] = useState(false);
+  const [fetchResults, setFetchResults] = useState<any[]>([]);
+  const [fetchDone, setFetchDone] = useState(false);
 
   useEffect(() => {
     if (profile?.role !== 'admin') return;
@@ -25,21 +29,18 @@ export default function Admin() {
   }, [profile]);
 
   async function loadAll() {
-    // Load users
     const { data: usersData } = await supabase
       .from('profiles')
       .select('*')
       .order('created_at', { ascending: false });
     if (usersData) setUsers(usersData);
 
-    // Load queries
     const { data: queriesData } = await supabase
       .from('customer_queries')
       .select('*')
       .order('created_at', { ascending: false });
     if (queriesData) setQueries(queriesData);
 
-    // Load settings
     const { data: settingsData } = await supabase
       .from('admin_settings')
       .select('*');
@@ -50,7 +51,6 @@ export default function Admin() {
       });
     }
 
-    // Stats
     const { data: analysesData } = await supabase
       .from('analyses')
       .select('id');
@@ -85,15 +85,12 @@ export default function Admin() {
     setTimeout(() => setSettingsMsg(''), 3000);
   }
 
-  // Download queries as PDF-ready text
   async function handleDownloadQueries() {
     const filtered = queryFilter === 'All' ? queries : queries.filter(q => q.status === queryFilter);
-    
     let content = 'GOD PARTICLE — CUSTOMER QUERIES REPORT\n';
     content += `Generated: ${new Date().toLocaleString('en-IN')}\n`;
     content += `Total Queries: ${filtered.length}\n`;
     content += '='.repeat(60) + '\n\n';
-
     filtered.forEach((q, i) => {
       content += `QUERY ${i + 1}\n`;
       content += `-`.repeat(40) + '\n';
@@ -104,8 +101,6 @@ export default function Admin() {
       content += `Status: ${q.status}\n`;
       content += `Query:\n${q.query_text}\n\n`;
     });
-
-    // Create downloadable file
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -115,36 +110,41 @@ export default function Admin() {
     URL.revokeObjectURL(url);
   }
 
-  // Upload answer PDF for a query
   async function handleUploadAnswer(queryId: string, file: File) {
     setUploadingAnswer(queryId);
     try {
-      // Upload to Supabase storage
       const fileName = `answers/${queryId}_${Date.now()}.pdf`;
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('query-answers')
         .upload(fileName, file, { contentType: 'application/pdf' });
-
       if (uploadError) throw uploadError;
-
-      // Get public URL
       const { data: urlData } = supabase.storage
         .from('query-answers')
         .getPublicUrl(fileName);
-
-      // Update query with answer URL and mark as answered
       await supabase.from('customer_queries')
-        .update({
-          status: 'Answered',
-          answer_pdf_url: urlData.publicUrl
-        })
+        .update({ status: 'Answered', answer_pdf_url: urlData.publicUrl })
         .eq('id', queryId);
-
       loadAll();
     } catch (err: any) {
       alert(`Upload failed: ${err.message}`);
     } finally {
       setUploadingAnswer(null);
+    }
+  }
+
+  async function handleAutoFetch() {
+    if (!user) return;
+    setFetchLoading(true);
+    setFetchDone(false);
+    setFetchResults([]);
+    try {
+      const res = await runDailyAutoFetch(user.id);
+      setFetchResults(res);
+      setFetchDone(true);
+    } catch (err: any) {
+      setFetchResults([{ status: 'error', error: err.message }]);
+    } finally {
+      setFetchLoading(false);
     }
   }
 
@@ -160,9 +160,8 @@ export default function Admin() {
     );
   }
 
-  const tabs = ['overview', 'users', 'queries', 'settings'];
-  const tabLabels = ['📊 Overview', '👥 Users', '💬 Queries', '⚙️ Settings'];
-
+  const tabs = ['overview', 'users', 'queries', 'autofetch', 'settings'];
+  const tabLabels = ['📊 Overview', '👥 Users', '💬 Queries', '🤖 Auto Fetch', '⚙️ Settings'];
   const filteredQueries = queryFilter === 'All' ? queries : queries.filter(q => q.status === queryFilter);
 
   return (
@@ -227,8 +226,6 @@ export default function Admin() {
               <span className="w-1 h-4 bg-[#f0c040] rounded block" />
               User Management
             </h2>
-
-            {/* Grant Credits */}
             <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 mb-6">
               <div className="text-sm font-black mb-4 text-[#f0c040]">⚡ Grant Credits to User</div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -247,17 +244,13 @@ export default function Admin() {
                   ⚡ Grant Credits
                 </button>
               </div>
-              {grantMsg && (
-                <div className="mt-2 text-xs font-mono text-[#39d98a]">{grantMsg}</div>
-              )}
+              {grantMsg && <div className="mt-2 text-xs font-mono text-[#39d98a]">{grantMsg}</div>}
             </div>
 
-            {/* Search */}
             <input type="text" value={searchUser} onChange={e => setSearchUser(e.target.value)}
               placeholder="Search by username..."
               className="w-full bg-[#111118] border border-[#1e1e2e] rounded-xl px-4 py-3 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040] mb-4" />
 
-            {/* Users table */}
             <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-hidden overflow-x-auto">
               <table className="w-full text-xs font-mono">
                 <thead><tr className="border-b border-[#1e1e2e]">
@@ -312,7 +305,6 @@ export default function Admin() {
               </button>
             </div>
 
-            {/* Filter */}
             <div className="flex gap-2 mb-4">
               {['All', 'Pending', 'Answered'].map(f => (
                 <button key={f} onClick={() => setQueryFilter(f)}
@@ -322,12 +314,9 @@ export default function Admin() {
               ))}
             </div>
 
-            {/* Queries list */}
             <div className="space-y-3">
               {filteredQueries.length === 0 ? (
-                <div className="text-center py-8 text-xs font-mono text-[#6b6b85]">
-                  No queries found
-                </div>
+                <div className="text-center py-8 text-xs font-mono text-[#6b6b85]">No queries found</div>
               ) : (
                 filteredQueries.map((q, i) => (
                   <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5">
@@ -337,9 +326,7 @@ export default function Admin() {
                         <span className={`text-[10px] font-black px-2 py-0.5 rounded ${q.plan === 'pro' ? 'bg-[#4d9fff]/15 text-[#4d9fff]' : q.plan === 'premium' ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#f0c040]/15 text-[#f0c040]'}`}>
                           {q.plan?.toUpperCase()}
                         </span>
-                        <span className="text-[10px] font-black bg-[#4d9fff]/15 text-[#4d9fff] px-2 py-0.5 rounded">
-                          {q.category}
-                        </span>
+                        <span className="text-[10px] font-black bg-[#4d9fff]/15 text-[#4d9fff] px-2 py-0.5 rounded">{q.category}</span>
                         <span className={`text-[10px] font-black px-2 py-0.5 rounded ${q.status === 'Answered' ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#f0c040]/15 text-[#f0c040]'}`}>
                           {q.status}
                         </span>
@@ -348,13 +335,10 @@ export default function Admin() {
                         {new Date(q.created_at).toLocaleDateString('en-IN')}
                       </span>
                     </div>
-
                     <div className="text-xs font-mono text-[#e8e8f0] mb-4 leading-relaxed bg-[#16161f] rounded-lg p-3">
                       {q.query_text}
                     </div>
-
                     <div className="flex items-center gap-3">
-                      {/* Upload Answer PDF */}
                       <label className={`cursor-pointer bg-[#39d98a] text-black font-black text-xs px-4 py-2 rounded-lg hover:opacity-90 transition-all ${uploadingAnswer === q.id ? 'opacity-50' : ''}`}>
                         <input type="file" accept=".pdf" className="hidden"
                           onChange={async (e) => {
@@ -364,7 +348,6 @@ export default function Admin() {
                           disabled={uploadingAnswer === q.id} />
                         {uploadingAnswer === q.id ? '⏳ Uploading...' : '📤 Upload Answer PDF'}
                       </label>
-
                       {q.answer_pdf_url && (
                         <a href={q.answer_pdf_url} target="_blank" rel="noreferrer"
                           className="text-xs font-bold text-[#4d9fff] hover:underline">
@@ -379,6 +362,90 @@ export default function Admin() {
           </div>
         )}
 
+        {/* AUTO FETCH */}
+        {activeTab === 'autofetch' && (
+          <div>
+            <h2 className="text-base font-black mb-2 flex items-center gap-2">
+              <span className="w-1 h-4 bg-[#39d98a] rounded block" />
+              🤖 Auto Fetch Market Data
+            </h2>
+            <p className="text-xs font-mono text-[#6b6b85] mb-6">
+              Automatically fetches Nifty 50 + Sensex option chain data for next 4 expiries from NSE/BSE API.
+              Run this daily after 3:30 PM market close.
+            </p>
+
+            {/* What gets fetched */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5">
+                <div className="text-sm font-black text-[#f0c040] mb-3">📈 Nifty 50 (NSE)</div>
+                <div className="space-y-2 text-xs font-mono text-[#6b6b85]">
+                  <div>✅ Next 4 weekly expiries (Tuesday)</div>
+                  <div>✅ All strikes — CE + PE data</div>
+                  <div>✅ LTP, OI, Volume, Change OI</div>
+                  <div>✅ Spot price + India VIX</div>
+                  <div>✅ Max Pain calculation</div>
+                  <div>✅ Auto Z2H snapshot on expiry day</div>
+                </div>
+              </div>
+              <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5">
+                <div className="text-sm font-black text-[#4d9fff] mb-3">📊 Sensex (BSE)</div>
+                <div className="space-y-2 text-xs font-mono text-[#6b6b85]">
+                  <div>✅ Next 4 weekly expiries (Thursday)</div>
+                  <div>✅ All strikes — CE + PE data</div>
+                  <div>✅ LTP, OI, Volume, Change OI</div>
+                  <div>✅ Spot price</div>
+                  <div>✅ Max Pain calculation</div>
+                  <div>✅ Auto Z2H snapshot on expiry day</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Schedule info */}
+            <div className="bg-[#f0c040]/5 border border-[#f0c040]/20 rounded-xl p-4 mb-6">
+              <div className="text-xs font-mono text-[#f0c040] font-bold mb-2">⏰ Recommended Schedule</div>
+              <div className="text-xs font-mono text-[#6b6b85] space-y-1">
+                <div>• Run daily after market close: 3:30 PM IST</div>
+                <div>• On expiry days (Tue/Thu): also captures Z2H snapshots automatically</div>
+                <div>• Duplicate data is automatically skipped</div>
+              </div>
+            </div>
+
+            {/* Fetch button */}
+            <button onClick={handleAutoFetch} disabled={fetchLoading}
+              className="w-full bg-[#39d98a] text-black font-black text-sm py-4 rounded-xl hover:opacity-90 transition-all disabled:opacity-40 mb-4">
+              {fetchLoading ? '⏳ Fetching data from NSE/BSE APIs...' : '🤖 Run Auto Fetch Now'}
+            </button>
+
+            {/* Results */}
+            {fetchDone && fetchResults.length > 0 && (
+              <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5">
+                <div className="text-xs font-mono text-[#39d98a] font-bold mb-3">
+                  ✅ Fetch complete! {fetchResults.filter(r => r.status === 'saved').length} new records saved.
+                  {fetchResults.filter(r => r.status === 'duplicate').length > 0 &&
+                    ` ${fetchResults.filter(r => r.status === 'duplicate').length} duplicates skipped.`
+                  }
+                </div>
+                <div className="space-y-2">
+                  {fetchResults.map((r, i) => (
+                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${
+                      r.status === 'saved' ? 'bg-[#39d98a]/10 text-[#39d98a]' :
+                      r.status === 'duplicate' ? 'bg-[#f0c040]/10 text-[#f0c040]' :
+                      'bg-[#ff4d6d]/10 text-[#ff4d6d]'
+                    }`}>
+                      <span>{r.index} | {r.expiry}</span>
+                      <span>
+                        {r.status === 'saved' ? '✅ Saved' :
+                         r.status === 'duplicate' ? '⚠️ Already exists' :
+                         r.status === 'fetched' ? '✅ Fetched' : '❌ Error'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* SETTINGS */}
         {activeTab === 'settings' && (
           <div>
@@ -386,7 +453,6 @@ export default function Admin() {
               <span className="w-1 h-4 bg-[#f0c040] rounded block" />
               Platform Settings
             </h2>
-
             <div className="space-y-4">
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5">
                 <div className="text-sm font-black mb-4 text-[#f0c040]">🌐 Landing Page Settings</div>
@@ -399,28 +465,18 @@ export default function Admin() {
                       onChange={e => setSubscriberCount(e.target.value)}
                       placeholder="e.g. 2600+"
                       className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
-                    <div className="text-[10px] font-mono text-[#6b6b85] mt-1">
-                      This number is shown publicly on the landing page
-                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">
-                      Announcement Banner (shown on dashboard)
+                      Announcement Banner
                     </label>
                     <input type="text" value={announcement}
                       onChange={e => setAnnouncement(e.target.value)}
                       placeholder="Leave empty to hide banner..."
                       className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
-                    <div className="text-[10px] font-mono text-[#6b6b85] mt-1">
-                      Shown to all users on their dashboard. Leave empty to hide.
-                    </div>
                   </div>
                 </div>
-
-                {settingsMsg && (
-                  <div className="mt-3 text-xs font-mono text-[#39d98a]">{settingsMsg}</div>
-                )}
-
+                {settingsMsg && <div className="mt-3 text-xs font-mono text-[#39d98a]">{settingsMsg}</div>}
                 <button onClick={handleSaveSettings}
                   className="mt-4 bg-[#f0c040] text-black font-black text-xs px-6 py-2.5 rounded-xl hover:bg-[#ffd060] transition-all">
                   💾 Save Settings
