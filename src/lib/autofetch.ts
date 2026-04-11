@@ -1,5 +1,8 @@
 import { supabase } from './supabase';
 
+const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1za25yeWRpdHpnbWlhd3J4Y2VhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQyMDE2MDAsImV4cCI6MjA1OTc3NzYwMH0.Ry7DvnKHJaI7aN4_sRXXRUFDPYQiM6OGJXlB7OZUUCI';
+const FUNCTION_URL = 'https://msknryditzgmiawrxcea.supabase.co/functions/v1/fetch-nse-data';
+
 // ── CALL EDGE FUNCTION ──
 async function callEdge(type: string, symbol?: string, expiry?: string) {
   const { data, error } = await supabase.functions.invoke('fetch-nse-data', {
@@ -79,27 +82,19 @@ async function saveZ2HSnapshot(
   } catch {}
 }
 
-// ── MAIN AUTO FETCH — Single edge function call does everything ──
+// ── MAIN AUTO FETCH ──
 export async function runDailyAutoFetch(adminUserId: string) {
   try {
-    // Get session token for auth
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token || '';
-
-    // Call edge function directly with fetch() — no SDK timeout limit!
-    const response = await fetch(
-      'https://msknryditzgmiawrxcea.supabase.co/functions/v1/fetch-nse-data',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1za25yeWRpdHpnbWlhd3J4Y2VhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQyMDE2MDAsImV4cCI6MjA1OTc3NzYwMH0.Ry7DvnKHJaI7aN4_sRXXRUFDPYQiM6OGJXlB7OZUUCI',
-        },
-        body: JSON.stringify({ type: 'full_auto_fetch' }),
-        signal: AbortSignal.timeout(300000) // 5 min timeout
-      }
-    );
+    const response = await fetch(FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${ANON_KEY}`,
+        'apikey': ANON_KEY,
+      },
+      body: JSON.stringify({ type: 'full_auto_fetch' }),
+      signal: AbortSignal.timeout(300000)
+    });
 
     if (!response.ok) {
       const err = await response.text();
@@ -160,6 +155,7 @@ export async function autoFetchStockOptions(
   }
   return strikes;
 }
+
 
 
 
