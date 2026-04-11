@@ -1,18 +1,20 @@
 import { supabase } from './supabase';
 
-// ── NSE HEADERS (required to avoid 403) ──
-const NSE_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-  'Accept': '*/*',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Referer': 'https://www.nseindia.com/option-chain',
-};
+// ── CALL EDGE FUNCTION ──
+async function callNSE(type: string, symbol?: string, expiry?: string) {
+  const { data, error } = await supabase.functions.invoke('fetch-nse-data', {
+    body: { type, symbol, expiry }
+  });
+  if (error) throw new Error(`Edge function error: ${error.message}`);
+  if (!data?.success) throw new Error(data?.error || 'Fetch failed');
+  return data.data;
+}
 
 // ── GET NEXT 4 EXPIRY DATES ──
 export function getNext4Expiries(index: 'NIFTY' | 'SENSEX'): string[] {
   const dates: string[] = [];
   const now = new Date();
-  const targetDay = index === 'SENSEX' ? 4 : 2; // Thu=4, Tue=2
+  const targetDay = index === 'SENSEX' ? 4 : 2;
   let count = 0;
   for (let i = 0; i <= 35 && count < 4; i++) {
     const d = new Date(now);
@@ -25,69 +27,14 @@ export function getNext4Expiries(index: 'NIFTY' | 'SENSEX'): string[] {
   return dates;
 }
 
-// ── FORMAT EXPIRY FOR NSE API ──
+// ── FORMAT EXPIRY FOR NSE ──
 function formatExpiryForNSE(dateStr: string): string {
   const d = new Date(dateStr);
   const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
   return `${String(d.getDate()).padStart(2,'0')}${months[d.getMonth()]}${d.getFullYear()}`;
 }
 
-// ── FETCH NIFTY OPTION CHAIN ──
-export async function fetchNiftyOptionChain(expiry: string) {
-  try {
-    const url = `https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY`;
-    const response = await fetch(url, { headers: NSE_HEADERS });
-    if (!response.ok) throw new Error(`NSE API error: ${response.status}`);
-    const data = await response.json();
-
-    const expiryFormatted = formatExpiryForNSE(expiry);
-    const records = data.records?.data?.filter(
-      (r: any) => r.expiryDate === expiryFormatted
-    ) || [];
-
-    const spotPrice = data.records?.underlyingValue || 0;
-    return { records, spotPrice, expiry };
-  } catch (err) {
-    console.error('fetchNiftyOptionChain error:', err);
-    return null;
-  }
-}
-
-// ── FETCH SENSEX OPTION CHAIN ──
-export async function fetchSensexOptionChain(expiry: string) {
-  try {
-    const expiryFormatted = formatExpiryForNSE(expiry);
-    const url = `https://api.bseindia.com/BseIndiaAPI/api/optionChain/w?productid=BSXOPT&scripcd=SENSEX&type=C&expiry=${expiryFormatted}`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-        'Referer': 'https://www.bseindia.com/',
-        'Origin': 'https://www.bseindia.com'
-      }
-    });
-    if (!response.ok) throw new Error(`BSE API error: ${response.status}`);
-    const data = await response.json();
-    return { records: data, expiry };
-  } catch (err) {
-    console.error('fetchSensexOptionChain error:', err);
-    return null;
-  }
-}
-
-// ── FETCH VIX ──
-export async function fetchVIX(): Promise<number> {
-  try {
-    const url = 'https://www.nseindia.com/api/allIndices';
-    const response = await fetch(url, { headers: NSE_HEADERS });
-    const data = await response.json();
-    const vix = data.data?.find((d: any) => d.index === 'INDIA VIX');
-    return vix?.last || 0;
-  } catch {
-    return 0;
-  }
-}
-
-// ── PARSE OPTION CHAIN INTO STRIKE DATA ──
+// ── PARSE OPTION CHAIN ──
 export function parseOptionChain(records: any[]): Record<string, any> {
   const strikes: Record<string, any> = {};
   records.forEach((r: any) => {
@@ -111,30 +58,22 @@ export function parseOptionChain(records: any[]): Record<string, any> {
 export function calculateMaxPain(records: any[]): number {
   if (!records.length) return 0;
   const strikes = [...new Set(records.map((r: any) => r.strikePrice))].sort((a, b) => a - b);
-
   let minPain = Infinity;
   let maxPainStrike = strikes[0];
-
   strikes.forEach(testStrike => {
     let totalPain = 0;
     records.forEach(r => {
-      if (r.CE && testStrike > r.strikePrice) {
+      if (r.CE && testStrike > r.strikePrice)
         totalPain += (testStrike - r.strikePrice) * (r.CE.openInterest || 0);
-      }
-      if (r.PE && testStrike < r.strikePrice) {
+      if (r.PE && testStrike < r.strikePrice)
         totalPain += (r.strikePrice - testStrike) * (r.PE.openInterest || 0);
-      }
     });
-    if (totalPain < minPain) {
-      minPain = totalPain;
-      maxPainStrike = testStrike;
-    }
+    if (totalPain < minPain) { minPain = totalPain; maxPainStrike = testStrike; }
   });
-
   return maxPainStrike;
 }
 
-// ── SAVE MARKET DATA TO SUPABASE ──
+// ── SAVE MARKET DATA ──
 export async function saveMarketDataAuto(
   indexName: string,
   expiry: string,
@@ -142,7 +81,6 @@ export async function saveMarketDataAuto(
   strikeData: Record<string, any>
 ) {
   try {
-    // Check duplicate
     const { data: existing } = await supabase
       .from('market_data')
       .select('id')
@@ -152,7 +90,6 @@ export async function saveMarketDataAuto(
       .limit(1);
 
     if (existing && existing.length > 0) {
-      console.log(`Data already exists for ${indexName} | ${expiry} | ${tradeDate}`);
       return { status: 'duplicate' };
     }
 
@@ -195,67 +132,175 @@ export async function saveZ2HSnapshot(
     });
     return { status: 'saved' };
   } catch (err) {
-    console.error('saveZ2HSnapshot error:', err);
     return { status: 'error' };
   }
 }
 
-// ── MAIN AUTO FETCH FUNCTION ──
-// Call this daily after market close (3:30 PM IST)
+// ── FETCH NIFTY OPTION CHAIN ──
+export async function fetchNiftyOptionChain() {
+  const data = await callNSE('nifty_chain');
+  const records = data?.records?.data || [];
+  const spotPrice = data?.records?.underlyingValue || 0;
+  return { records, spotPrice };
+}
+
+// ── FETCH SENSEX OPTION CHAIN ──
+export async function fetchSensexOptionChain(expiry: string) {
+  const expiryFormatted = formatExpiryForNSE(expiry);
+  const data = await callNSE('sensex_chain', undefined, expiryFormatted);
+  return data;
+}
+
+// ── FETCH STOCK OPTION CHAIN ──
+export async function fetchStockOptionChain(symbol: string) {
+  const data = await callNSE('stock_chain', symbol);
+  const records = data?.records?.data || [];
+  const spotPrice = data?.records?.underlyingValue || 0;
+  return { records, spotPrice };
+}
+
+// ── FETCH STOCK PRICE DATA ──
+export async function fetchStockPriceData(symbol: string) {
+  const data = await callNSE('stock_price', symbol);
+  return data?.data || [];
+}
+
+// ── FETCH VIX ──
+export async function fetchVIX(): Promise<number> {
+  try {
+    const data = await callNSE('vix');
+    return data?.vix || 0;
+  } catch {
+    return 0;
+  }
+}
+
+// ── FETCH BANKNIFTY ──
+export async function fetchBankNiftyOptionChain() {
+  const data = await callNSE('banknifty_chain');
+  const records = data?.records?.data || [];
+  const spotPrice = data?.records?.underlyingValue || 0;
+  return { records, spotPrice };
+}
+
+// ── MAIN AUTO FETCH ──
 export async function runDailyAutoFetch(adminUserId: string) {
   const results: any[] = [];
   const today = new Date().toISOString().split('T')[0];
 
   console.log(`🚀 Starting auto-fetch for ${today}`);
 
-  // Fetch Nifty 50 — next 4 expiries
-  const niftyExpiries = getNext4Expiries('NIFTY');
-  for (const expiry of niftyExpiries) {
-    try {
-      console.log(`Fetching NIFTY | ${expiry}...`);
-      const chainData = await fetchNiftyOptionChain(expiry);
-      if (chainData && chainData.records.length > 0) {
-        const strikeData = parseOptionChain(chainData.records);
-        const result = await saveMarketDataAuto('NIFTY50', expiry, today, strikeData);
-        results.push({ index: 'NIFTY50', expiry, status: result.status });
+  // Fetch Nifty 50
+  try {
+    const niftyExpiries = getNext4Expiries('NIFTY');
+    const chainData = await fetchNiftyOptionChain();
 
-        // Save Z2H snapshot if expiry day
-        const expiryDate = new Date(expiry);
-        const todayDate = new Date(today);
-        const isExpiryDay = expiryDate.toDateString() === todayDate.toDateString();
-        const dayBefore = new Date(expiryDate);
-        dayBefore.setDate(expiryDate.getDate() - 1);
-        const isDayBefore = dayBefore.toDateString() === todayDate.toDateString();
+    if (chainData.records.length > 0) {
+      const vixData = await fetchVIX();
+      const maxPain = calculateMaxPain(chainData.records);
 
-        const vix = await fetchVIX();
-        const maxPain = calculateMaxPain(chainData.records);
+      for (const expiry of niftyExpiries) {
+        const expiryFormatted = formatExpiryForNSE(expiry);
+        const expiryRecords = chainData.records.filter(
+          (r: any) => r.expiryDate === expiryFormatted
+        );
 
-        if (isDayBefore) {
-          await saveZ2HSnapshot('NIFTY', expiry, 'DAY_BEFORE', chainData.spotPrice, maxPain, vix);
+        if (expiryRecords.length > 0) {
+          const strikeData = parseOptionChain(expiryRecords);
+          const result = await saveMarketDataAuto('NIFTY50', expiry, today, strikeData);
+          results.push({ index: 'NIFTY50', expiry, status: result.status });
+
+          // Check if expiry day or day before
+          const expiryDate = new Date(expiry);
+          const todayDate = new Date(today);
+          const dayBefore = new Date(expiryDate);
+          dayBefore.setDate(expiryDate.getDate() - 1);
+
+          if (expiryDate.toDateString() === todayDate.toDateString()) {
+            await saveZ2HSnapshot('NIFTY', expiry, 'EXPIRY_EOD', chainData.spotPrice, maxPain, vixData);
+          } else if (dayBefore.toDateString() === todayDate.toDateString()) {
+            await saveZ2HSnapshot('NIFTY', expiry, 'DAY_BEFORE', chainData.spotPrice, maxPain, vixData);
+          }
         }
       }
-    } catch (err) {
-      results.push({ index: 'NIFTY50', expiry, status: 'error', error: err });
     }
-    // Small delay to avoid rate limiting
-    await new Promise(r => setTimeout(r, 1000));
+  } catch (err: any) {
+    results.push({ index: 'NIFTY50', status: 'error', error: err.message });
   }
 
-  // Fetch Sensex — next 4 expiries
-  const sensexExpiries = getNext4Expiries('SENSEX');
-  for (const expiry of sensexExpiries) {
-    try {
-      console.log(`Fetching SENSEX | ${expiry}...`);
-      const chainData = await fetchSensexOptionChain(expiry);
-      if (chainData) {
-        results.push({ index: 'SENSEX', expiry, status: 'fetched' });
+  await new Promise(r => setTimeout(r, 1000));
+
+  // Fetch Sensex
+  try {
+    const sensexExpiries = getNext4Expiries('SENSEX');
+    for (const expiry of sensexExpiries) {
+      try {
+        const chainData = await fetchSensexOptionChain(expiry);
+        if (chainData) {
+          results.push({ index: 'SENSEX', expiry, status: 'fetched' });
+        }
+        await new Promise(r => setTimeout(r, 500));
+      } catch (err: any) {
+        results.push({ index: 'SENSEX', expiry, status: 'error', error: err.message });
       }
-    } catch (err) {
-      results.push({ index: 'SENSEX', expiry, status: 'error', error: err });
     }
-    await new Promise(r => setTimeout(r, 1000));
+  } catch (err: any) {
+    results.push({ index: 'SENSEX', status: 'error', error: err.message });
   }
 
   console.log(`✅ Auto-fetch complete:`, results);
   return results;
+}
+
+// ── AUTO FETCH STOCK DATA ──
+export async function autoFetchStockPrice(symbol: string): Promise<any[]> {
+  const records = await fetchStockPriceData(symbol);
+  if (!records.length) throw new Error(`No data for ${symbol}`);
+
+  const toSave = records.map((r: any) => ({
+    stock_name: symbol.toUpperCase(),
+    trade_date: r.CH_TIMESTAMP,
+    open: parseFloat(r.CH_OPENING_PRICE || 0),
+    high: parseFloat(r.CH_TRADE_HIGH_PRICE || 0),
+    low: parseFloat(r.CH_TRADE_LOW_PRICE || 0),
+    close: parseFloat(r.CH_CLOSING_PRICE || 0),
+    volume: parseFloat(r.CH_TOT_TRADED_QTY || 0),
+  }));
+
+  await supabase.from('stock_price_data')
+    .upsert(toSave, { onConflict: 'stock_name,trade_date' });
+
+  return toSave;
+}
+
+// ── AUTO FETCH STOCK OPTIONS ──
+export async function autoFetchStockOptions(symbol: string, expiry: string): Promise<Record<string, any>> {
+  const { records } = await fetchStockOptionChain(symbol);
+  if (!records.length) throw new Error(`No options data for ${symbol}`);
+
+  const strikes = parseOptionChain(records);
+  const today = new Date().toISOString().split('T')[0];
+
+  // Check duplicate
+  const { data: existing } = await supabase
+    .from('market_data')
+    .select('id')
+    .eq('index_name', symbol.toUpperCase())
+    .eq('expiry', expiry)
+    .eq('trade_date', today)
+    .limit(1);
+
+  if (!existing || existing.length === 0) {
+    await supabase.from('market_data').insert({
+      index_name: symbol.toUpperCase(),
+      expiry,
+      trade_date: today,
+      strike_data: strikes,
+      uploaded_by: 'auto-fetch',
+      category: 'stock',
+      timeframe: 'daily'
+    });
+  }
+
+  return strikes;
 }
