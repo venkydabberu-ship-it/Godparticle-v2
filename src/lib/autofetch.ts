@@ -100,7 +100,7 @@ async function fetchAndSaveExpiry(
   z2hName: string = ''
 ) {
   try {
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 1200)); // 1.2s delay — Upstox rate limit
 
     const data = await callEdge('single_expiry', indexKey, expiry);
 
@@ -204,7 +204,6 @@ export async function runDailyAutoFetch(adminUserId: string) {
     bseWeekly = expiries.bseWeekly;
     bseMonthly = expiries.bseMonthly;
   } catch {
-    // Fallback — calculate locally
     const now = new Date();
     for (let i = 0; i <= 35; i++) {
       const d = new Date(now);
@@ -257,7 +256,7 @@ export async function runDailyAutoFetch(adminUserId: string) {
   for (const stock of allStocks) {
     for (const exp of nseMonthly) {
       try {
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 1200)); // 1.2s delay
         const data = await callEdge('single_expiry', stock, exp);
 
         if (!data || Object.keys(data.strikes || {}).length === 0) {
@@ -281,7 +280,7 @@ export async function runDailyAutoFetch(adminUserId: string) {
   // ── STEP 3: PROCESS ALL STOCKS — PRICE DATA ──
   for (const stock of allStocks) {
     try {
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, 1200)); // 1.2s delay
       const data = await callEdge('stock_price', stock);
       const records = data?.data || [];
 
