@@ -1,11 +1,11 @@
 import { supabase } from './supabase';
 
 // ── CALL EDGE FUNCTION ──
-async function callNSE(type: string, symbol?: string, expiry?: string) {
+async function callEdge(type: string, symbol?: string, expiry?: string) {
   const { data, error } = await supabase.functions.invoke('fetch-nse-data', {
     body: { type, symbol, expiry }
   });
-  if (error) throw new Error(`Edge function error: ${error.message}`);
+  if (error) throw new Error(error.message);
   if (!data?.success) throw new Error(data?.error || 'Fetch failed');
   return data.data;
 }
@@ -25,52 +25,6 @@ export function getNext4Expiries(index: 'NIFTY' | 'SENSEX'): string[] {
     }
   }
   return dates;
-}
-
-// ── FORMAT EXPIRY FOR NSE ──
-function formatExpiryForNSE(dateStr: string): string {
-  const d = new Date(dateStr);
-  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-  return `${String(d.getDate()).padStart(2,'0')}${months[d.getMonth()]}${d.getFullYear()}`;
-}
-
-// ── PARSE OPTION CHAIN ──
-export function parseOptionChain(records: any[]): Record<string, any> {
-  const strikes: Record<string, any> = {};
-  records.forEach((r: any) => {
-    const strike = r.strikePrice;
-    if (!strike) return;
-    strikes[strike] = {
-      ce_ltp: r.CE?.lastPrice || 0,
-      ce_oi: r.CE?.openInterest || 0,
-      ce_chng_oi: r.CE?.changeinOpenInterest || 0,
-      ce_vol: r.CE?.totalTradedVolume || 0,
-      pe_ltp: r.PE?.lastPrice || 0,
-      pe_oi: r.PE?.openInterest || 0,
-      pe_chng_oi: r.PE?.changeinOpenInterest || 0,
-      pe_vol: r.PE?.totalTradedVolume || 0,
-    };
-  });
-  return strikes;
-}
-
-// ── CALCULATE MAX PAIN ──
-export function calculateMaxPain(records: any[]): number {
-  if (!records.length) return 0;
-  const strikes = [...new Set(records.map((r: any) => r.strikePrice))].sort((a, b) => a - b);
-  let minPain = Infinity;
-  let maxPainStrike = strikes[0];
-  strikes.forEach(testStrike => {
-    let totalPain = 0;
-    records.forEach(r => {
-      if (r.CE && testStrike > r.strikePrice)
-        totalPain += (testStrike - r.strikePrice) * (r.CE.openInterest || 0);
-      if (r.PE && testStrike < r.strikePrice)
-        totalPain += (r.strikePrice - testStrike) * (r.PE.openInterest || 0);
-    });
-    if (totalPain < minPain) { minPain = totalPain; maxPainStrike = testStrike; }
-  });
-  return maxPainStrike;
 }
 
 // ── SAVE MARKET DATA ──
@@ -105,7 +59,6 @@ export async function saveMarketDataAuto(
 
     return { status: 'saved' };
   } catch (err) {
-    console.error('saveMarketDataAuto error:', err);
     return { status: 'error' };
   }
 }
@@ -117,8 +70,7 @@ export async function saveZ2HSnapshot(
   snapshotType: string,
   spotPrice: number,
   maxPain: number,
-  vix: number,
-  additionalData?: Record<string, any>
+  vix: number
 ) {
   try {
     await supabase.from('z2h_snapshots').insert({
@@ -127,8 +79,7 @@ export async function saveZ2HSnapshot(
       snapshot_type: snapshotType,
       spot_price: spotPrice,
       max_pain: maxPain,
-      vix,
-      ...additionalData
+      vix
     });
     return { status: 'saved' };
   } catch (err) {
@@ -136,51 +87,26 @@ export async function saveZ2HSnapshot(
   }
 }
 
-// ── FETCH NIFTY OPTION CHAIN ──
-export async function fetchNiftyOptionChain() {
-  const data = await callNSE('nifty_chain');
-  const records = data?.records?.data || [];
-  const spotPrice = data?.records?.underlyingValue || 0;
-  return { records, spotPrice };
-}
+// ── CALCULATE MAX PAIN ──
+function calculateMaxPain(strikes: Record<string, any>): number {
+  const strikeList = Object.keys(strikes).map(Number).sort((a, b) => a - b);
+  let minPain = Infinity;
+  let maxPainStrike = strikeList[0];
 
-// ── FETCH SENSEX OPTION CHAIN ──
-export async function fetchSensexOptionChain(expiry: string) {
-  const expiryFormatted = formatExpiryForNSE(expiry);
-  const data = await callNSE('sensex_chain', undefined, expiryFormatted);
-  return data;
-}
+  strikeList.forEach(testStrike => {
+    let totalPain = 0;
+    strikeList.forEach(s => {
+      const sd = strikes[s];
+      if (testStrike > s) totalPain += (testStrike - s) * (sd.ce_oi || 0);
+      if (testStrike < s) totalPain += (s - testStrike) * (sd.pe_oi || 0);
+    });
+    if (totalPain < minPain) {
+      minPain = totalPain;
+      maxPainStrike = testStrike;
+    }
+  });
 
-// ── FETCH STOCK OPTION CHAIN ──
-export async function fetchStockOptionChain(symbol: string) {
-  const data = await callNSE('stock_chain', symbol);
-  const records = data?.records?.data || [];
-  const spotPrice = data?.records?.underlyingValue || 0;
-  return { records, spotPrice };
-}
-
-// ── FETCH STOCK PRICE DATA ──
-export async function fetchStockPriceData(symbol: string) {
-  const data = await callNSE('stock_price', symbol);
-  return data?.data || [];
-}
-
-// ── FETCH VIX ──
-export async function fetchVIX(): Promise<number> {
-  try {
-    const data = await callNSE('vix');
-    return data?.vix || 0;
-  } catch {
-    return 0;
-  }
-}
-
-// ── FETCH BANKNIFTY ──
-export async function fetchBankNiftyOptionChain() {
-  const data = await callNSE('banknifty_chain');
-  const records = data?.records?.data || [];
-  const spotPrice = data?.records?.underlyingValue || 0;
-  return { records, spotPrice };
+  return maxPainStrike;
 }
 
 // ── MAIN AUTO FETCH ──
@@ -190,37 +116,44 @@ export async function runDailyAutoFetch(adminUserId: string) {
 
   console.log(`🚀 Starting auto-fetch for ${today}`);
 
-  // Fetch Nifty 50
+  // ── FETCH NIFTY 50 ──
   try {
-    const niftyExpiries = getNext4Expiries('NIFTY');
-    const chainData = await fetchNiftyOptionChain();
+    const expiryData = await callEdge('nifty_chain');
+    const validExpiries = expiryData.filter((e: any) =>
+      e.strikes && Object.keys(e.strikes).length > 0
+    );
 
-    if (chainData.records.length > 0) {
-      const vixData = await fetchVIX();
-      const maxPain = calculateMaxPain(chainData.records);
+    if (validExpiries.length === 0) {
+      results.push({ index: 'NIFTY50', status: 'error', error: 'No live data — market may be closed' });
+    } else {
+      for (const item of expiryData) {
+        if (!item.expiry) continue;
+        const strikeCount = Object.keys(item.strikes || {}).length;
 
-      for (const expiry of niftyExpiries) {
-        const expiryFormatted = formatExpiryForNSE(expiry);
-        const expiryRecords = chainData.records.filter(
-          (r: any) => r.expiryDate === expiryFormatted
-        );
+        if (strikeCount === 0) {
+          results.push({ index: 'NIFTY50', expiry: item.expiry, status: 'empty', error: 'No strike data' });
+          continue;
+        }
 
-        if (expiryRecords.length > 0) {
-          const strikeData = parseOptionChain(expiryRecords);
-          const result = await saveMarketDataAuto('NIFTY50', expiry, today, strikeData);
-          results.push({ index: 'NIFTY50', expiry, status: result.status });
+        const result = await saveMarketDataAuto('NIFTY50', item.expiry, today, item.strikes);
+        results.push({
+          index: 'NIFTY50',
+          expiry: item.expiry,
+          status: result.status,
+          strikes: strikeCount
+        });
 
-          // Check if expiry day or day before
-          const expiryDate = new Date(expiry);
-          const todayDate = new Date(today);
-          const dayBefore = new Date(expiryDate);
-          dayBefore.setDate(expiryDate.getDate() - 1);
+        // Save Z2H snapshot
+        const maxPain = calculateMaxPain(item.strikes);
+        const expiryDate = new Date(item.expiry);
+        const todayDate = new Date(today);
+        const dayBefore = new Date(expiryDate);
+        dayBefore.setDate(expiryDate.getDate() - 1);
 
-          if (expiryDate.toDateString() === todayDate.toDateString()) {
-            await saveZ2HSnapshot('NIFTY', expiry, 'EXPIRY_EOD', chainData.spotPrice, maxPain, vixData);
-          } else if (dayBefore.toDateString() === todayDate.toDateString()) {
-            await saveZ2HSnapshot('NIFTY', expiry, 'DAY_BEFORE', chainData.spotPrice, maxPain, vixData);
-          }
+        if (expiryDate.toDateString() === todayDate.toDateString()) {
+          await saveZ2HSnapshot('NIFTY', item.expiry, 'EXPIRY_EOD', item.spotPrice || 0, maxPain, 0);
+        } else if (dayBefore.toDateString() === todayDate.toDateString()) {
+          await saveZ2HSnapshot('NIFTY', item.expiry, 'DAY_BEFORE', item.spotPrice || 0, maxPain, 0);
         }
       }
     }
@@ -230,18 +163,32 @@ export async function runDailyAutoFetch(adminUserId: string) {
 
   await new Promise(r => setTimeout(r, 1000));
 
-  // Fetch Sensex
+  // ── FETCH SENSEX ──
   try {
-    const sensexExpiries = getNext4Expiries('SENSEX');
-    for (const expiry of sensexExpiries) {
-      try {
-        const chainData = await fetchSensexOptionChain(expiry);
-        if (chainData) {
-          results.push({ index: 'SENSEX', expiry, status: 'fetched' });
+    const expiryData = await callEdge('sensex_chain');
+    const validExpiries = expiryData.filter((e: any) =>
+      e.strikes && Object.keys(e.strikes).length > 0
+    );
+
+    if (validExpiries.length === 0) {
+      results.push({ index: 'SENSEX', status: 'error', error: 'No live data — market may be closed' });
+    } else {
+      for (const item of expiryData) {
+        if (!item.expiry) continue;
+        const strikeCount = Object.keys(item.strikes || {}).length;
+
+        if (strikeCount === 0) {
+          results.push({ index: 'SENSEX', expiry: item.expiry, status: 'empty', error: 'No strike data' });
+          continue;
         }
-        await new Promise(r => setTimeout(r, 500));
-      } catch (err: any) {
-        results.push({ index: 'SENSEX', expiry, status: 'error', error: err.message });
+
+        const result = await saveMarketDataAuto('SENSEX', item.expiry, today, item.strikes);
+        results.push({
+          index: 'SENSEX',
+          expiry: item.expiry,
+          status: result.status,
+          strikes: strikeCount
+        });
       }
     }
   } catch (err: any) {
@@ -252,10 +199,11 @@ export async function runDailyAutoFetch(adminUserId: string) {
   return results;
 }
 
-// ── AUTO FETCH STOCK DATA ──
+// ── AUTO FETCH STOCK PRICE ──
 export async function autoFetchStockPrice(symbol: string): Promise<any[]> {
-  const records = await fetchStockPriceData(symbol);
-  if (!records.length) throw new Error(`No data for ${symbol}`);
+  const data = await callEdge('stock_price', symbol);
+  const records = data?.data || [];
+  if (!records.length) throw new Error(`No price data for ${symbol}`);
 
   const toSave = records.map((r: any) => ({
     stock_name: symbol.toUpperCase(),
@@ -274,14 +222,19 @@ export async function autoFetchStockPrice(symbol: string): Promise<any[]> {
 }
 
 // ── AUTO FETCH STOCK OPTIONS ──
-export async function autoFetchStockOptions(symbol: string, expiry: string): Promise<Record<string, any>> {
-  const { records } = await fetchStockOptionChain(symbol);
-  if (!records.length) throw new Error(`No options data for ${symbol}`);
+export async function autoFetchStockOptions(
+  symbol: string,
+  expiry: string
+): Promise<Record<string, any>> {
+  const data = await callEdge('stock_chain', symbol, expiry);
+  const strikes = data?.strikes || {};
 
-  const strikes = parseOptionChain(records);
+  if (!Object.keys(strikes).length) {
+    throw new Error(`No options data for ${symbol}`);
+  }
+
   const today = new Date().toISOString().split('T')[0];
 
-  // Check duplicate
   const { data: existing } = await supabase
     .from('market_data')
     .select('id')
