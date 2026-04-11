@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 
-const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1za25yeWRpdHpnbWlhd3J4Y2VhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU3Mjk3NTYsImV4cCI6MjA5MTMwNTc1Nn0.bxJFXdAtSYvV7vI2W6aPLMBwz5ZdNUbKddFIYH8_xig';
+const ANON_KEY = 'sb_publishable_tP6_kK4impqvOQhdpko4UA_I6hWtPhd';
 const FUNCTION_URL = 'https://msknryditzgmiawrxcea.supabase.co/functions/v1/fetch-nse-data';
 
 // ── CALL EDGE FUNCTION ──
