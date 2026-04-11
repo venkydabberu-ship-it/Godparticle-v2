@@ -7,6 +7,8 @@ import Dashboard from './pages/Dashboard';
 import Analysis from './pages/Analysis';
 import Pricing from './pages/Pricing';
 import Admin from './pages/Admin';
+import ZeroToHero from './pages/ZeroToHero';
+import StockAnalysis from './pages/StockAnalysis';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -66,6 +68,12 @@ export default function App() {
             <ProtectedRoute>
               <AdminRoute><Admin /></AdminRoute>
             </ProtectedRoute>
+          } />
+          <Route path="/zero-to-hero" element={
+            <ProtectedRoute><ZeroToHero /></ProtectedRoute>
+          } />
+          <Route path="/stock-analysis" element={
+            <ProtectedRoute><StockAnalysis /></ProtectedRoute>
           } />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
