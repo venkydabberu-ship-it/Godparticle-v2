@@ -191,20 +191,56 @@ export async function runDailyAutoFetch(adminUserId: string) {
   // Load config
   const { indices, sectors } = await loadConfig();
 
-  // Get all expiry dates in one call
-  const { nseWeekly, nseMonthly, bseWeekly, bseMonthly } = await getExpiries();
+  // ── GET EXPIRY DATES WITH LOCAL FALLBACK ──
+  let nseWeekly: string[] = [];
+  let nseMonthly: string[] = [];
+  let bseWeekly: string[] = [];
+  let bseMonthly: string[] = [];
+
+  try {
+    const expiries = await getExpiries();
+    nseWeekly = expiries.nseWeekly;
+    nseMonthly = expiries.nseMonthly;
+    bseWeekly = expiries.bseWeekly;
+    bseMonthly = expiries.bseMonthly;
+  } catch {
+    // Fallback — calculate locally
+    const now = new Date();
+    for (let i = 0; i <= 35; i++) {
+      const d = new Date(now);
+      d.setDate(now.getDate() + i);
+      if (d.getDay() === 2 && nseWeekly.length < 4)
+        nseWeekly.push(d.toISOString().split('T')[0]);
+      if (d.getDay() === 4 && bseWeekly.length < 4)
+        bseWeekly.push(d.toISOString().split('T')[0]);
+    }
+    let month = now.getMonth(); let year = now.getFullYear();
+    while (nseMonthly.length < 4) {
+      const lastDay = new Date(year, month + 1, 0);
+      let d = new Date(lastDay);
+      while (d.getDay() !== 2) d.setDate(d.getDate() - 1);
+      nseMonthly.push(d.toISOString().split('T')[0]);
+      month++; if (month > 11) { month = 0; year++; }
+    }
+    month = now.getMonth(); year = now.getFullYear();
+    while (bseMonthly.length < 4) {
+      const lastDay = new Date(year, month + 1, 0);
+      let d = new Date(lastDay);
+      while (d.getDay() !== 4) d.setDate(d.getDate() - 1);
+      bseMonthly.push(d.toISOString().split('T')[0]);
+      month++; if (month > 11) { month = 0; year++; }
+    }
+  }
 
   // ── STEP 1: PROCESS ALL INDICES ──
   for (const idx of indices) {
     let expiries: string[] = [];
 
     if (idx.expiry === 'weekly') {
-      // Weekly indices: 4 weekly + 4 monthly (deduplicated)
       const weekly = idx.exchange === 'NSE' ? nseWeekly : bseWeekly;
       const monthly = idx.exchange === 'NSE' ? nseMonthly : bseMonthly;
       expiries = [...new Set([...weekly, ...monthly])];
     } else {
-      // Monthly indices: 4 monthly only
       expiries = idx.exchange === 'NSE' ? nseMonthly : bseMonthly;
     }
 
@@ -219,7 +255,6 @@ export async function runDailyAutoFetch(adminUserId: string) {
   const allStocks = [...new Set(sectors.flatMap((s: any) => s.stocks))] as string[];
 
   for (const stock of allStocks) {
-    // Fetch 4 monthly expiries for stock options
     for (const exp of nseMonthly) {
       try {
         await new Promise(r => setTimeout(r, 300));
@@ -328,4 +363,5 @@ export async function autoFetchStockOptions(
   }
   return strikes;
 }
+
 
