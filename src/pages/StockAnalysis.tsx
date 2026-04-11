@@ -9,20 +9,13 @@ export default function StockAnalysis() {
   const role = profile?.role ?? 'free';
   const isAdmin = role === 'admin';
 
-  // ── ANALYSIS TYPE ──
   const [analysisType, setAnalysisType] = useState<'gct' | 'options'>('gct');
-
-  // ── STOCK DETAILS ──
   const [stockName, setStockName] = useState('');
   const [sector, setSector] = useState('Default');
-
-  // ── GCT STATE ──
   const [csvData, setCsvData] = useState<any[]>([]);
   const [dataSource, setDataSource] = useState<'upload' | 'autofetch'>('upload');
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchMsg, setFetchMsg] = useState('');
-
-  // ── OPTIONS STATE ──
   const [optExpiry, setOptExpiry] = useState('');
   const [optStrike, setOptStrike] = useState('');
   const [optType, setOptType] = useState('CE');
@@ -30,8 +23,6 @@ export default function StockAnalysis() {
   const [optFetchLoading, setOptFetchLoading] = useState(false);
   const [optFetchMsg, setOptFetchMsg] = useState('');
   const [optDataSource, setOptDataSource] = useState<'upload' | 'autofetch'>('upload');
-
-  // ── FUNDAMENTAL DATA ──
   const [pe, setPe] = useState('');
   const [eps, setEps] = useState('');
   const [bookValue, setBookValue] = useState('');
@@ -40,8 +31,6 @@ export default function StockAnalysis() {
   const [rev3, setRev3] = useState('');
   const [profit2, setProfit2] = useState('');
   const [profit3, setProfit3] = useState('');
-
-  // ── RESULTS ──
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState('');
@@ -57,7 +46,7 @@ export default function StockAnalysis() {
   const canAccess = ['premium', 'pro', 'admin'].includes(role);
   const canAutoFetch = ['pro', 'admin'].includes(role);
 
-  // ── AUTO FETCH STOCK PRICE DATA ──
+  // ── AUTO FETCH STOCK PRICE — uses Edge Function ──
   async function handleAutoFetchPrice() {
     if (!stockName.trim()) { setError('Enter stock name first!'); return; }
     if (!user || !profile) return;
@@ -90,30 +79,17 @@ export default function StockAnalysis() {
         return;
       }
 
-      setFetchMsg('⏳ Fetching from NSE API...');
+      setFetchMsg('⏳ Fetching from NSE via server...');
 
-      // Fetch from NSE
-      const today = new Date();
-      const fromDate = new Date();
-      fromDate.setMonth(fromDate.getMonth() - 14);
-
-      const formatDate = (d: Date) =>
-        `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
-
-      const url = `https://www.nseindia.com/api/historical/cm/equity?symbol=${stockName.toUpperCase()}&series=["EQ"]&from=${formatDate(fromDate)}&to=${formatDate(today)}`;
-
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0',
-          'Referer': 'https://www.nseindia.com/',
-          'Accept': '*/*'
-        }
+      // Use Supabase Edge Function
+      const { data, error: fnError } = await supabase.functions.invoke('fetch-nse-data', {
+        body: { type: 'stock_price', symbol: stockName.toUpperCase() }
       });
 
-      if (!response.ok) throw new Error(`NSE returned ${response.status}. Try uploading CSV manually.`);
+      if (fnError) throw new Error(fnError.message);
+      if (!data?.success) throw new Error(data?.error || 'Fetch failed');
 
-      const data = await response.json();
-      const records = data.data || [];
+      const records = data.data?.data || [];
       if (!records.length) throw new Error(`No data for ${stockName}. Check symbol.`);
 
       const toSave = records.map((r: any) => ({
@@ -126,7 +102,9 @@ export default function StockAnalysis() {
         volume: parseFloat(r.CH_TOT_TRADED_QTY || 0),
       }));
 
-      await supabase.from('stock_price_data').upsert(toSave, { onConflict: 'stock_name,trade_date' });
+      await supabase.from('stock_price_data')
+        .upsert(toSave, { onConflict: 'stock_name,trade_date' });
+
       setFetchMsg(`✅ Fetched ${records.length} days from NSE!`);
       processMonthlyData(toSave);
 
@@ -138,18 +116,18 @@ export default function StockAnalysis() {
     }
   }
 
-  // ── AUTO FETCH STOCK OPTIONS DATA ──
+  // ── AUTO FETCH STOCK OPTIONS — uses Edge Function ──
   async function handleAutoFetchOptions() {
     if (!stockName.trim()) { setError('Enter stock name first!'); return; }
     if (!optExpiry) { setError('Select expiry date first!'); return; }
     if (!user || !profile) return;
 
     setOptFetchLoading(true);
-    setOptFetchMsg('⏳ Fetching stock option chain from NSE...');
+    setOptFetchMsg('⏳ Checking database...');
     setError('');
 
     try {
-      // Check existing in market_data
+      // Check existing data first
       const { data: existing } = await supabase
         .from('market_data')
         .select('*')
@@ -160,7 +138,6 @@ export default function StockAnalysis() {
 
       if (existing && existing.length >= 3) {
         setOptFetchMsg(`✅ Found ${existing.length} days of ${stockName} option data!`);
-        // Convert to option analysis format
         const optData = existing.map((r: any) => {
           const sd = r.strike_data?.[optStrike];
           if (!sd) return null;
@@ -177,25 +154,20 @@ export default function StockAnalysis() {
         return;
       }
 
-      // Fetch from NSE option chain API
-      const url = `https://www.nseindia.com/api/option-chain-equities?symbol=${stockName.toUpperCase()}`;
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0',
-          'Referer': 'https://www.nseindia.com/option-chain',
-          'Accept': '*/*'
-        }
+      setOptFetchMsg('⏳ Fetching stock option chain via server...');
+
+      // Use Supabase Edge Function
+      const { data, error: fnError } = await supabase.functions.invoke('fetch-nse-data', {
+        body: { type: 'stock_chain', symbol: stockName.toUpperCase() }
       });
 
-      if (!response.ok) throw new Error(`NSE returned ${response.status}`);
+      if (fnError) throw new Error(fnError.message);
+      if (!data?.success) throw new Error(data?.error || 'Fetch failed');
 
-      const data = await response.json();
-      const records = data.records?.data || [];
-      const spotPrice = data.records?.underlyingValue || 0;
-
+      const records = data.data?.records?.data || [];
       if (!records.length) throw new Error(`No options data for ${stockName}`);
 
-      // Parse and save
+      // Parse strikes
       const strikes: Record<string, any> = {};
       records.forEach((r: any) => {
         const strike = r.strikePrice;
@@ -213,6 +185,8 @@ export default function StockAnalysis() {
       });
 
       const today = new Date().toISOString().split('T')[0];
+
+      // Save to database
       await supabase.from('market_data').insert({
         index_name: stockName.toUpperCase(),
         expiry: optExpiry,
@@ -225,8 +199,31 @@ export default function StockAnalysis() {
 
       setOptFetchMsg(`✅ Fetched ${Object.keys(strikes).length} strikes for ${stockName}!`);
 
-      // Extract selected strike data (use last 1 day for now)
-      if (optStrike && strikes[optStrike]) {
+      // Get last 6 days from DB now
+      const { data: rows } = await supabase
+        .from('market_data')
+        .select('*')
+        .eq('index_name', stockName.toUpperCase())
+        .eq('expiry', optExpiry)
+        .order('trade_date', { ascending: true })
+        .limit(6);
+
+      if (rows && rows.length > 0 && optStrike) {
+        const isCE = optType === 'CE';
+        const optData = rows.map((r: any) => {
+          const s = r.strike_data?.[optStrike];
+          if (!s) return null;
+          return {
+            date: r.trade_date,
+            close: isCE ? s.ce_ltp : s.pe_ltp,
+            volume: isCE ? s.ce_vol : s.pe_vol,
+            oi: isCE ? s.ce_oi : s.pe_oi,
+            chng_oi: isCE ? s.ce_chng_oi : s.pe_chng_oi,
+          };
+        }).filter(Boolean);
+        setOptCsvData(optData);
+        setOptFetchMsg(`✅ ${optData.length} days of ${stockName} ${optStrike} ${optType} ready!`);
+      } else if (optStrike && strikes[optStrike]) {
         const sd = strikes[optStrike];
         const isCE = optType === 'CE';
         setOptCsvData([{
@@ -264,10 +261,8 @@ export default function StockAnalysis() {
         };
       }
     });
-
     const monthlyData = Object.values(monthly).slice(-12)
       .filter((r: any) => r.high > 0 && r.volume > 0);
-
     if (monthlyData.length < 6) {
       setError('Not enough data! Need at least 6 months.');
       return;
@@ -289,7 +284,6 @@ export default function StockAnalysis() {
       headers.forEach((h, i) => { row[h] = vals[i]; });
       return row;
     }).filter(r => r.DATE && r.CLOSE);
-
     const monthly: Record<string, any> = {};
     rows.forEach(row => {
       const date = row.DATE;
@@ -301,7 +295,6 @@ export default function StockAnalysis() {
         monthly[key] = row;
       }
     });
-
     const monthlyData = Object.values(monthly).slice(-12).map((r: any) => ({
       date: r.DATE,
       high: parseFloat(r.HIGH?.replace(/,/g,'') || '0'),
@@ -309,7 +302,6 @@ export default function StockAnalysis() {
       close: parseFloat(r.CLOSE?.replace(/,/g,'') || '0'),
       volume: parseFloat(r.VOLUME?.replace(/,/g,'') || '0'),
     })).filter(r => r.high > 0 && r.volume > 0);
-
     setCsvData(monthlyData);
   }
 
@@ -326,7 +318,6 @@ export default function StockAnalysis() {
       headers.forEach((h, i) => { row[h] = vals[i]; });
       return row;
     }).filter(r => r.Date || r.DATE);
-
     const optData = rows.map((r: any) => ({
       date: r.Date || r.DATE,
       close: parseFloat(r.Close || r.CLOSE || r.LTP || '0'),
@@ -334,7 +325,6 @@ export default function StockAnalysis() {
       oi: parseFloat(r.OI?.replace(/,/g,'') || r['Open Interest']?.replace(/,/g,'') || '0'),
       chng_oi: parseFloat(r['Chng in OI']?.replace(/,/g,'') || r.CHNG_OI?.replace(/,/g,'') || '0'),
     })).filter(r => r.close > 0);
-
     setOptCsvData(optData);
   }
 
@@ -368,7 +358,6 @@ export default function StockAnalysis() {
       const zone = currentPrice >= al ? 'BUY ZONE' :
         currentPrice >= mgc ? 'WATCH ZONE' :
         currentPrice >= cl ? 'DANGER ZONE' : 'CRASH ZONE';
-
       const peVal = parseFloat(pe);
       const epsVal = parseFloat(eps);
       const bvVal = parseFloat(bookValue);
@@ -392,10 +381,8 @@ export default function StockAnalysis() {
         fssChecks.push({ name: 'Profit Growth', pass: p3 > p2, value: p3 > p2 ? `+${((p3-p2)/p2*100).toFixed(1)}%` : 'Declining' });
       }
       if (roceVal) fssChecks.push({ name: 'ROCE', pass: roceVal >= 8, value: `${roceVal}%` });
-
       const fssScore = fssChecks.filter(c => c.pass).length;
       const fssVerdict = ['💀 VALUE TRAP','🔴 RISKY','⚠️ CAREFUL','⚡ DECENT BUY','✅ GOOD BUY','🟢 STRONG BUY'][fssScore];
-
       setResult({
         type: 'gct', stockName, currentPrice: Math.round(currentPrice),
         mgc: Math.round(mgc), vwar: Math.round(vwar),
@@ -418,7 +405,6 @@ export default function StockAnalysis() {
     if (optCsvData.length < 2) { setError('Need at least 2 days of options data!'); return; }
     if (!optStrike) { setError('Enter strike price!'); return; }
     if (!user) return;
-
     setLoading(true);
     setError('');
     try {
@@ -426,7 +412,6 @@ export default function StockAnalysis() {
         await supabase.rpc('use_credits', { p_user_id: user.id, p_credits: 2 });
         await refreshProfile();
       }
-
       const computed = computeGodParticle(
         optCsvData, parseFloat(optStrike), optType, optExpiry, stockName.toUpperCase()
       );
@@ -456,7 +441,6 @@ export default function StockAnalysis() {
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-[#e8e8f0]">
       <div className="fixed inset-0 bg-[linear-gradient(rgba(240,192,64,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(240,192,64,0.03)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none" />
-
       <nav className="relative z-10 flex items-center justify-between px-6 py-4 border-b border-[#1e1e2e]">
         <Link to="/dashboard" className="flex items-center gap-3">
           <div className="w-9 h-9 bg-[#f0c040] rounded-xl flex items-center justify-center text-lg">⚛</div>
@@ -466,16 +450,12 @@ export default function StockAnalysis() {
       </nav>
 
       <div className="relative z-10 max-w-4xl mx-auto px-6 py-8">
-
-        {/* Header */}
         <div className="mb-6">
           <div className="flex items-center gap-3 mb-2">
             <div className="text-2xl">🏢</div>
             <h1 className="text-2xl font-black">Stock Analysis</h1>
           </div>
-          <p className="text-xs font-mono text-[#6b6b85]">
-            GCT crash levels + God Particle options analysis for any stock
-          </p>
+          <p className="text-xs font-mono text-[#6b6b85]">GCT crash levels + God Particle options analysis for any stock</p>
         </div>
 
         {!canAccess && (
@@ -489,44 +469,28 @@ export default function StockAnalysis() {
 
         {canAccess && step === 'input' && (
           <div className="space-y-6">
-
             {/* Analysis Type */}
             <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
-              <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">
-                Step 1 — Analysis Type
-              </h2>
+              <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">Step 1 — Analysis Type</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <button onClick={() => setAnalysisType('gct')}
                   className={`p-4 rounded-xl text-left transition-all border ${analysisType === 'gct' ? 'border-[#f0c040] bg-[#f0c040]/10' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
                   <div className="text-lg mb-1">📊</div>
-                  <div className="font-black text-sm mb-1" style={{color: analysisType === 'gct' ? '#f0c040' : '#e8e8f0'}}>
-                    GCT — Price Analysis
-                  </div>
-                  <div className="text-xs font-mono text-[#6b6b85]">
-                    Find crash buying levels using 12 months price data
-                  </div>
-                  <div className="text-[10px] font-mono mt-2 text-[#6b6b85]">
-                    Premium: CSV upload · Pro/Admin: Auto fetch FREE
-                  </div>
+                  <div className="font-black text-sm mb-1" style={{color: analysisType === 'gct' ? '#f0c040' : '#e8e8f0'}}>GCT — Price Analysis</div>
+                  <div className="text-xs font-mono text-[#6b6b85]">Find crash buying levels using 12 months price data</div>
+                  <div className="text-[10px] font-mono mt-2 text-[#6b6b85]">Premium: CSV upload · Pro/Admin: Auto fetch FREE</div>
                 </button>
-
                 <button onClick={() => setAnalysisType('options')}
                   className={`p-4 rounded-xl text-left transition-all border ${analysisType === 'options' ? 'border-[#4d9fff] bg-[#4d9fff]/10' : 'border-[#1e1e2e] bg-[#16161f]'} ${!['pro','admin'].includes(role) ? 'opacity-50' : ''}`}
                   disabled={!['pro','admin'].includes(role)}>
                   <div className="text-lg mb-1">⚛</div>
                   <div className="font-black text-sm mb-1" style={{color: analysisType === 'options' ? '#4d9fff' : '#e8e8f0'}}>
-                    God Particle — Options Analysis
-                    {!['pro','admin'].includes(role) && ' 🔒'}
+                    God Particle — Options Analysis {!['pro','admin'].includes(role) && '🔒'}
                   </div>
-                  <div className="text-xs font-mono text-[#6b6b85]">
-                    Full God Particle analysis on stock option strikes
-                  </div>
-                  <div className="text-[10px] font-mono mt-2 text-[#6b6b85]">
-                    Pro/Admin only · Auto fetch FREE
-                  </div>
+                  <div className="text-xs font-mono text-[#6b6b85]">Full God Particle analysis on stock option strikes</div>
+                  <div className="text-[10px] font-mono mt-2 text-[#6b6b85]">Pro/Admin only · Auto fetch FREE</div>
                 </button>
               </div>
-
               {analysisType === 'options' && !['pro','admin'].includes(role) && (
                 <div className="mt-3 text-xs font-mono text-[#ff4d6d]">
                   ⚠️ Stock options analysis is available for Pro plan only.
@@ -535,11 +499,9 @@ export default function StockAnalysis() {
               )}
             </div>
 
-            {/* Stock Name */}
+            {/* Stock Details */}
             <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
-              <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">
-                Step 2 — Stock Details
-              </h2>
+              <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">Step 2 — Stock Details</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">NSE Symbol</label>
@@ -597,37 +559,36 @@ export default function StockAnalysis() {
             {/* GCT Data Source */}
             {analysisType === 'gct' && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
-                <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">
-                  Step 3 — Price Data
-                </h2>
+                <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">Step 3 — Price Data</h2>
                 <div className="flex gap-2 mb-4">
                   <button onClick={() => setDataSource('upload')}
                     className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all ${dataSource === 'upload' ? 'bg-[#f0c040] text-black' : 'bg-[#16161f] text-[#6b6b85] border border-[#1e1e2e]'}`}>
                     📄 Upload CSV
                   </button>
                   <button onClick={() => setDataSource('autofetch')}
-                    className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all ${dataSource === 'autofetch' ? 'bg-[#39d98a] text-black' : 'bg-[#16161f] text-[#6b6b85] border border-[#1e1e2e]'} ${!canAutoFetch && role !== 'premium' ? 'opacity-40' : ''}`}>
+                    className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all ${dataSource === 'autofetch' ? 'bg-[#39d98a] text-black' : 'bg-[#16161f] text-[#6b6b85] border border-[#1e1e2e]'}`}>
                     🤖 Auto Fetch {canAutoFetch ? '(FREE)' : '(2 credits)'}
                   </button>
                 </div>
-
                 {dataSource === 'upload' && (
                   <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-8 cursor-pointer transition-all ${csvData.length > 0 ? 'border-[#39d98a]/50' : 'border-[#1e1e2e] hover:border-[#f0c040]'}`}>
                     <input type="file" accept=".csv" className="hidden" onChange={handlePriceCSV} />
                     <div className="text-3xl mb-2">{csvData.length > 0 ? '✅' : '📄'}</div>
                     <div className="text-sm font-mono text-[#6b6b85]">
-                      {csvData.length > 0
-                        ? `✅ ${csvData.length} months loaded`
-                        : 'Upload NSE Historical Data CSV (12-14 months)'}
+                      {csvData.length > 0 ? `✅ ${csvData.length} months loaded` : 'Upload NSE Historical Data CSV (12-14 months)'}
                     </div>
                   </label>
                 )}
-
                 {dataSource === 'autofetch' && (
                   <div>
                     {role === 'premium' && (
                       <div className="bg-[#f0c040]/5 border border-[#f0c040]/20 rounded-xl p-3 mb-3 text-xs font-mono text-[#f0c040]">
                         ⚡ Costs 2 credits · You have {profile?.credits ?? 0} credits
+                      </div>
+                    )}
+                    {canAutoFetch && (
+                      <div className="bg-[#39d98a]/5 border border-[#39d98a]/20 rounded-xl p-3 mb-3 text-xs font-mono text-[#39d98a]">
+                        ✅ Pro/Admin — Auto fetch is FREE · Data fetched via secure server
                       </div>
                     )}
                     <button onClick={handleAutoFetchPrice} disabled={fetchLoading || !stockName.trim()}
@@ -640,9 +601,7 @@ export default function StockAnalysis() {
                       </div>
                     )}
                     {csvData.length > 0 && (
-                      <div className="mt-2 text-xs font-mono text-[#39d98a] text-center">
-                        ✅ {csvData.length} months ready!
-                      </div>
+                      <div className="mt-2 text-xs font-mono text-[#39d98a] text-center">✅ {csvData.length} months ready!</div>
                     )}
                   </div>
                 )}
@@ -652,9 +611,7 @@ export default function StockAnalysis() {
             {/* Options Data Source */}
             {analysisType === 'options' && ['pro','admin'].includes(role) && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
-                <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">
-                  Step 3 — Options Data
-                </h2>
+                <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">Step 3 — Options Data</h2>
                 <div className="flex gap-2 mb-4">
                   <button onClick={() => setOptDataSource('upload')}
                     className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all ${optDataSource === 'upload' ? 'bg-[#f0c040] text-black' : 'bg-[#16161f] text-[#6b6b85] border border-[#1e1e2e]'}`}>
@@ -665,23 +622,19 @@ export default function StockAnalysis() {
                     🤖 Auto Fetch (FREE)
                   </button>
                 </div>
-
                 {optDataSource === 'upload' && (
                   <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-8 cursor-pointer transition-all ${optCsvData.length > 0 ? 'border-[#39d98a]/50' : 'border-[#1e1e2e] hover:border-[#4d9fff]'}`}>
                     <input type="file" accept=".csv" className="hidden" onChange={handleOptionsCSV} />
                     <div className="text-3xl mb-2">{optCsvData.length > 0 ? '✅' : '📄'}</div>
                     <div className="text-sm font-mono text-[#6b6b85]">
-                      {optCsvData.length > 0
-                        ? `✅ ${optCsvData.length} days loaded`
-                        : 'Upload stock option chain CSV (last 1 month)'}
+                      {optCsvData.length > 0 ? `✅ ${optCsvData.length} days loaded` : 'Upload stock option chain CSV (last 1 month)'}
                     </div>
                   </label>
                 )}
-
                 {optDataSource === 'autofetch' && (
                   <div>
                     <div className="bg-[#4d9fff]/5 border border-[#4d9fff]/20 rounded-xl p-3 mb-3 text-xs font-mono text-[#4d9fff]">
-                      ✅ Pro/Admin — Auto fetch stock options is FREE
+                      ✅ Pro/Admin — Auto fetch stock options FREE · Via secure server
                     </div>
                     <button onClick={handleAutoFetchOptions}
                       disabled={optFetchLoading || !stockName.trim() || !optExpiry}
@@ -703,15 +656,11 @@ export default function StockAnalysis() {
               </div>
             )}
 
-            {/* Fundamental Data — GCT only */}
+            {/* Fundamental Data */}
             {analysisType === 'gct' && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
-                <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-1">
-                  Step 4 — Fundamental Data (Optional)
-                </h2>
-                <div className="text-xs font-mono text-[#6b6b85] mb-4">
-                  Enter from screener.in or moneycontrol.com
-                </div>
+                <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-1">Step 4 — Fundamental Data (Optional)</h2>
+                <div className="text-xs font-mono text-[#6b6b85] mb-4">Enter from screener.in or moneycontrol.com</div>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {[
                     { label: 'PE Ratio', val: pe, set: setPe, placeholder: 'e.g. 22.5' },
@@ -735,27 +684,18 @@ export default function StockAnalysis() {
             )}
 
             {error && (
-              <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#ff4d6d]">
-                {error}
-              </div>
+              <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#ff4d6d]">{error}</div>
             )}
 
-            {/* Run Button */}
             {analysisType === 'gct' ? (
-              <button onClick={runGCT}
-                disabled={loading || csvData.length < 6 || !stockName}
+              <button onClick={runGCT} disabled={loading || csvData.length < 6 || !stockName}
                 className="w-full bg-[#f0c040] text-black font-black py-3 rounded-xl text-sm hover:bg-[#ffd060] transition-all disabled:opacity-40">
-                {loading ? '⏳ Analysing...' : csvData.length < 6
-                  ? '📊 Run GCT Analysis (upload/fetch data first)'
-                  : `📊 Run GCT + FSS Analysis — ${stockName}`}
+                {loading ? '⏳ Analysing...' : csvData.length < 6 ? '📊 Run GCT Analysis (get data first)' : `📊 Run GCT + FSS Analysis — ${stockName}`}
               </button>
             ) : (
-              <button onClick={runOptionsAnalysis}
-                disabled={loading || optCsvData.length < 2 || !stockName || !optStrike}
+              <button onClick={runOptionsAnalysis} disabled={loading || optCsvData.length < 2 || !stockName || !optStrike}
                 className="w-full bg-[#4d9fff] text-black font-black py-3 rounded-xl text-sm hover:opacity-90 transition-all disabled:opacity-40">
-                {loading ? '⏳ Analysing...' : optCsvData.length < 2
-                  ? '⚛ Run God Particle Analysis (fetch options data first)'
-                  : `⚛ Run God Particle Analysis — ${stockName} ${optStrike} ${optType}`}
+                {loading ? '⏳ Analysing...' : optCsvData.length < 2 ? '⚛ Run God Particle Analysis (fetch options data first)' : `⚛ Run God Particle Analysis — ${stockName} ${optStrike} ${optType}`}
               </button>
             )}
           </div>
@@ -765,16 +705,10 @@ export default function StockAnalysis() {
         {canAccess && step === 'result' && result?.type === 'gct' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-black">
-                <span className="text-[#f0c040]">{result.stockName}</span> — GCT Analysis
-              </h2>
+              <h2 className="text-lg font-black"><span className="text-[#f0c040]">{result.stockName}</span> — GCT</h2>
               <button onClick={() => { setStep('input'); setResult(null); setCsvData([]); }}
-                className="px-4 py-2 text-xs font-bold border border-[#1e1e2e] rounded-lg hover:border-[#f0c040] transition-all">
-                ← New Analysis
-              </button>
+                className="px-4 py-2 text-xs font-bold border border-[#1e1e2e] rounded-lg hover:border-[#f0c040] transition-all">← New Analysis</button>
             </div>
-
-            {/* Zone Card */}
             <div className="rounded-2xl p-6 text-center"
               style={{ background: `linear-gradient(135deg, #0a0a0f, ${zoneColor(result.zone)}15)`, border: `1px solid ${zoneColor(result.zone)}40` }}>
               <div className="text-xs font-mono tracking-widest mb-2" style={{ color: zoneColor(result.zone) }}>⚛ GRAVITATIONAL COST THEORY</div>
@@ -786,8 +720,6 @@ export default function StockAnalysis() {
               </div>
               <div className="text-xs font-mono text-[#6b6b85] mt-2">{result.dataMonths} months · {result.firstDate} to {result.lastDate}</div>
             </div>
-
-            {/* 4 Key Levels */}
             <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
               <div className="text-sm font-black mb-4 text-[#f0c040]">📊 4 Key Technical Levels</div>
               <div className="space-y-3">
@@ -815,8 +747,6 @@ export default function StockAnalysis() {
                 })}
               </div>
             </div>
-
-            {/* Crash Map */}
             <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
               <div className="text-sm font-black mb-4 text-[#f0c040]">💥 Crash Buying Map</div>
               <div className="overflow-x-auto">
@@ -828,8 +758,7 @@ export default function StockAnalysis() {
                   </tr></thead>
                   <tbody>
                     {result.crashLevels.map((cl: any, i: number) => {
-                      const isCurrent = result.currentPrice <= cl.price &&
-                        (i === 0 || result.currentPrice > result.crashLevels[i-1].price);
+                      const isCurrent = result.currentPrice <= cl.price && (i === 0 || result.currentPrice > result.crashLevels[i-1].price);
                       return (
                         <tr key={i} className={`border-b border-[#1e1e2e]/50 ${isCurrent ? 'bg-[#f0c040]/10' : ''}`}>
                           <td className="px-3 py-3 font-bold">{cl.emoji} L{cl.level}</td>
@@ -843,8 +772,6 @@ export default function StockAnalysis() {
                 </table>
               </div>
             </div>
-
-            {/* FSS */}
             {result.fssChecks?.length > 0 && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
                 <div className="text-sm font-black mb-4 text-[#f0c040]">🔬 Fundamental Safety Score</div>
@@ -866,8 +793,6 @@ export default function StockAnalysis() {
                 </div>
               </div>
             )}
-
-            {/* Verdict */}
             <div className="bg-gradient-to-r from-[#f0c040]/10 to-transparent border border-[#f0c040]/30 rounded-2xl p-6">
               <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">⚛ God Particle Verdict</div>
               <div className="text-sm font-bold leading-relaxed">
@@ -881,20 +806,14 @@ export default function StockAnalysis() {
           </div>
         )}
 
-        {/* OPTIONS RESULTS — God Particle */}
+        {/* OPTIONS RESULTS */}
         {canAccess && step === 'result' && result?.type === 'options' && (
           <div>
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-black">
-                <span className="text-[#f0c040]">{result.stockName} {result.strike} {result.optType}</span>
-              </h2>
+              <h2 className="text-lg font-black"><span className="text-[#f0c040]">{result.stockName} {result.strike} {result.optType}</span></h2>
               <button onClick={() => { setStep('input'); setResult(null); setOptCsvData([]); }}
-                className="px-4 py-2 text-xs font-bold border border-[#1e1e2e] rounded-lg hover:border-[#f0c040] transition-all">
-                ← New Analysis
-              </button>
+                className="px-4 py-2 text-xs font-bold border border-[#1e1e2e] rounded-lg hover:border-[#f0c040] transition-all">← New Analysis</button>
             </div>
-
-            {/* Admin Card */}
             {isAdmin && (
               <div className="bg-gradient-to-r from-[#f0c040]/10 to-[#f0c040]/5 border border-[#f0c040]/30 rounded-2xl p-6 mb-6 flex items-center gap-8 flex-wrap">
                 <div>
@@ -910,8 +829,6 @@ export default function StockAnalysis() {
                 </div>
               </div>
             )}
-
-            {/* Customer Card */}
             {!isAdmin && (
               <div className="rounded-2xl p-6 mb-6 text-center relative overflow-hidden"
                 style={{
@@ -936,16 +853,13 @@ export default function StockAnalysis() {
                       border: result.optType === 'CE' ? '1px solid rgba(57,217,138,0.3)' : '1px solid rgba(255,77,109,0.3)'
                     }}>
                     <div className="text-xs font-mono text-[#6b6b85] mb-1 uppercase tracking-widest">⚛ God Particle</div>
-                    <div className="text-4xl font-black"
-                      style={{ color: result.optType === 'CE' ? '#39d98a' : '#ff4d6d' }}>
+                    <div className="text-4xl font-black" style={{ color: result.optType === 'CE' ? '#39d98a' : '#ff4d6d' }}>
                       ₹{result.pcb?.toFixed(1)}
                     </div>
                   </div>
                 </div>
               </div>
             )}
-
-            {/* Tabs */}
             <div className="flex gap-1 bg-[#111118] rounded-xl p-1 mb-6 overflow-x-auto">
               {(isAdmin ? adminTabs : customerTabs).map((t, i) => (
                 <button key={t} onClick={() => setActiveTab(t)}
@@ -954,8 +868,6 @@ export default function StockAnalysis() {
                 </button>
               ))}
             </div>
-
-            {/* Raw */}
             {activeTab === 'raw' && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
                 <table className="w-full text-xs font-mono">
@@ -980,8 +892,6 @@ export default function StockAnalysis() {
                 </table>
               </div>
             )}
-
-            {/* Story */}
             {activeTab === 'story' && (
               <div className="rounded-xl p-6"
                 style={{
@@ -1006,15 +916,11 @@ export default function StockAnalysis() {
                         {ins}
                       </div>
                     ))}
-                    <div className="mt-4 text-center text-[10px] font-mono text-[#6b6b85]">
-                      Not Financial Advice · God Particle ⚛
-                    </div>
+                    <div className="mt-4 text-center text-[10px] font-mono text-[#6b6b85]">Not Financial Advice · God Particle ⚛</div>
                   </div>
                 )}
               </div>
             )}
-
-            {/* Matrix */}
             {activeTab === 'matrix' && (
               <div className="relative rounded-2xl overflow-hidden p-8"
                 style={{
@@ -1028,14 +934,10 @@ export default function StockAnalysis() {
                 <div className="relative z-10 text-center mb-8">
                   <div className="text-xs font-mono tracking-[3px] mb-3"
                     style={{ color: result.optType === 'CE' ? '#39d98a' : '#ff4d6d' }}>⚛ GOD PARTICLE ANALYSIS</div>
-                  <div className="text-3xl font-black tracking-tight mb-2">
-                    STRIKE: <span style={{ color: result.optType === 'CE' ? '#39d98a' : '#ff4d6d' }}>
-                      {result.strike} {result.optType}
-                    </span>
+                  <div className="text-3xl font-black mb-2">
+                    STRIKE: <span style={{ color: result.optType === 'CE' ? '#39d98a' : '#ff4d6d' }}>{result.strike} {result.optType}</span>
                   </div>
-                  <div className="text-sm font-mono text-[#6b6b85]">
-                    {result.stockName} · EXPIRY: {result.expiry?.toUpperCase()}
-                  </div>
+                  <div className="text-sm font-mono text-[#6b6b85]">{result.stockName} · EXPIRY: {result.expiry?.toUpperCase()}</div>
                 </div>
                 <div className="relative z-10 overflow-x-auto mb-8">
                   <table className="w-full font-mono text-sm">
@@ -1072,9 +974,7 @@ export default function StockAnalysis() {
                 <div className="relative z-10 text-center space-y-2">
                   <div className="text-xs font-mono text-[#6b6b85]">⭐ Best Setup · Wait 15 min after open · Not Financial Advice</div>
                   <div className="text-xs font-black tracking-widest"
-                    style={{ color: result.optType === 'CE' ? '#39d98a' : '#ff4d6d' }}>
-                    DEVELOPED BY GOD PARTICLE ⚛
-                  </div>
+                    style={{ color: result.optType === 'CE' ? '#39d98a' : '#ff4d6d' }}>DEVELOPED BY GOD PARTICLE ⚛</div>
                 </div>
               </div>
             )}
