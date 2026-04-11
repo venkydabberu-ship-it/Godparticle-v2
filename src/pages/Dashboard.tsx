@@ -20,9 +20,8 @@ export default function Dashboard() {
   const role = profile?.role ?? 'free';
   const isAdmin = role === 'admin';
 
-  // Check if today is expiry day
   const today = new Date();
-  const dayOfWeek = today.getDay(); // 2=Tuesday, 4=Thursday
+  const dayOfWeek = today.getDay();
   const isTuesday = dayOfWeek === 2;
   const isThursday = dayOfWeek === 4;
   const isExpiryDay = isTuesday || isThursday;
@@ -34,7 +33,6 @@ export default function Dashboard() {
   }, [user]);
 
   async function loadDashboard() {
-    // Load recent analyses
     const { data: analysesData } = await supabase
       .from('analyses')
       .select('*')
@@ -43,16 +41,13 @@ export default function Dashboard() {
       .limit(5);
     if (analysesData) setAnalyses(analysesData);
 
-    // Load latest Z2H signal
     const { data: z2hData } = await supabase
-      .from('zero_hero_signals')
+      .from('z2h_signals')
       .select('*')
-      .eq('signal_status', 'ACTIVE')
       .order('created_at', { ascending: false })
       .limit(1);
     if (z2hData?.[0]) setZ2hSignal(z2hData[0]);
 
-    // Load announcement
     const { data: announcementData } = await supabase
       .from('admin_settings')
       .select('value')
@@ -60,7 +55,6 @@ export default function Dashboard() {
       .single();
     if (announcementData?.value) setAnnouncement(announcementData.value);
 
-    // Load my queries
     const { data: queriesData } = await supabase
       .from('customer_queries')
       .select('*')
@@ -99,7 +93,6 @@ export default function Dashboard() {
     }
   }
 
-  // Next expiry countdown
   const getNextExpiry = () => {
     const now = new Date();
     const day = now.getDay();
@@ -142,14 +135,14 @@ export default function Dashboard() {
 
       <div className="relative z-10 max-w-4xl mx-auto px-6 py-8 space-y-6">
 
-        {/* Announcement banner */}
+        {/* Announcement */}
         {announcement && (
           <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl px-4 py-3 text-xs font-mono text-[#f0c040]">
             📢 {announcement}
           </div>
         )}
 
-        {/* Welcome + Stats */}
+        {/* Welcome */}
         <div>
           <h1 className="text-2xl font-black mb-1">
             Welcome back, <span className="text-[#f0c040]">{profile?.username}</span> 👋
@@ -157,13 +150,13 @@ export default function Dashboard() {
           <p className="text-xs font-mono text-[#6b6b85]">Ready to find the God Particle today?</p>
         </div>
 
-        {/* Stats Cards */}
+        {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: 'Credits', value: ['premium','admin','pro'].includes(role) ? '∞' : profile?.credits ?? 0, icon: '⚡', color: '#f0c040' },
-            { label: 'Plan', value: role.toUpperCase(), icon: '👑', color: '#f0c040' },
-            { label: 'Analyses Done', value: analyses.length, icon: '🔬', color: '#4d9fff' },
-            { label: 'Cost Per Analysis', value: '2 credits', icon: '💰', color: '#39d98a' }
+            { label: 'Credits', value: ['premium','admin','pro'].includes(role) ? '∞' : profile?.credits ?? 0, color: '#f0c040' },
+            { label: 'Plan', value: role.toUpperCase(), color: '#f0c040' },
+            { label: 'Analyses Done', value: analyses.length, color: '#4d9fff' },
+            { label: 'Cost Per Analysis', value: '2 credits', color: '#39d98a' }
           ].map((stat, i) => (
             <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4">
               <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-1">{stat.label}</div>
@@ -172,19 +165,19 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* LOW CREDITS WARNING */}
+        {/* Low credits warning */}
         {!['premium','admin','pro'].includes(role) && (profile?.credits ?? 0) < 10 && (
           <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl px-4 py-3 flex items-center justify-between">
             <div className="text-xs font-mono text-[#ff4d6d]">
               ⚠️ Low credits! You have {profile?.credits} credits left ({Math.floor((profile?.credits ?? 0) / 2)} analyses remaining)
             </div>
-            <Link to="/pricing" className="bg-[#f0c040] text-black text-xs font-black px-3 py-1.5 rounded-lg hover:bg-[#ffd060] transition-all">
+            <Link to="/pricing" className="bg-[#f0c040] text-black text-xs font-black px-3 py-1.5 rounded-lg">
               Buy Credits
             </Link>
           </div>
         )}
 
-        {/* ZERO TO HERO SECTION */}
+        {/* ZERO TO HERO */}
         <div className={`rounded-2xl p-6 border ${isExpiryDay ? 'border-[#39d98a]/30 bg-[#39d98a]/5' : 'border-[#1e1e2e] bg-[#111118]'}`}>
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -223,7 +216,7 @@ export default function Dashboard() {
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
                   <div className="text-xs font-mono text-[#6b6b85] mb-1">Strike</div>
-                  <div className="text-lg font-black text-[#39d98a]">{z2hSignal.strike} {z2hSignal.option_type}</div>
+                  <div className="text-lg font-black text-[#39d98a]">{z2hSignal.selected_strike} {z2hSignal.option_type}</div>
                 </div>
                 <div>
                   <div className="text-xs font-mono text-[#6b6b85] mb-1">Direction</div>
@@ -237,7 +230,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Locked preview for non-premium */}
+          {/* Locked preview */}
           {isExpiryDay && !['premium','pro','admin'].includes(role) && (
             <div className="bg-[#0a0a0f] rounded-xl p-4 border border-[#1e1e2e] relative overflow-hidden">
               <div className="absolute inset-0 backdrop-blur-sm bg-[#0a0a0f]/80 flex items-center justify-center z-10">
@@ -259,15 +252,15 @@ export default function Dashboard() {
         {/* QUICK ACTIONS */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Link to="/analysis"
-            className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#f0c040] transition-all group">
+            className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#f0c040] transition-all">
             <div className="text-2xl mb-2">⚛</div>
             <div className="font-black text-sm text-[#f0c040] mb-1">God Particle Analysis</div>
             <div className="text-xs font-mono text-[#6b6b85]">Analyse any option strike — 2 credits per analysis</div>
           </Link>
 
           {['premium','pro','admin'].includes(role) ? (
-            <Link to="/stock-gct"
-              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#4d9fff] transition-all group">
+            <Link to="/stock-analysis"
+              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#4d9fff] transition-all">
               <div className="text-2xl mb-2">📊</div>
               <div className="font-black text-sm text-[#4d9fff] mb-1">Stock Intelligence</div>
               <div className="text-xs font-mono text-[#6b6b85]">Gravitational levels for any large-cap stock</div>
@@ -282,7 +275,7 @@ export default function Dashboard() {
           )}
 
           <Link to="/pricing"
-            className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#39d98a] transition-all group">
+            className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#39d98a] transition-all">
             <div className="text-2xl mb-2">💳</div>
             <div className="font-black text-sm text-[#39d98a] mb-1">Upgrade Plan</div>
             <div className="text-xs font-mono text-[#6b6b85]">Basic ₹100/month · Premium ₹300/month</div>
@@ -299,7 +292,7 @@ export default function Dashboard() {
             <div className="text-center py-8">
               <div className="text-3xl mb-3">🔬</div>
               <div className="text-sm font-mono text-[#6b6b85] mb-3">No analyses yet. Run your first God Particle analysis!</div>
-              <Link to="/analysis" className="bg-[#f0c040] text-black text-xs font-black px-6 py-2.5 rounded-xl hover:bg-[#ffd060] transition-all">
+              <Link to="/analysis" className="bg-[#f0c040] text-black text-xs font-black px-6 py-2.5 rounded-xl">
                 Start Analysing →
               </Link>
             </div>
@@ -325,7 +318,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* QUERY / FEEDBACK SECTION */}
+        {/* QUERY SECTION */}
         <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
           <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4 flex items-center gap-2">
             <span className="w-1 h-4 bg-[#4d9fff] rounded block" />
@@ -373,7 +366,6 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* My Queries List */}
           {showQueries && myQueries.length > 0 && (
             <div className="mt-4 space-y-2">
               {myQueries.map((q, i) => (
