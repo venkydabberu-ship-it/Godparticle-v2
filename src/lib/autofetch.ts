@@ -1,14 +1,5 @@
 import { supabase } from './supabase';
 
-const ANON_KEY = 'sb_publishable_tP6_kK4impqvOQhdpko4UA_I6hWtPhd';
-const FUNCTION_URL = 'https://msknryditzgmiawrxcea.supabase.co/functions/v1/fetch-nse-data';
-
-const HEADERS = {
-  'Content-Type': 'application/json',
-  'Authorization': `Bearer ${ANON_KEY}`,
-  'apikey': ANON_KEY,
-};
-
 // ── CALL EDGE FUNCTION ──
 async function callEdge(type: string, symbol?: string, expiry?: string) {
   const { data, error } = await supabase.functions.invoke('fetch-nse-data', {
@@ -28,6 +19,11 @@ async function saveMarketData(
   category: string = 'index'
 ) {
   try {
+    // Skip if no strike data (holiday / market closed)
+    if (!strikeData || Object.keys(strikeData).length === 0) {
+      return { status: 'empty' };
+    }
+
     const { data: existing } = await supabase
       .from('market_data')
       .select('id')
@@ -49,9 +45,30 @@ async function saveMarketData(
     });
 
     return { status: 'saved' };
-  } catch {
-    return { status: 'error' };
+  } catch (err: any) {
+    return { status: 'error', error: err.message };
   }
+}
+
+// ── SAVE Z2H SNAPSHOT ──
+async function saveZ2HSnapshot(
+  indexName: string,
+  expiry: string,
+  snapshotType: string,
+  spotPrice: number,
+  maxPain: number,
+  vix: number
+) {
+  try {
+    await supabase.from('z2h_snapshots').insert({
+      index_name: indexName,
+      expiry_date: expiry,
+      snapshot_type: snapshotType,
+      spot_price: spotPrice,
+      max_pain: maxPain,
+      vix
+    });
+  } catch {}
 }
 
 // ── CALCULATE MAX PAIN ──
@@ -71,224 +88,135 @@ function calculateMaxPain(strikes: Record<string, any>): number {
   return maxPainStrike;
 }
 
-// ── SAVE Z2H SNAPSHOT ──
-async function saveZ2HSnapshot(
-  indexName: string, expiry: string,
-  snapshotType: string, spotPrice: number, maxPain: number
+// ── PROCESS ONE INDEX ──
+async function processIndex(
+  indexKey: string,
+  indexName: string,
+  edgeType: string,
+  tradeDate: string,
+  results: any[],
+  isZ2H: boolean = false
 ) {
   try {
-    await supabase.from('z2h_snapshots').insert({
-      index_name: indexName,
-      expiry_date: expiry,
-      snapshot_type: snapshotType,
-      spot_price: spotPrice,
-      max_pain: maxPain,
-      vix: 0
-    });
-  } catch {}
-}
+    const expiryData = await callEdge(edgeType);
 
-// ── ALL STOCKS LIST ──
-const ALL_STOCKS = [
-  'HDFCBANK','SBIN','ICICIBANK','KOTAKBANK','AXISBANK',
-  'TCS','INFY','WIPRO','HCLTECH','TECHM',
-  'MARUTI','TATAMOTORS','M&M','BAJAJ-AUTO','HEROMOTOCO',
-  'SUNPHARMA','DRREDDY','CIPLA','DIVISLAB','APOLLOHOSP',
-  'HINDUNILVR','ITC','NESTLEIND','BRITANNIA','DABUR',
-  'RELIANCE','ONGC','IOC','BPCL','GAIL',
-  'HAL','BEL','BHEL','NTPC','POWERGRID',
-  'TATASTEEL','HINDALCO','JSWSTEEL','VEDL','COALINDIA',
-  'DLF','GODREJPROP','OBEROIRLTY','PRESTIGE','PHOENIXLTD',
-  'ADANIENT','BAJFINANCE','LT','SIEMENS','ADANIPORTS',
-];
-
-// ── DEFAULT INDICES ──
-const DEFAULT_INDICES = [
-  { key: 'NIFTY50', exchange: 'NSE', expiry: 'weekly' },
-  { key: 'SENSEX', exchange: 'BSE', expiry: 'weekly' },
-  { key: 'BANKNIFTY', exchange: 'NSE', expiry: 'monthly' },
-  { key: 'FINNIFTY', exchange: 'NSE', expiry: 'monthly' },
-  { key: 'MIDCAPNIFTY', exchange: 'NSE', expiry: 'monthly' },
-  { key: 'NIFTYNEXT50', exchange: 'NSE', expiry: 'monthly' },
-  { key: 'BANKEX', exchange: 'BSE', expiry: 'monthly' },
-];
-
-// ── MAIN AUTO FETCH ──
-export async function runDailyAutoFetch(adminUserId: string) {
-  const results: any[] = [];
-  const today = new Date().toISOString().split('T')[0];
-
-  // ── GET EXPIRIES ──
-  let nseWeekly: string[] = [];
-  let nseMonthly: string[] = [];
-  let bseWeekly: string[] = [];
-  let bseMonthly: string[] = [];
-
-  try {
-    const res = await fetch(FUNCTION_URL, {
-      method: 'POST',
-      headers: HEADERS,
-      body: JSON.stringify({ type: 'get_expiries' }),
-      signal: AbortSignal.timeout(10000)
-    });
-    const json = await res.json();
-    nseWeekly = json?.data?.nse_weekly || [];
-    nseMonthly = json?.data?.nse_monthly || [];
-    bseWeekly = json?.data?.bse_weekly || [];
-    bseMonthly = json?.data?.bse_monthly || [];
-  } catch {
-    // Local fallback
-    const now = new Date();
-    for (let i = 0; i <= 35; i++) {
-      const d = new Date(now);
-      d.setDate(now.getDate() + i);
-      if (d.getDay() === 2 && nseWeekly.length < 4)
-        nseWeekly.push(d.toISOString().split('T')[0]);
-      if (d.getDay() === 4 && bseWeekly.length < 4)
-        bseWeekly.push(d.toISOString().split('T')[0]);
-    }
-    let month = now.getMonth(); let year = now.getFullYear();
-    while (nseMonthly.length < 4) {
-      const lastDay = new Date(year, month + 1, 0);
-      let d = new Date(lastDay);
-      while (d.getDay() !== 2) d.setDate(d.getDate() - 1);
-      nseMonthly.push(d.toISOString().split('T')[0]);
-      month++; if (month > 11) { month = 0; year++; }
-    }
-    month = now.getMonth(); year = now.getFullYear();
-    while (bseMonthly.length < 4) {
-      const lastDay = new Date(year, month + 1, 0);
-      let d = new Date(lastDay);
-      while (d.getDay() !== 4) d.setDate(d.getDate() - 1);
-      bseMonthly.push(d.toISOString().split('T')[0]);
-      month++; if (month > 11) { month = 0; year++; }
-    }
-  }
-
-  // Load custom config
-  let indices = DEFAULT_INDICES;
-  let customStocks = ALL_STOCKS;
-  try {
-    const { data: configData } = await supabase.from('admin_settings').select('*')
-      .in('key', ['autofetch_indices', 'autofetch_sectors']);
-    if (configData) {
-      configData.forEach(s => {
-        if (s.key === 'autofetch_indices') try { indices = JSON.parse(s.value); } catch {}
-        if (s.key === 'autofetch_sectors') {
-          try {
-            const sectors = JSON.parse(s.value);
-            customStocks = [...new Set(sectors.flatMap((s: any) => s.stocks))];
-          } catch {}
-        }
-      });
-    }
-  } catch {}
-
-  // ── STEP 1: ALL INDICES ──
-  for (const idx of indices) {
-    let expiries: string[] = [];
-    if (idx.expiry === 'weekly') {
-      const weekly = idx.exchange === 'NSE' ? nseWeekly : bseWeekly;
-      const monthly = idx.exchange === 'NSE' ? nseMonthly : bseMonthly;
-      expiries = [...new Set([...weekly, ...monthly])];
-    } else {
-      expiries = idx.exchange === 'NSE' ? nseMonthly : bseMonthly;
+    if (!expiryData || !Array.isArray(expiryData)) {
+      results.push({ index: indexKey, status: 'error', error: 'No data returned' });
+      return;
     }
 
-    const isZ2H = idx.key === 'NIFTY50' || idx.key === 'SENSEX';
+    for (const item of expiryData) {
+      if (!item.expiry) continue;
 
-    for (const exp of expiries) {
-      try {
-        await new Promise(r => setTimeout(r, 800));
-        const res = await fetch(FUNCTION_URL, {
-          method: 'POST',
-          headers: HEADERS,
-          body: JSON.stringify({ type: 'single_expiry', symbol: idx.key, expiry: exp }),
-          signal: AbortSignal.timeout(15000)
-        });
-        const json = await res.json();
+      const strikeCount = Object.keys(item.strikes || {}).length;
 
-        if (!json?.success || !json?.data?.strikes || Object.keys(json.data.strikes).length === 0) {
-          results.push({ index: idx.key, expiry: exp, status: 'empty' });
-          continue;
-        }
-
-        const result = await saveMarketData(idx.key, exp, today, json.data.strikes, 'index');
+      if (strikeCount === 0) {
         results.push({
-          index: idx.key, expiry: exp,
-          status: result.status,
-          strikes: Object.keys(json.data.strikes).length
+          index: indexKey,
+          expiry: item.expiry,
+          status: 'empty',
+          error: item.error || 'Market closed / holiday'
         });
-
-        // Z2H snapshot
-        if (isZ2H && result.status === 'saved') {
-          const maxPain = calculateMaxPain(json.data.strikes);
-          const expiryDate = new Date(exp);
-          const todayDate = new Date(today);
-          const dayBefore = new Date(expiryDate);
-          dayBefore.setDate(expiryDate.getDate() - 1);
-          if (expiryDate.toDateString() === todayDate.toDateString()) {
-            await saveZ2HSnapshot(idx.key, exp, 'EXPIRY_EOD', json.data.spotPrice || 0, maxPain);
-          } else if (dayBefore.toDateString() === todayDate.toDateString()) {
-            await saveZ2HSnapshot(idx.key, exp, 'DAY_BEFORE', json.data.spotPrice || 0, maxPain);
-          }
-        }
-      } catch (e: any) {
-        results.push({ index: idx.key, expiry: exp, status: 'error', error: e.message });
-      }
-    }
-  }
-
-  // ── STEP 2: STOCKS OPTIONS ──
-  for (const stock of customStocks) {
-    for (const exp of nseMonthly) {
-      try {
-        await new Promise(r => setTimeout(r, 800));
-        const res = await fetch(FUNCTION_URL, {
-          method: 'POST',
-          headers: HEADERS,
-          body: JSON.stringify({ type: 'single_expiry', symbol: stock, expiry: exp }),
-          signal: AbortSignal.timeout(15000)
-        });
-        const json = await res.json();
-
-        if (!json?.success || !json?.data?.strikes || Object.keys(json.data.strikes).length === 0) {
-          results.push({ index: stock, expiry: exp, status: 'empty' });
-          continue;
-        }
-
-        const result = await saveMarketData(stock, exp, today, json.data.strikes, 'stock');
-        results.push({
-          index: stock, expiry: exp,
-          status: result.status,
-          strikes: Object.keys(json.data.strikes).length
-        });
-      } catch (e: any) {
-        results.push({ index: stock, expiry: exp, status: 'error', error: e.message });
-      }
-    }
-  }
-
-  // ── STEP 3: STOCKS PRICE ──
-  for (const stock of customStocks) {
-    try {
-      await new Promise(r => setTimeout(r, 800));
-      const res = await fetch(FUNCTION_URL, {
-        method: 'POST',
-        headers: HEADERS,
-        body: JSON.stringify({ type: 'stock_price', symbol: stock }),
-        signal: AbortSignal.timeout(15000)
-      });
-      const json = await res.json();
-      const records = json?.data?.data || [];
-
-      if (!records.length) {
-        results.push({ index: `${stock}_PRICE`, status: 'empty' });
         continue;
       }
 
-      const toSave = records.map((r: any) => ({
-        stock_name: stock,
+      const result = await saveMarketData(
+        indexKey, item.expiry, tradeDate, item.strikes
+      );
+
+      results.push({
+        index: indexKey,
+        expiry: item.expiry,
+        status: result.status,
+        strikes: strikeCount
+      });
+
+      // Z2H snapshot for Nifty + Sensex
+      if (isZ2H && result.status === 'saved') {
+        const maxPain = calculateMaxPain(item.strikes);
+        const expiryDate = new Date(item.expiry);
+        const todayDate = new Date(tradeDate);
+        const dayBefore = new Date(expiryDate);
+        dayBefore.setDate(expiryDate.getDate() - 1);
+
+        if (expiryDate.toDateString() === todayDate.toDateString()) {
+          await saveZ2HSnapshot(indexName, item.expiry, 'EXPIRY_EOD', item.spotPrice || 0, maxPain, 0);
+        } else if (dayBefore.toDateString() === todayDate.toDateString()) {
+          await saveZ2HSnapshot(indexName, item.expiry, 'DAY_BEFORE', item.spotPrice || 0, maxPain, 0);
+        }
+      }
+    }
+  } catch (err: any) {
+    results.push({ index: indexKey, status: 'error', error: err.message });
+  }
+}
+
+// ── PROCESS STOCK OPTIONS ──
+// Saves 4 monthly expiries for each stock
+async function processStockOptions(
+  symbol: string,
+  tradeDate: string,
+  results: any[]
+) {
+  try {
+    const data = await callEdge('stock_chain', symbol);
+
+    if (!data || !data.allExpiries || data.allExpiries.length === 0) {
+      results.push({ index: symbol, status: 'error', error: 'No options data' });
+      return;
+    }
+
+    for (const item of data.allExpiries) {
+      if (!item.expiry) continue;
+
+      const strikeCount = Object.keys(item.strikes || {}).length;
+
+      if (strikeCount === 0) {
+        results.push({
+          index: symbol,
+          expiry: item.expiry,
+          status: 'empty',
+          error: item.error || 'No data for this expiry'
+        });
+        continue;
+      }
+
+      const result = await saveMarketData(
+        symbol.toUpperCase(),
+        item.expiry,
+        tradeDate,
+        item.strikes,
+        'stock'  // ✅ category = stock
+      );
+
+      results.push({
+        index: symbol,
+        expiry: item.expiry,
+        status: result.status,
+        strikes: strikeCount
+      });
+    }
+  } catch (err: any) {
+    results.push({ index: symbol, status: 'error', error: err.message });
+  }
+}
+
+// ── PROCESS STOCK PRICE ──
+// Saves 14 months of daily OHLC
+async function processStockPrice(symbol: string, results: any[]) {
+  try {
+    const data = await callEdge('stock_price', symbol);
+    const records = data?.data || [];
+
+    if (!records.length) {
+      results.push({ index: `${symbol}_PRICE`, status: 'empty', error: 'No price data' });
+      return;
+    }
+
+    const toSave = records
+      .filter((r: any) => r.CH_TIMESTAMP && parseFloat(r.CH_CLOSING_PRICE) > 0)
+      .map((r: any) => ({
+        stock_name: symbol.toUpperCase(),
         trade_date: r.CH_TIMESTAMP,
         open: parseFloat(r.CH_OPENING_PRICE || 0),
         high: parseFloat(r.CH_TRADE_HIGH_PRICE || 0),
@@ -297,64 +225,190 @@ export async function runDailyAutoFetch(adminUserId: string) {
         volume: parseFloat(r.CH_TOT_TRADED_QTY || 0),
       }));
 
-      await supabase.from('stock_price_data')
-        .upsert(toSave, { onConflict: 'stock_name,trade_date' });
-
-      results.push({ index: `${stock}_PRICE`, status: 'saved', strikes: records.length });
-    } catch (e: any) {
-      results.push({ index: `${stock}_PRICE`, status: 'error', error: e.message });
+    if (toSave.length === 0) {
+      results.push({ index: `${symbol}_PRICE`, status: 'empty', error: 'No valid candles' });
+      return;
     }
+
+    await supabase
+      .from('stock_price_data')
+      .upsert(toSave, { onConflict: 'stock_name,trade_date' });
+
+    results.push({
+      index: `${symbol}_PRICE`,
+      status: 'saved',
+      strikes: toSave.length
+    });
+  } catch (err: any) {
+    results.push({ index: `${symbol}_PRICE`, status: 'error', error: err.message });
   }
+}
+
+// ── LOAD CONFIG FROM SUPABASE ──
+async function loadConfig() {
+  const { data } = await supabase
+    .from('admin_settings')
+    .select('*')
+    .in('key', ['autofetch_indices', 'autofetch_sectors']);
+
+  let indices = DEFAULT_INDICES;
+  let sectors = DEFAULT_SECTORS;
+
+  if (data) {
+    data.forEach((s: any) => {
+      if (s.key === 'autofetch_indices') {
+        try { indices = JSON.parse(s.value); } catch {}
+      }
+      if (s.key === 'autofetch_sectors') {
+        try { sectors = JSON.parse(s.value); } catch {}
+      }
+    });
+  }
+  return { indices, sectors };
+}
+
+// ── DEFAULT CONFIG ──
+const DEFAULT_INDICES = [
+  { key: 'NIFTY50',     name: 'Nifty 50',          exchange: 'NSE', expiry: 'weekly',  edgeType: 'nifty_chain' },
+  { key: 'SENSEX',      name: 'Sensex',             exchange: 'BSE', expiry: 'weekly',  edgeType: 'sensex_chain' },
+  { key: 'BANKNIFTY',   name: 'Bank Nifty',         exchange: 'NSE', expiry: 'monthly', edgeType: 'banknifty_chain' },
+  { key: 'FINNIFTY',    name: 'Fin Nifty',          exchange: 'NSE', expiry: 'monthly', edgeType: 'finnifty_chain' },
+  { key: 'MIDCAPNIFTY', name: 'Midcap Nifty',       exchange: 'NSE', expiry: 'monthly', edgeType: 'midcapnifty_chain' },
+  { key: 'NIFTYNEXT50', name: 'Nifty Next 50',      exchange: 'NSE', expiry: 'monthly', edgeType: 'niftynext50_chain' },
+  { key: 'BANKEX',      name: 'Bankex',             exchange: 'BSE', expiry: 'monthly', edgeType: 'bankex_chain' },
+];
+
+const DEFAULT_SECTORS = [
+  { name: 'Banking',      stocks: ['HDFCBANK', 'SBIN', 'ICICIBANK', 'KOTAKBANK', 'AXISBANK'] },
+  { name: 'IT',           stocks: ['TCS', 'INFY', 'WIPRO', 'HCLTECH', 'TECHM'] },
+  { name: 'Auto',         stocks: ['MARUTI', 'TATAMOTORS', 'M&M', 'BAJAJ-AUTO', 'HEROMOTOCO'] },
+  { name: 'Pharma',       stocks: ['SUNPHARMA', 'DRREDDY', 'CIPLA', 'DIVISLAB', 'APOLLOHOSP'] },
+  { name: 'FMCG',         stocks: ['HINDUNILVR', 'ITC', 'NESTLEIND', 'BRITANNIA', 'DABUR'] },
+  { name: 'Energy/Oil',   stocks: ['RELIANCE', 'ONGC', 'IOC', 'BPCL', 'GAIL'] },
+  { name: 'Defence/PSU',  stocks: ['HAL', 'BEL', 'BHEL', 'NTPC', 'POWERGRID'] },
+  { name: 'Metals',       stocks: ['TATASTEEL', 'HINDALCO', 'JSWSTEEL', 'VEDL', 'COALINDIA'] },
+  { name: 'Realty',       stocks: ['DLF', 'GODREJPROP', 'OBEROIRLTY', 'PRESTIGE', 'PHOENIXLTD'] },
+  { name: 'Conglomerate', stocks: ['ADANIENT', 'BAJFINANCE', 'LT', 'SIEMENS', 'ADANIPORTS'] },
+];
+
+// ── MAIN AUTO FETCH ──
+export async function runDailyAutoFetch(adminUserId: string) {
+  const results: any[] = [];
+
+  console.log(`🚀 Starting complete auto-fetch...`);
+
+  // Get effective trade date from edge function (handles holidays)
+  let tradeDate = new Date().toISOString().split('T')[0];
+  try {
+    const expData = await callEdge('get_expiries');
+    if (expData?.trade_date) tradeDate = expData.trade_date;
+    if (expData?.is_holiday) {
+      results.push({
+        index: 'SYSTEM',
+        status: 'info',
+        error: `Today is holiday — using trade date: ${tradeDate}`
+      });
+    }
+  } catch {}
+
+  // Load admin config
+  const { indices, sectors } = await loadConfig();
+
+  // ── STEP 1: ALL INDICES ──
+  for (const idx of indices) {
+    await new Promise(r => setTimeout(r, 500));
+    const isZ2H = idx.key === 'NIFTY50' || idx.key === 'SENSEX';
+    await processIndex(idx.key, idx.name, idx.edgeType, tradeDate, results, isZ2H);
+  }
+
+  // ── STEP 2: ALL STOCKS ──
+  const allStocks = sectors.flatMap((s: any) => s.stocks);
+  const uniqueStocks = [...new Set(allStocks)] as string[];
+
+  for (const stock of uniqueStocks) {
+    await new Promise(r => setTimeout(r, 400));
+
+    // Stock options — 4 monthly expiries
+    await processStockOptions(stock, tradeDate, results);
+
+    await new Promise(r => setTimeout(r, 300));
+
+    // Stock price — 14 months historical
+    await processStockPrice(stock, results);
+  }
+
+  const saved = results.filter(r => r.status === 'saved').length;
+  const errors = results.filter(r => r.status === 'error').length;
+  console.log(`✅ Done: ${saved} saved, ${errors} errors`);
 
   return results;
 }
 
-// ── STANDALONE EXPORTS ──
+// ── STANDALONE: AUTO FETCH SINGLE STOCK PRICE ──
 export async function autoFetchStockPrice(symbol: string): Promise<any[]> {
   const data = await callEdge('stock_price', symbol);
   const records = data?.data || [];
   if (!records.length) throw new Error(`No price data for ${symbol}`);
 
-  const toSave = records.map((r: any) => ({
-    stock_name: symbol.toUpperCase(),
-    trade_date: r.CH_TIMESTAMP,
-    open: parseFloat(r.CH_OPENING_PRICE || 0),
-    high: parseFloat(r.CH_TRADE_HIGH_PRICE || 0),
-    low: parseFloat(r.CH_TRADE_LOW_PRICE || 0),
-    close: parseFloat(r.CH_CLOSING_PRICE || 0),
-    volume: parseFloat(r.CH_TOT_TRADED_QTY || 0),
-  }));
+  const toSave = records
+    .filter((r: any) => r.CH_TIMESTAMP && parseFloat(r.CH_CLOSING_PRICE) > 0)
+    .map((r: any) => ({
+      stock_name: symbol.toUpperCase(),
+      trade_date: r.CH_TIMESTAMP,
+      open: parseFloat(r.CH_OPENING_PRICE || 0),
+      high: parseFloat(r.CH_TRADE_HIGH_PRICE || 0),
+      low: parseFloat(r.CH_TRADE_LOW_PRICE || 0),
+      close: parseFloat(r.CH_CLOSING_PRICE || 0),
+      volume: parseFloat(r.CH_TOT_TRADED_QTY || 0),
+    }));
 
-  await supabase.from('stock_price_data')
+  await supabase
+    .from('stock_price_data')
     .upsert(toSave, { onConflict: 'stock_name,trade_date' });
 
   return toSave;
 }
 
+// ── STANDALONE: AUTO FETCH SINGLE STOCK OPTIONS ──
 export async function autoFetchStockOptions(
-  symbol: string, expiry: string
+  symbol: string,
+  expiry: string
 ): Promise<Record<string, any>> {
-  const data = await callEdge('single_expiry', symbol, expiry);
-  const strikes = data?.strikes || {};
-  if (!Object.keys(strikes).length) throw new Error(`No options data for ${symbol}`);
+  const data = await callEdge('stock_chain', symbol, expiry);
+  const allExpiries = data?.allExpiries || [];
+  const tradeDate = data?.tradeDate || new Date().toISOString().split('T')[0];
 
-  const today = new Date().toISOString().split('T')[0];
+  // Find the requested expiry
+  const item = allExpiries.find((e: any) => e.expiry === expiry) || allExpiries[0];
+  const strikes = item?.strikes || {};
+
+  if (!Object.keys(strikes).length) {
+    throw new Error(`No options data for ${symbol} ${expiry}`);
+  }
+
   const { data: existing } = await supabase
-    .from('market_data').select('id')
+    .from('market_data')
+    .select('id')
     .eq('index_name', symbol.toUpperCase())
     .eq('expiry', expiry)
-    .eq('trade_date', today)
+    .eq('trade_date', tradeDate)
     .limit(1);
 
   if (!existing || existing.length === 0) {
     await supabase.from('market_data').insert({
-      index_name: symbol.toUpperCase(), expiry,
-      trade_date: today, strike_data: strikes,
-      uploaded_by: 'auto-fetch', category: 'stock', timeframe: 'daily'
+      index_name: symbol.toUpperCase(),
+      expiry,
+      trade_date: tradeDate,
+      strike_data: strikes,
+      uploaded_by: 'auto-fetch',
+      category: 'stock',
+      timeframe: 'daily'
     });
   }
+
   return strikes;
 }
+
 
 
 
