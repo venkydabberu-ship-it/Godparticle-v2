@@ -23,6 +23,7 @@ export default function StockAnalysis() {
   const [optFetchLoading, setOptFetchLoading] = useState(false);
   const [optFetchMsg, setOptFetchMsg] = useState('');
   const [optDataSource, setOptDataSource] = useState<'upload' | 'autofetch'>('upload');
+  const [exchange, setExchange] = useState<'NSE' | 'BSE'>('NSE');
   const [pe, setPe] = useState('');
   const [eps, setEps] = useState('');
   const [bookValue, setBookValue] = useState('');
@@ -83,7 +84,7 @@ export default function StockAnalysis() {
 
       // Use Supabase Edge Function
       const { data, error: fnError } = await supabase.functions.invoke('fetch-nse-data', {
-        body: { type: 'stock_price', symbol: stockName.toUpperCase() }
+        body: { type: 'stock_price', symbol: stockName.toUpperCase(), exchange }
       });
 
       if (fnError) throw new Error(fnError.message);
@@ -172,7 +173,7 @@ export default function StockAnalysis() {
 
       // Use Supabase Edge Function
       const { data, error: fnError } = await supabase.functions.invoke('fetch-nse-data', {
-        body: { type: 'stock_chain', symbol: stockName.toUpperCase() }
+        body: { type: 'stock_chain', symbol: stockName.toUpperCase(), exchange }
       });
 
       if (fnError) throw new Error(fnError.message);
@@ -406,6 +407,22 @@ export default function StockAnalysis() {
         dataMonths: data.length,
         firstDate: data[0].date, lastDate: data[data.length-1].date
       });
+
+      // Save manually entered fundamental values to data bank
+      const fundRecord: Record<string, any> = {
+        stock_name: stockName.toUpperCase(),
+        trade_date: new Date().toISOString().split('T')[0],
+        ltp: Math.round(currentPrice),
+      };
+      if (pe)        fundRecord.pe_ratio   = parseFloat(pe);
+      if (eps)       fundRecord.eps        = parseFloat(eps);
+      if (bookValue) fundRecord.book_value = parseFloat(bookValue);
+      if (roce)      fundRecord.roce       = parseFloat(roce);
+      try {
+        await supabase.from('stock_fundamentals')
+          .upsert(fundRecord, { onConflict: 'stock_name,trade_date' });
+      } catch {}
+
       setStep('result');
     } catch (err: any) {
       setError(err.message || 'Analysis failed!');
@@ -518,11 +535,21 @@ export default function StockAnalysis() {
               <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">Step 2 — Stock Details</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">NSE Symbol</label>
-                  <input type="text" value={stockName}
-                    onChange={e => setStockName(e.target.value.toUpperCase())}
-                    placeholder="e.g. RELIANCE, SBI, TCS"
-                    className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                  <label className="block text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">Stock Symbol</label>
+                  <div className="flex gap-2">
+                    <div className="flex rounded-lg overflow-hidden border border-[#1e1e2e] shrink-0">
+                      {(['NSE', 'BSE'] as const).map(ex => (
+                        <button key={ex} onClick={() => setExchange(ex)}
+                          className={`px-3 py-2.5 text-xs font-black transition-all ${exchange === ex ? 'bg-[#f0c040] text-black' : 'bg-[#16161f] text-[#6b6b85]'}`}>
+                          {ex}
+                        </button>
+                      ))}
+                    </div>
+                    <input type="text" value={stockName}
+                      onChange={e => setStockName(e.target.value.toUpperCase())}
+                      placeholder="e.g. RELIANCE, SBI, TCS"
+                      className="flex-1 bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                  </div>
                 </div>
                 {analysisType === 'gct' && (
                   <div>

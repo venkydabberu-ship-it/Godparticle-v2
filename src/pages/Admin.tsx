@@ -81,6 +81,10 @@ export default function Admin() {
   const [dbFundData, setDbFundData] = useState<any[]>([]);
   const [dbFundLoading, setDbFundLoading] = useState(false);
   const [dbFundStats, setDbFundStats] = useState<any>({});
+  const [selectedPriceStock, setSelectedPriceStock] = useState<string | null>(null);
+  const [uniquePriceStocks, setUniquePriceStocks] = useState<string[]>([]);
+  const [selectedFundStock, setSelectedFundStock] = useState<string | null>(null);
+  const [uniqueFundStocks, setUniqueFundStocks] = useState<string[]>([]);
 
   useEffect(() => {
     if (profile?.role !== 'admin') return;
@@ -93,7 +97,7 @@ export default function Admin() {
     if (dbSubTab === 'options') loadDataBank();
     else if (dbSubTab === 'prices') loadStockPrices();
     else if (dbSubTab === 'fundamentals') loadFundamentals();
-  }, [activeTab, dbSubTab, dbFilter, dbSearch, dbDateFilter]);
+  }, [activeTab, dbSubTab, dbFilter, dbSearch, dbDateFilter, selectedPriceStock, selectedFundStock]);
 
   async function loadDataBank() {
     setDbLoading(true);
@@ -142,22 +146,28 @@ export default function Admin() {
   async function loadStockPrices() {
     setDbPriceLoading(true);
     try {
-      let query = supabase
-        .from('stock_price_data')
-        .select('id, stock_name, trade_date, open, high, low, close, volume, created_at')
-        .order('created_at', { ascending: false })
-        .limit(200);
+      // Load unique stock names for folder view
+      const { data: nameRows } = await supabase
+        .from('stock_price_data').select('stock_name').order('stock_name').limit(5000);
+      const names = [...new Set((nameRows || []).map((r: any) => r.stock_name))].sort() as string[];
+      setUniquePriceStocks(names);
+      setDbPriceStats({ total: nameRows?.length || 0, stocks: names.length });
 
-      if (dbSearch) query = query.ilike('stock_name', `%${dbSearch}%`);
-      if (dbDateFilter) query = query.eq('trade_date', dbDateFilter);
-
-      const { data, error } = await query;
-      if (error) throw error;
-      setDbPriceData(data || []);
-
-      const { count: total } = await supabase.from('stock_price_data').select('*', { count: 'exact', head: true });
-      const { count: uniqueStocks } = await supabase.from('stock_price_data').select('stock_name', { count: 'exact', head: true });
-      setDbPriceStats({ total: total || 0, stocks: uniqueStocks || 0 });
+      // If a stock is selected, load its records
+      if (selectedPriceStock) {
+        let query = supabase
+          .from('stock_price_data')
+          .select('id, stock_name, trade_date, open, high, low, close, volume, created_at')
+          .eq('stock_name', selectedPriceStock)
+          .order('trade_date', { ascending: false })
+          .limit(200);
+        if (dbDateFilter) query = query.eq('trade_date', dbDateFilter);
+        const { data, error } = await query;
+        if (error) throw error;
+        setDbPriceData(data || []);
+      } else {
+        setDbPriceData([]);
+      }
     } catch (err: any) {
       console.error('loadStockPrices error:', err);
     } finally {
@@ -168,12 +178,20 @@ export default function Admin() {
   async function loadFundamentals() {
     setDbFundLoading(true);
     try {
+      // Load unique stock names for folder view
+      const { data: nameRows } = await supabase
+        .from('stock_fundamentals').select('stock_name').order('stock_name').limit(5000);
+      const names = [...new Set((nameRows || []).map((r: any) => r.stock_name))].sort() as string[];
+      setUniqueFundStocks(names);
+      setDbFundStats({ total: nameRows?.length || 0, stocks: names.length });
+
       let query = supabase
         .from('stock_fundamentals')
         .select('id, stock_name, trade_date, pe_ratio, eps, book_value, face_value, market_cap, week52_high, week52_low, dividend_yield, roce, ltp, sector, created_at')
-        .order('created_at', { ascending: false })
+        .order('trade_date', { ascending: false })
         .limit(200);
 
+      if (selectedFundStock) query = query.eq('stock_name', selectedFundStock);
       if (dbSearch) query = query.ilike('stock_name', `%${dbSearch}%`);
       if (dbDateFilter) query = query.eq('trade_date', dbDateFilter);
 
@@ -642,99 +660,136 @@ export default function Admin() {
               </div>
             )}
 
-            {/* STOCK PRICES TAB */}
+            {/* STOCK PRICES TAB — folder view */}
             {dbSubTab === 'prices' && (
               <div>
                 <div className="grid grid-cols-2 gap-3 mb-4">
-                  {[
-                    { label: 'Total Price Records', value: dbPriceStats.total, color: '#4d9fff' },
-                    { label: 'Unique Stocks', value: dbPriceStats.stocks, color: '#39d98a' },
-                  ].map((s, i) => (
-                    <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
-                      <div className="text-xs font-mono text-[#6b6b85] mb-1">{s.label}</div>
-                      <div className="text-xl font-black" style={{ color: s.color }}>{s.value ?? 0}</div>
-                    </div>
-                  ))}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
+                    <div className="text-xs font-mono text-[#6b6b85] mb-1">Total Records</div>
+                    <div className="text-xl font-black text-[#4d9fff]">{dbPriceStats.total ?? 0}</div>
+                  </div>
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
+                    <div className="text-xs font-mono text-[#6b6b85] mb-1">Stocks in Bank</div>
+                    <div className="text-xl font-black text-[#39d98a]">{dbPriceStats.stocks ?? 0}</div>
+                  </div>
                 </div>
                 {dbPriceLoading ? (
                   <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">Loading...</div>
-                ) : (
-                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
-                    <div className="px-4 py-3 border-b border-[#1e1e2e]">
-                      <span className="text-xs font-mono text-[#6b6b85]">Showing {dbPriceData.length} of {dbPriceStats.total} records</span>
+                ) : !selectedPriceStock ? (
+                  /* Level 1 — stock name grid */
+                  uniquePriceStocks.length === 0 ? (
+                    <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">No stock price data yet. Run "Fetch Stocks Data" first.</div>
+                  ) : (
+                    <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+                      {uniquePriceStocks.map(name => (
+                        <button key={name} onClick={() => setSelectedPriceStock(name)}
+                          className="bg-[#111118] border border-[#1e1e2e] hover:border-[#4d9fff]/50 rounded-xl p-3 text-xs font-black text-[#4d9fff] text-center transition-all hover:bg-[#4d9fff]/5">
+                          {name}
+                        </button>
+                      ))}
                     </div>
-                    <table className="w-full text-xs font-mono">
-                      <thead><tr className="border-b border-[#1e1e2e]">
-                        {['Stock', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
-                        ))}
-                      </tr></thead>
-                      <tbody>
-                        {dbPriceData.length === 0 ? (
-                          <tr><td colSpan={7} className="text-center py-8 text-[#6b6b85]">No price data found. Run "Fetch Stocks Data" first.</td></tr>
-                        ) : dbPriceData.map((row, i) => (
-                          <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#4d9fff]/5">
-                            <td className="px-4 py-3 font-black text-[#4d9fff]">{row.stock_name}</td>
-                            <td className="px-4 py-3 text-[#f0c040]">{row.trade_date}</td>
-                            <td className="px-4 py-3">{row.open?.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-[#39d98a]">{row.high?.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-[#ff4d6d]">{row.low?.toFixed(2)}</td>
-                            <td className="px-4 py-3 font-bold">{row.close?.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-[#6b6b85]">{row.volume?.toLocaleString()}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  )
+                ) : (
+                  /* Level 2 — selected stock's records */
+                  <div>
+                    <div className="flex items-center gap-3 mb-4">
+                      <button onClick={() => setSelectedPriceStock(null)}
+                        className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040]">← All Stocks</button>
+                      <span className="text-sm font-black text-[#4d9fff]">{selectedPriceStock}</span>
+                      <span className="text-xs font-mono text-[#6b6b85]">{dbPriceData.length} records</span>
+                    </div>
+                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
+                      <table className="w-full text-xs font-mono">
+                        <thead><tr className="border-b border-[#1e1e2e]">
+                          {['Month End Date', 'Open', 'High', 'Low', 'Close', 'Volume'].map(h => (
+                            <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr></thead>
+                        <tbody>
+                          {dbPriceData.length === 0 ? (
+                            <tr><td colSpan={6} className="text-center py-8 text-[#6b6b85]">No records for {selectedPriceStock}</td></tr>
+                          ) : dbPriceData.map((row, i) => (
+                            <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#4d9fff]/5">
+                              <td className="px-4 py-3 text-[#f0c040] font-bold">{row.trade_date}</td>
+                              <td className="px-4 py-3">{row.open?.toFixed(2)}</td>
+                              <td className="px-4 py-3 text-[#39d98a]">{row.high?.toFixed(2)}</td>
+                              <td className="px-4 py-3 text-[#ff4d6d]">{row.low?.toFixed(2)}</td>
+                              <td className="px-4 py-3 font-bold">{row.close?.toFixed(2)}</td>
+                              <td className="px-4 py-3 text-[#6b6b85]">{row.volume?.toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>
             )}
 
-            {/* FUNDAMENTALS TAB */}
+            {/* FUNDAMENTALS TAB — folder view */}
             {dbSubTab === 'fundamentals' && (
               <div>
                 <div className="grid grid-cols-2 gap-3 mb-4">
-                  {[
-                    { label: 'Total Fundamental Records', value: dbFundStats.total, color: '#a78bfa' },
-                  ].map((s, i) => (
-                    <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
-                      <div className="text-xs font-mono text-[#6b6b85] mb-1">{s.label}</div>
-                      <div className="text-xl font-black" style={{ color: s.color }}>{s.value ?? 0}</div>
-                    </div>
-                  ))}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
+                    <div className="text-xs font-mono text-[#6b6b85] mb-1">Total Records</div>
+                    <div className="text-xl font-black text-[#a78bfa]">{dbFundStats.total ?? 0}</div>
+                  </div>
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
+                    <div className="text-xs font-mono text-[#6b6b85] mb-1">Stocks in Bank</div>
+                    <div className="text-xl font-black text-[#39d98a]">{dbFundStats.stocks ?? 0}</div>
+                  </div>
                 </div>
                 {dbFundLoading ? (
                   <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">Loading...</div>
-                ) : (
-                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
-                    <div className="px-4 py-3 border-b border-[#1e1e2e]">
-                      <span className="text-xs font-mono text-[#6b6b85]">Showing {dbFundData.length} of {dbFundStats.total} records</span>
+                ) : !selectedFundStock ? (
+                  /* Level 1 — stock name grid */
+                  uniqueFundStocks.length === 0 ? (
+                    <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">No fundamental data yet. Run "Fetch Fundamentals" first.</div>
+                  ) : (
+                    <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+                      {uniqueFundStocks.map(name => (
+                        <button key={name} onClick={() => setSelectedFundStock(name)}
+                          className="bg-[#111118] border border-[#1e1e2e] hover:border-[#a78bfa]/50 rounded-xl p-3 text-xs font-black text-[#a78bfa] text-center transition-all hover:bg-[#a78bfa]/5">
+                          {name}
+                        </button>
+                      ))}
                     </div>
-                    <table className="w-full text-xs font-mono">
-                      <thead><tr className="border-b border-[#1e1e2e]">
-                        {['Stock', 'Date', 'LTP', 'PE', 'EPS', 'Book Val', '52W H', '52W L', 'Mkt Cap', 'ROCE'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
-                        ))}
-                      </tr></thead>
-                      <tbody>
-                        {dbFundData.length === 0 ? (
-                          <tr><td colSpan={10} className="text-center py-8 text-[#6b6b85]">No fundamental data found. Run "Fetch Fundamentals" first.</td></tr>
-                        ) : dbFundData.map((row, i) => (
-                          <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#a78bfa]/5">
-                            <td className="px-4 py-3 font-black text-[#a78bfa]">{row.stock_name}</td>
-                            <td className="px-4 py-3 text-[#f0c040]">{row.trade_date}</td>
-                            <td className="px-4 py-3 font-bold">{row.ltp?.toFixed(2) ?? '-'}</td>
-                            <td className="px-4 py-3">{row.pe_ratio?.toFixed(2) ?? '-'}</td>
-                            <td className="px-4 py-3">{row.eps?.toFixed(2) ?? '-'}</td>
-                            <td className="px-4 py-3">{row.book_value?.toFixed(2) ?? '-'}</td>
-                            <td className="px-4 py-3 text-[#39d98a]">{row.week52_high?.toFixed(2) ?? '-'}</td>
-                            <td className="px-4 py-3 text-[#ff4d6d]">{row.week52_low?.toFixed(2) ?? '-'}</td>
-                            <td className="px-4 py-3 text-[#6b6b85]">{row.market_cap ? `${(row.market_cap / 10000000).toFixed(0)} Cr` : '-'}</td>
-                            <td className="px-4 py-3">{row.roce?.toFixed(2) ?? '-'}%</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  )
+                ) : (
+                  /* Level 2 — selected stock's fundamentals */
+                  <div>
+                    <div className="flex items-center gap-3 mb-4">
+                      <button onClick={() => setSelectedFundStock(null)}
+                        className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040]">← All Stocks</button>
+                      <span className="text-sm font-black text-[#a78bfa]">{selectedFundStock}</span>
+                      <span className="text-xs font-mono text-[#6b6b85]">{dbFundData.length} records</span>
+                    </div>
+                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
+                      <table className="w-full text-xs font-mono">
+                        <thead><tr className="border-b border-[#1e1e2e]">
+                          {['Date', 'LTP', 'PE', 'EPS', 'Book Val', '52W H', '52W L', 'Mkt Cap', 'ROCE'].map(h => (
+                            <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr></thead>
+                        <tbody>
+                          {dbFundData.length === 0 ? (
+                            <tr><td colSpan={9} className="text-center py-8 text-[#6b6b85]">No records for {selectedFundStock}</td></tr>
+                          ) : dbFundData.map((row, i) => (
+                            <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#a78bfa]/5">
+                              <td className="px-4 py-3 text-[#f0c040] font-bold">{row.trade_date}</td>
+                              <td className="px-4 py-3 font-bold">{row.ltp?.toFixed(2) ?? '-'}</td>
+                              <td className="px-4 py-3">{row.pe_ratio?.toFixed(2) ?? '-'}</td>
+                              <td className="px-4 py-3">{row.eps?.toFixed(2) ?? '-'}</td>
+                              <td className="px-4 py-3">{row.book_value?.toFixed(2) ?? '-'}</td>
+                              <td className="px-4 py-3 text-[#39d98a]">{row.week52_high?.toFixed(2) ?? '-'}</td>
+                              <td className="px-4 py-3 text-[#ff4d6d]">{row.week52_low?.toFixed(2) ?? '-'}</td>
+                              <td className="px-4 py-3 text-[#6b6b85]">{row.market_cap ? `${(row.market_cap / 10000000).toFixed(0)} Cr` : '-'}</td>
+                              <td className="px-4 py-3">{row.roce != null ? `${row.roce.toFixed(2)}%` : '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>
