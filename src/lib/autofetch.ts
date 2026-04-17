@@ -1,13 +1,22 @@
 import { supabase } from './supabase';
 
-// ── CALL EDGE FUNCTION ──
-async function callEdge(type: string, symbol?: string, expiry?: string) {
-  const { data, error } = await supabase.functions.invoke('fetch-nse-data', {
-    body: { type, symbol, expiry }
-  });
-  if (error) throw new Error(error.message);
-  if (!data?.success) throw new Error(data?.error || 'Fetch failed');
-  return data.data;
+// ── CALL EDGE FUNCTION (with retry) ──
+async function callEdge(type: string, symbol?: string, expiry?: string, retries = 3) {
+  let lastError: Error = new Error('Unknown error');
+  for (let attempt = 0; attempt < retries; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1500));
+    try {
+      const { data, error } = await supabase.functions.invoke('fetch-nse-data', {
+        body: { type, symbol, expiry }
+      });
+      if (error) throw new Error(error.message);
+      if (!data?.success) throw new Error(data?.error || 'Fetch failed');
+      return data.data;
+    } catch (err: any) {
+      lastError = err;
+    }
+  }
+  throw lastError;
 }
 
 // ── SAVE MARKET DATA ──
@@ -201,6 +210,65 @@ async function processStockOptions(
   }
 }
 
+// ── SAVE FUNDAMENTAL DATA ──
+async function saveFundamentalData(symbol: string, data: any) {
+  try {
+    if (!data || Object.keys(data).length === 0) return { status: 'empty' };
+
+    const today = new Date().toISOString().split('T')[0];
+
+    const { data: existing } = await supabase
+      .from('stock_fundamentals')
+      .select('id')
+      .eq('stock_name', symbol.toUpperCase())
+      .eq('trade_date', today)
+      .limit(1);
+
+    const record = {
+      stock_name: symbol.toUpperCase(),
+      trade_date: today,
+      pe_ratio: parseFloat(data.pe || data.pe_ratio || 0) || null,
+      eps: parseFloat(data.eps || 0) || null,
+      book_value: parseFloat(data.book_value || data.bookValue || 0) || null,
+      face_value: parseFloat(data.face_value || data.faceValue || 0) || null,
+      market_cap: parseFloat(data.market_cap || data.marketCap || 0) || null,
+      week52_high: parseFloat(data.week52High || data.high52 || 0) || null,
+      week52_low: parseFloat(data.week52Low || data.low52 || 0) || null,
+      dividend_yield: parseFloat(data.dividend_yield || data.dividendYield || 0) || null,
+      roce: parseFloat(data.roce || 0) || null,
+      sector: data.sector || null,
+      ltp: parseFloat(data.ltp || data.lastPrice || 0) || null,
+    };
+
+    if (existing && existing.length > 0) {
+      await supabase.from('stock_fundamentals').update(record).eq('id', existing[0].id);
+      return { status: 'updated' };
+    }
+
+    await supabase.from('stock_fundamentals').insert(record);
+    return { status: 'saved' };
+  } catch (err: any) {
+    return { status: 'error', error: err.message };
+  }
+}
+
+// ── PROCESS FUNDAMENTALS FOR ONE STOCK ──
+async function processFundamentals(symbol: string, results: any[]) {
+  try {
+    const data = await callEdge('stock_fundamentals', symbol);
+
+    if (!data) {
+      results.push({ index: `${symbol}_FUND`, status: 'empty', error: 'No fundamental data' });
+      return;
+    }
+
+    const result = await saveFundamentalData(symbol, data);
+    results.push({ index: `${symbol}_FUND`, status: result.status, error: result.error });
+  } catch (err: any) {
+    results.push({ index: `${symbol}_FUND`, status: 'error', error: err.message });
+  }
+}
+
 // ── PROCESS STOCK PRICE ──
 // Saves 14 months of daily OHLC
 async function processStockPrice(symbol: string, results: any[]) {
@@ -326,18 +394,23 @@ export async function runDailyAutoFetch(adminUserId: string) {
   const uniqueStocks = [...new Set(allStocks)] as string[];
 
   for (const stock of uniqueStocks) {
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise(r => setTimeout(r, 800));
 
     // Stock options — 4 monthly expiries
     await processStockOptions(stock, tradeDate, results);
 
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 1500));
 
     // Stock price — 14 months historical
     await processStockPrice(stock, results);
+
+    await new Promise(r => setTimeout(r, 1500));
+
+    // Fundamental data — PE, EPS, book value, market cap, etc.
+    await processFundamentals(stock, results);
   }
 
-  const saved = results.filter(r => r.status === 'saved').length;
+  const saved = results.filter(r => r.status === 'saved' || r.status === 'updated').length;
   const errors = results.filter(r => r.status === 'error').length;
   console.log(`✅ Done: ${saved} saved, ${errors} errors`);
 
@@ -367,6 +440,52 @@ export async function autoFetchStockPrice(symbol: string): Promise<any[]> {
     .upsert(toSave, { onConflict: 'stock_name,trade_date' });
 
   return toSave;
+}
+
+// ── STANDALONE: FETCH ALL STOCKS DATA (options + price) ──
+export async function autoFetchAllStocksData(): Promise<any[]> {
+  const results: any[] = [];
+
+  let tradeDate = new Date().toISOString().split('T')[0];
+  try {
+    const expData = await callEdge('get_expiries');
+    if (expData?.trade_date) tradeDate = expData.trade_date;
+  } catch {}
+
+  const { sectors } = await loadConfig();
+  const allStocks = sectors.flatMap((s: any) => s.stocks);
+  const uniqueStocks = [...new Set(allStocks)] as string[];
+
+  for (const stock of uniqueStocks) {
+    await new Promise(r => setTimeout(r, 800));
+    await processStockOptions(stock, tradeDate, results);
+    await new Promise(r => setTimeout(r, 1500));
+    await processStockPrice(stock, results);
+  }
+
+  const saved = results.filter(r => r.status === 'saved').length;
+  const errors = results.filter(r => r.status === 'error').length;
+  console.log(`✅ Stocks data done: ${saved} saved, ${errors} errors`);
+  return results;
+}
+
+// ── STANDALONE: FETCH ALL FUNDAMENTALS ──
+export async function autoFetchAllFundamentals(): Promise<any[]> {
+  const results: any[] = [];
+
+  const { sectors } = await loadConfig();
+  const allStocks = sectors.flatMap((s: any) => s.stocks);
+  const uniqueStocks = [...new Set(allStocks)] as string[];
+
+  for (const stock of uniqueStocks) {
+    await new Promise(r => setTimeout(r, 400));
+    await processFundamentals(stock, results);
+  }
+
+  const saved = results.filter(r => r.status === 'saved' || r.status === 'updated').length;
+  const errors = results.filter(r => r.status === 'error').length;
+  console.log(`✅ Fundamentals done: ${saved} saved, ${errors} errors`);
+  return results;
 }
 
 // ── STANDALONE: AUTO FETCH SINGLE STOCK OPTIONS ──
