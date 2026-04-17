@@ -11,7 +11,7 @@ const BATCH_PAUSE = 10000; // ms pause between batches
 // stock_price and stock_chain route to fetch-stock-data; everything else to fetch-nse-data
 async function callEdge(type: string, symbol?: string, expiry?: string, retries = 5) {
   const fnName = (type === 'stock_price' || type === 'stock_chain')
-    ? 'fetch-stock-data'
+    ? 'smooth-endpoint'
     : 'fetch-nse-data';
 
   let lastError: Error = new Error('Unknown error');
