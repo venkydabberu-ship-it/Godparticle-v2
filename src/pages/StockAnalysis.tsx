@@ -105,7 +105,21 @@ export default function StockAnalysis() {
       await supabase.from('stock_price_data')
         .upsert(toSave, { onConflict: 'stock_name,trade_date' });
 
-      setFetchMsg(`✅ Fetched ${records.length} days from NSE!`);
+      // Save fundamentals (52W H/L + LTP) to data bank
+      const sorted = [...toSave].sort((a, b) => b.trade_date.localeCompare(a.trade_date));
+      const latestRaw = records.find((r: any) => r.CH_TIMESTAMP === sorted[0]?.trade_date);
+      if (latestRaw) {
+        const today = new Date().toISOString().split('T')[0];
+        await supabase.from('stock_fundamentals').upsert({
+          stock_name: stockName.toUpperCase(),
+          trade_date: today,
+          ltp: sorted[0].close,
+          week52_high: parseFloat(latestRaw.CH_52WEEK_HIGH_PRICE || 0) || null,
+          week52_low: parseFloat(latestRaw.CH_52WEEK_LOW_PRICE || 0) || null,
+        }, { onConflict: 'stock_name,trade_date' });
+      }
+
+      setFetchMsg(`✅ Fetched ${records.length} days — saved to Data Bank!`);
       processMonthlyData(toSave);
 
     } catch (err: any) {
@@ -197,7 +211,7 @@ export default function StockAnalysis() {
         timeframe: 'daily'
       });
 
-      setOptFetchMsg(`✅ Fetched ${Object.keys(strikes).length} strikes for ${stockName}!`);
+      setOptFetchMsg(`✅ Fetched ${Object.keys(strikes).length} strikes for ${stockName} — saved to Data Bank!`);
 
       // Get last 6 days from DB now
       const { data: rows } = await supabase

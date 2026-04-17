@@ -465,6 +465,20 @@ export async function autoFetchStockPrice(symbol: string): Promise<any[]> {
     .from('stock_price_data')
     .upsert(toSave, { onConflict: 'stock_name,trade_date' });
 
+  // Also save fundamentals from raw NSE response
+  const sorted = [...toSave].sort((a, b) => b.trade_date.localeCompare(a.trade_date));
+  const latestRaw = records.find((r: any) => r.CH_TIMESTAMP === sorted[0]?.trade_date);
+  if (latestRaw) {
+    const today = new Date().toISOString().split('T')[0];
+    await supabase.from('stock_fundamentals').upsert({
+      stock_name: symbol.toUpperCase(),
+      trade_date: today,
+      ltp: sorted[0].close,
+      week52_high: parseFloat(latestRaw.CH_52WEEK_HIGH_PRICE || 0) || null,
+      week52_low: parseFloat(latestRaw.CH_52WEEK_LOW_PRICE || 0) || null,
+    }, { onConflict: 'stock_name,trade_date' });
+  }
+
   return toSave;
 }
 
