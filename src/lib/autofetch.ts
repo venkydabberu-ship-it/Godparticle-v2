@@ -1,10 +1,17 @@
 import { supabase } from './supabase';
 
-// ── CALL EDGE FUNCTION (with retry) ──
-async function callEdge(type: string, symbol?: string, expiry?: string, retries = 3) {
+// Backoff delays in ms: 3s, 8s, 20s, 45s, 90s
+const BACKOFF = [3000, 8000, 20000, 45000, 90000];
+
+// Batch processing to avoid NSE rate-limiting
+const BATCH_SIZE = 5;   // stocks per batch
+const BATCH_PAUSE = 10000; // ms pause between batches
+
+// ── CALL EDGE FUNCTION (with aggressive retry + backoff) ──
+async function callEdge(type: string, symbol?: string, expiry?: string, retries = 5) {
   let lastError: Error = new Error('Unknown error');
   for (let attempt = 0; attempt < retries; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1500));
+    if (attempt > 0) await new Promise(r => setTimeout(r, BACKOFF[attempt - 1] ?? 90000));
     try {
       const { data, error } = await supabase.functions.invoke('fetch-nse-data', {
         body: { type, symbol, expiry }
@@ -431,25 +438,21 @@ export async function runDailyAutoFetch(adminUserId: string) {
     await processIndex(idx.key, idx.name, idx.edgeType, tradeDate, results, isZ2H);
   }
 
-  // ── STEP 2: ALL STOCKS ──
+  // ── STEP 2: ALL STOCKS (batched to avoid NSE rate-limiting) ──
   const allStocks = sectors.flatMap((s: any) => s.stocks);
   const uniqueStocks = [...new Set(allStocks)] as string[];
 
-  for (const stock of uniqueStocks) {
-    await new Promise(r => setTimeout(r, 800));
-
-    // Stock options — 4 monthly expiries
-    await processStockOptions(stock, tradeDate, results);
-
-    await new Promise(r => setTimeout(r, 1500));
-
-    // Stock price — 14 months historical
-    await processStockPrice(stock, results);
-
-    await new Promise(r => setTimeout(r, 1500));
-
-    // Fundamental data — PE, EPS, book value, market cap, etc.
-    await processFundamentals(stock, results);
+  for (let batchStart = 0; batchStart < uniqueStocks.length; batchStart += BATCH_SIZE) {
+    if (batchStart > 0) await new Promise(r => setTimeout(r, BATCH_PAUSE));
+    const batch = uniqueStocks.slice(batchStart, batchStart + BATCH_SIZE);
+    for (const stock of batch) {
+      await new Promise(r => setTimeout(r, 800));
+      await processStockOptions(stock, tradeDate, results);
+      await new Promise(r => setTimeout(r, 1500));
+      await processStockPrice(stock, results);
+      await new Promise(r => setTimeout(r, 1500));
+      await processFundamentals(stock, results);
+    }
   }
 
   const saved = results.filter(r => r.status === 'saved' || r.status === 'updated').length;
@@ -535,11 +538,15 @@ export async function autoFetchAllStocksData(): Promise<any[]> {
   const allStocks = sectors.flatMap((s: any) => s.stocks);
   const uniqueStocks = [...new Set(allStocks)] as string[];
 
-  for (const stock of uniqueStocks) {
-    await new Promise(r => setTimeout(r, 800));
-    await processStockOptions(stock, tradeDate, results);
-    await new Promise(r => setTimeout(r, 1500));
-    await processStockPrice(stock, results);
+  for (let batchStart = 0; batchStart < uniqueStocks.length; batchStart += BATCH_SIZE) {
+    if (batchStart > 0) await new Promise(r => setTimeout(r, BATCH_PAUSE));
+    const batch = uniqueStocks.slice(batchStart, batchStart + BATCH_SIZE);
+    for (const stock of batch) {
+      await new Promise(r => setTimeout(r, 800));
+      await processStockOptions(stock, tradeDate, results);
+      await new Promise(r => setTimeout(r, 1500));
+      await processStockPrice(stock, results);
+    }
   }
 
   const saved = results.filter(r => r.status === 'saved').length;
@@ -564,6 +571,34 @@ export async function autoFetchAllFundamentals(): Promise<any[]> {
   const saved = results.filter(r => r.status === 'saved' || r.status === 'updated').length;
   const errors = results.filter(r => r.status === 'error').length;
   console.log(`✅ Fundamentals done: ${saved} saved, ${errors} errors`);
+  return results;
+}
+
+// ── RETRY FAILED STOCKS ──
+// Re-fetches options + price only for the given symbols (used after a failed batch run)
+export async function retryFailedStocks(symbols: string[]): Promise<any[]> {
+  const results: any[] = [];
+
+  let tradeDate = new Date().toISOString().split('T')[0];
+  try {
+    const expData = await callEdge('get_expiries');
+    if (expData?.trade_date) tradeDate = expData.trade_date;
+  } catch {}
+
+  for (let batchStart = 0; batchStart < symbols.length; batchStart += BATCH_SIZE) {
+    if (batchStart > 0) await new Promise(r => setTimeout(r, BATCH_PAUSE));
+    const batch = symbols.slice(batchStart, batchStart + BATCH_SIZE);
+    for (const stock of batch) {
+      await new Promise(r => setTimeout(r, 800));
+      await processStockOptions(stock, tradeDate, results);
+      await new Promise(r => setTimeout(r, 1500));
+      await processStockPrice(stock, results);
+    }
+  }
+
+  const saved = results.filter(r => r.status === 'saved').length;
+  const errors = results.filter(r => r.status === 'error').length;
+  console.log(`🔁 Retry done: ${saved} saved, ${errors} errors`);
   return results;
 }
 

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { runDailyAutoFetch, autoFetchAllIndices, autoFetchAllStocksData, autoFetchAllFundamentals } from '../lib/autofetch';
+import { runDailyAutoFetch, autoFetchAllIndices, autoFetchAllStocksData, autoFetchAllFundamentals, retryFailedStocks } from '../lib/autofetch';
 
 const DEFAULT_INDICES = [
   { key: 'NIFTY50', name: 'Nifty 50', exchange: 'NSE', expiry: 'weekly', upstoxKey: 'NSE_INDEX|Nifty 50', color: '#f0c040' },
@@ -57,6 +57,9 @@ export default function Admin() {
   const [fetchFundLoading, setFetchFundLoading] = useState(false);
   const [fetchFundResults, setFetchFundResults] = useState<any[]>([]);
   const [fetchFundDone, setFetchFundDone] = useState(false);
+  const [retryLoading, setRetryLoading] = useState(false);
+  const [retryResults, setRetryResults] = useState<any[]>([]);
+  const [retryDone, setRetryDone] = useState(false);
   const [indices, setIndices] = useState(DEFAULT_INDICES);
   const [sectors, setSectors] = useState(DEFAULT_SECTORS);
   const [newIndexKey, setNewIndexKey] = useState('');
@@ -402,6 +405,30 @@ export default function Admin() {
       setFetchFundDone(true);
     } finally {
       setFetchFundLoading(false);
+    }
+  }
+
+  async function handleRetryFailed() {
+    const allResults = [...fetchStocksResults, ...fetchResults];
+    const failedSymbols = [...new Set(
+      allResults
+        .filter(r => r.status === 'error')
+        .map(r => (r.index as string).replace('_PRICE', '').replace('_FUND', ''))
+        .filter(s => s && !s.startsWith('SYSTEM'))
+    )];
+    if (!failedSymbols.length) return;
+    setRetryLoading(true);
+    setRetryDone(false);
+    setRetryResults([]);
+    try {
+      const res = await retryFailedStocks(failedSymbols);
+      setRetryResults(res);
+      setRetryDone(true);
+    } catch (err: any) {
+      setRetryResults([{ status: 'error', error: err.message }]);
+      setRetryDone(true);
+    } finally {
+      setRetryLoading(false);
     }
   }
 
@@ -871,6 +898,47 @@ export default function Admin() {
                 {fetchLoading ? 'Fetching...' : 'Fetch All'}
               </button>
             </div>
+
+            {/* Retry Failed Stocks button — shown when there are errors from a stocks/all fetch */}
+            {(fetchStocksResults.some(r => r.status === 'error') || fetchResults.some(r => r.status === 'error')) && (
+              <div className="bg-[#111118] border border-[#ff4d6d]/30 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-black text-[#ff4d6d] mb-1">Some stocks failed</div>
+                  <div className="text-xs font-mono text-[#6b6b85]">
+                    {[...new Set(
+                      [...fetchStocksResults, ...fetchResults]
+                        .filter(r => r.status === 'error')
+                        .map(r => (r.index as string).replace('_PRICE', '').replace('_FUND', ''))
+                        .filter(s => s && !s.startsWith('SYSTEM'))
+                    )].join(', ')}
+                  </div>
+                </div>
+                <button onClick={handleRetryFailed} disabled={retryLoading}
+                  className="ml-4 bg-[#ff4d6d] text-white font-black text-xs px-5 py-3 rounded-xl disabled:opacity-40 whitespace-nowrap">
+                  {retryLoading ? 'Retrying...' : 'Retry Failed'}
+                </button>
+              </div>
+            )}
+
+            {retryDone && retryResults.length > 0 && (
+              <div className="bg-[#111118] border border-[#ff4d6d]/30 rounded-xl p-5">
+                <div className="text-xs font-mono font-bold mb-3 text-[#ff4d6d]">Retry Results</div>
+                <div className="text-xs font-mono font-bold mb-3 flex gap-4 flex-wrap">
+                  <span className="text-[#39d98a]">{retryResults.filter(r => r.status === 'saved').length} saved</span>
+                  <span className="text-[#f0c040]">{retryResults.filter(r => r.status === 'duplicate').length} duplicates</span>
+                  <span className="text-[#6b6b85]">{retryResults.filter(r => r.status === 'empty').length} empty</span>
+                  <span className="text-[#ff4d6d]">{retryResults.filter(r => r.status === 'error').length} still failing</span>
+                </div>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {retryResults.map((r, i) => (
+                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${r.status === 'saved' ? 'bg-[#39d98a]/10 text-[#39d98a]' : r.status === 'duplicate' ? 'bg-[#f0c040]/10 text-[#f0c040]' : r.status === 'empty' ? 'bg-[#6b6b85]/10 text-[#6b6b85]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
+                      <span>{r.index}{r.expiry ? ` | ${r.expiry}` : ''}</span>
+                      <span>{r.status === 'saved' ? `Saved${r.strikes ? ` (${r.strikes})` : ''}` : r.status === 'duplicate' ? 'Already exists' : r.status === 'empty' ? 'No data' : `Error: ${r.error || ''}`}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {fetchIndicesDone && fetchIndicesResults.length > 0 && (
               <div className="bg-[#111118] border border-[#f0c040]/30 rounded-xl p-5">
