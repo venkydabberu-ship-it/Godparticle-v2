@@ -252,41 +252,58 @@ async function saveFundamentalData(symbol: string, data: any) {
       ltp: parseFloat(data.ltp || data.lastPrice || 0) || null,
     };
 
-    if (existing && existing.length > 0) {
-      await supabase.from('stock_fundamentals').update(record).eq('id', existing[0].id);
-      return { status: 'updated' };
-    }
-
-    await supabase.from('stock_fundamentals').insert(record);
-    return { status: 'saved' };
+    const { error: upsertErr } = await supabase
+      .from('stock_fundamentals')
+      .upsert(record, { onConflict: 'stock_name,trade_date' });
+    if (upsertErr) throw new Error(upsertErr.message);
+    return { status: existing && existing.length > 0 ? 'updated' : 'saved' };
   } catch (err: any) {
     return { status: 'error', error: err.message };
   }
 }
 
 // ── PROCESS FUNDAMENTALS FOR ONE STOCK ──
-// Derives 52W high/low and LTP from already-saved stock_price_data
+// First tries stock_price_data; falls back to live Yahoo Finance quote
 async function processFundamentals(symbol: string, results: any[]) {
   try {
+    let ltp = 0, week52High = 0, week52Low = 0;
+
+    // 1. Try stock_price_data (fast, no API call)
     const oneYearAgo = new Date();
     oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-    const fromDate = oneYearAgo.toISOString().split('T')[0];
-
     const { data: rows } = await supabase
       .from('stock_price_data')
       .select('trade_date, high, low, close')
       .eq('stock_name', symbol.toUpperCase())
-      .gte('trade_date', fromDate)
+      .gte('trade_date', oneYearAgo.toISOString().split('T')[0])
       .order('trade_date', { ascending: false });
 
-    if (!rows || rows.length === 0) {
-      results.push({ index: `${symbol}_FUND`, status: 'empty', error: 'No price data to derive from' });
-      return;
+    if (rows && rows.length > 0) {
+      ltp = rows[0].close;
+      week52High = Math.max(...rows.map((r: any) => r.high));
+      week52Low = Math.min(...rows.filter((r: any) => r.low > 0).map((r: any) => r.low));
     }
 
-    const ltp = rows[0].close;
-    const week52High = Math.max(...rows.map((r: any) => r.high));
-    const week52Low = Math.min(...rows.map((r: any) => r.low));
+    // 2. Fallback: Yahoo Finance (1 retry only to stay fast)
+    if (!ltp) {
+      try {
+        const priceData = await callEdge('stock_price', symbol, undefined, 2);
+        const records: any[] = priceData?.data || [];
+        const valid = records
+          .filter((r: any) => parseFloat(r.CH_CLOSING_PRICE) > 0)
+          .sort((a: any, b: any) => b.CH_TIMESTAMP.localeCompare(a.CH_TIMESTAMP));
+        if (valid.length > 0) {
+          ltp         = parseFloat(valid[0].CH_CLOSING_PRICE);
+          week52High  = parseFloat(valid[0].CH_52WEEK_HIGH_PRICE || 0);
+          week52Low   = parseFloat(valid[0].CH_52WEEK_LOW_PRICE  || 0);
+        }
+      } catch {}
+    }
+
+    if (!ltp) {
+      results.push({ index: `${symbol}_FUND`, status: 'empty', error: 'No price data available' });
+      return;
+    }
 
     const result = await saveFundamentalData(symbol, { ltp, week52High, week52Low });
     results.push({ index: `${symbol}_FUND`, status: result.status, error: result.error });

@@ -24,6 +24,8 @@ export default function StockAnalysis() {
   const [optFetchMsg, setOptFetchMsg] = useState('');
   const [optDataSource, setOptDataSource] = useState<'upload' | 'autofetch'>('upload');
   const [exchange, setExchange] = useState<'NSE' | 'BSE'>('NSE');
+  const [fundDbMsg, setFundDbMsg] = useState('');
+  const [fundDbLoading, setFundDbLoading] = useState(false);
   const [pe, setPe] = useState('');
   const [eps, setEps] = useState('');
   const [bookValue, setBookValue] = useState('');
@@ -80,10 +82,9 @@ export default function StockAnalysis() {
         return;
       }
 
-      setFetchMsg('⏳ Fetching from NSE via server...');
+      setFetchMsg('⏳ Fetching 14-month price data...');
 
-      // Use Supabase Edge Function
-      const { data, error: fnError } = await supabase.functions.invoke('fetch-nse-data', {
+      const { data, error: fnError } = await supabase.functions.invoke('smooth-endpoint', {
         body: { type: 'stock_price', symbol: stockName.toUpperCase(), exchange }
       });
 
@@ -169,35 +170,20 @@ export default function StockAnalysis() {
         return;
       }
 
-      setOptFetchMsg('⏳ Fetching stock option chain via server...');
+      setOptFetchMsg('⏳ Fetching stock option chain...');
 
-      // Use Supabase Edge Function
-      const { data, error: fnError } = await supabase.functions.invoke('fetch-nse-data', {
+      const { data, error: fnError } = await supabase.functions.invoke('smooth-endpoint', {
         body: { type: 'stock_chain', symbol: stockName.toUpperCase(), exchange }
       });
 
       if (fnError) throw new Error(fnError.message);
       if (!data?.success) throw new Error(data?.error || 'Fetch failed');
 
-      const records = data.data?.records?.data || [];
-      if (!records.length) throw new Error(`No options data for ${stockName}`);
-
-      // Parse strikes
-      const strikes: Record<string, any> = {};
-      records.forEach((r: any) => {
-        const strike = r.strikePrice;
-        if (!strike) return;
-        strikes[strike] = {
-          ce_ltp: r.CE?.lastPrice || 0,
-          ce_oi: r.CE?.openInterest || 0,
-          ce_chng_oi: r.CE?.changeinOpenInterest || 0,
-          ce_vol: r.CE?.totalTradedVolume || 0,
-          pe_ltp: r.PE?.lastPrice || 0,
-          pe_oi: r.PE?.openInterest || 0,
-          pe_chng_oi: r.PE?.changeinOpenInterest || 0,
-          pe_vol: r.PE?.totalTradedVolume || 0,
-        };
-      });
+      // smooth-endpoint returns { allExpiries: [{expiry, strikes, spotPrice}] }
+      const allExpiries: any[] = data.data?.allExpiries || [];
+      const targetExpiry = allExpiries.find((e: any) => e.expiry === optExpiry) || allExpiries[0];
+      const strikes: Record<string, any> = targetExpiry?.strikes || {};
+      if (!Object.keys(strikes).length) throw new Error(`No options data for ${stockName}`);
 
       const today = new Date().toISOString().split('T')[0];
 
@@ -285,6 +271,37 @@ export default function StockAnalysis() {
     setCsvData(monthlyData as any[]);
     setFetchMsg(prev => prev + ` · ${monthlyData.length} months ready!`);
   }
+
+  // ── LOAD FUNDAMENTALS FROM DATA BANK ──
+  async function handleLoadFundamentals() {
+    if (!stockName.trim()) { setFundDbMsg('⚠️ Enter stock name first'); return; }
+    setFundDbLoading(true);
+    setFundDbMsg('');
+    try {
+      const { data } = await supabase
+        .from('stock_fundamentals')
+        .select('*')
+        .eq('stock_name', stockName.toUpperCase())
+        .order('trade_date', { ascending: false })
+        .limit(1);
+
+      if (data && data.length > 0) {
+        const f = data[0];
+        if (f.pe_ratio)   setPe(String(f.pe_ratio));
+        if (f.eps)        setEps(String(f.eps));
+        if (f.book_value) setBookValue(String(f.book_value));
+        if (f.roce)       setRoce(String(f.roce));
+        setFundDbMsg(`✅ Loaded from data bank (${f.trade_date})${!f.pe_ratio && !f.eps ? ' — PE/EPS missing, enter manually' : ''}`);
+      } else {
+        setFundDbMsg('⚠️ Not in data bank — run "Fetch Fundamentals" from Admin panel first');
+      }
+    } catch (err: any) {
+      setFundDbMsg('Error: ' + err.message);
+    } finally {
+      setFundDbLoading(false);
+    }
+  }
+
 
   // ── CSV UPLOAD — PRICE ──
   async function handlePriceCSV(e: React.ChangeEvent<HTMLInputElement>) {
@@ -701,7 +718,18 @@ export default function StockAnalysis() {
             {analysisType === 'gct' && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
                 <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-1">Step 4 — Fundamental Data (Optional)</h2>
-                <div className="text-xs font-mono text-[#6b6b85] mb-4">Enter from screener.in or moneycontrol.com</div>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="text-xs font-mono text-[#6b6b85]">Enter manually or load from data bank</div>
+                  <button onClick={handleLoadFundamentals} disabled={fundDbLoading}
+                    className="bg-[#a78bfa] text-black font-black text-xs px-4 py-1.5 rounded-lg disabled:opacity-40">
+                    {fundDbLoading ? 'Loading...' : 'Load from Data Bank'}
+                  </button>
+                </div>
+                {fundDbMsg && (
+                  <div className={`text-xs font-mono mb-3 px-3 py-2 rounded-lg ${fundDbMsg.startsWith('✅') ? 'bg-[#39d98a]/10 text-[#39d98a]' : 'bg-[#f0c040]/10 text-[#f0c040]'}`}>
+                    {fundDbMsg}
+                  </div>
+                )}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {[
                     { label: 'PE Ratio', val: pe, set: setPe, placeholder: 'e.g. 22.5' },
