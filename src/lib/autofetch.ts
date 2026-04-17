@@ -1,13 +1,22 @@
 import { supabase } from './supabase';
 
-// ── CALL EDGE FUNCTION ──
-async function callEdge(type: string, symbol?: string, expiry?: string) {
-  const { data, error } = await supabase.functions.invoke('fetch-nse-data', {
-    body: { type, symbol, expiry }
-  });
-  if (error) throw new Error(error.message);
-  if (!data?.success) throw new Error(data?.error || 'Fetch failed');
-  return data.data;
+// ── CALL EDGE FUNCTION (with retry) ──
+async function callEdge(type: string, symbol?: string, expiry?: string, retries = 3) {
+  let lastError: Error = new Error('Unknown error');
+  for (let attempt = 0; attempt < retries; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1500));
+    try {
+      const { data, error } = await supabase.functions.invoke('fetch-nse-data', {
+        body: { type, symbol, expiry }
+      });
+      if (error) throw new Error(error.message);
+      if (!data?.success) throw new Error(data?.error || 'Fetch failed');
+      return data.data;
+    } catch (err: any) {
+      lastError = err;
+    }
+  }
+  throw lastError;
 }
 
 // ── SAVE MARKET DATA ──
@@ -385,17 +394,17 @@ export async function runDailyAutoFetch(adminUserId: string) {
   const uniqueStocks = [...new Set(allStocks)] as string[];
 
   for (const stock of uniqueStocks) {
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise(r => setTimeout(r, 800));
 
     // Stock options — 4 monthly expiries
     await processStockOptions(stock, tradeDate, results);
 
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 1500));
 
     // Stock price — 14 months historical
     await processStockPrice(stock, results);
 
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 1500));
 
     // Fundamental data — PE, EPS, book value, market cap, etc.
     await processFundamentals(stock, results);
@@ -448,9 +457,9 @@ export async function autoFetchAllStocksData(): Promise<any[]> {
   const uniqueStocks = [...new Set(allStocks)] as string[];
 
   for (const stock of uniqueStocks) {
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise(r => setTimeout(r, 800));
     await processStockOptions(stock, tradeDate, results);
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 1500));
     await processStockPrice(stock, results);
   }
 
