@@ -1,183 +1,143 @@
-// Supabase Edge Function: fetch-stock-data
-// Handles stock price history and stock option chains from NSE
-// Deploy: supabase functions deploy fetch-stock-data
+// smooth-endpoint edge function
+// stock_price → Yahoo Finance (no auth, no IP block)
+// stock_chain → NSE option chain with records.data
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const BASE = 'https://www.nseindia.com';
-
-const BROWSER_HEADERS = {
+const NSE_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
   'Accept': 'application/json, text/plain, */*',
   'Accept-Language': 'en-US,en;q=0.9',
-  'Accept-Encoding': 'gzip, deflate, br',
   'Referer': 'https://www.nseindia.com/',
-  'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-  'sec-ch-ua-mobile': '?0',
-  'sec-ch-ua-platform': '"Windows"',
   'sec-fetch-dest': 'empty',
   'sec-fetch-mode': 'cors',
   'sec-fetch-site': 'same-origin',
   'Connection': 'keep-alive',
-  'DNT': '1',
 };
 
-// Get NSE session cookies by hitting the homepage first
-async function getNSESession(): Promise<string> {
-  const res = await fetch(BASE + '/', {
-    headers: {
-      ...BROWSER_HEADERS,
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    },
+async function getNSECookies() {
+  const res = await fetch('https://www.nseindia.com/', {
+    headers: Object.assign({}, NSE_HEADERS, { 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8' }),
     redirect: 'follow',
   });
   const raw = res.headers.get('set-cookie') || '';
-  // Parse multiple Set-Cookie headers into a single Cookie string
-  const cookies: string[] = [];
-  raw.split(/,(?=[^;]+=)/).forEach(part => {
+  const cookies = [];
+  raw.split(/,\s*(?=[a-zA-Z_][^=,]*=)/).forEach(function(part) {
     const kv = part.trim().split(';')[0].trim();
     if (kv && kv.includes('=')) cookies.push(kv);
   });
   return cookies.join('; ');
 }
 
-// NSE GET with cookies
-async function nseGet(path: string, cookie: string): Promise<any> {
-  const url = BASE + path;
-  const res = await fetch(url, {
-    headers: { ...BROWSER_HEADERS, Cookie: cookie },
+async function nseGet(path, cookie) {
+  const res = await fetch('https://www.nseindia.com' + path, {
+    headers: Object.assign({}, NSE_HEADERS, { Cookie: cookie }),
   });
-  if (!res.ok) {
-    throw new Error(`NSE HTTP ${res.status} for ${path}`);
-  }
+  if (!res.ok) throw new Error('NSE ' + res.status + ' at ' + path);
   return await res.json();
 }
 
-// Format date as DD-Mon-YYYY (NSE historical API format)
-function fmtNSEDate(d: Date): string {
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `${String(d.getDate()).padStart(2,'0')}-${months[d.getMonth()]}-${d.getFullYear()}`;
-}
-
-// Fetch 14 months of daily OHLCV data for a stock
-async function fetchStockPrice(symbol: string, cookie: string): Promise<any> {
-  const to = new Date();
-  const from = new Date();
-  from.setMonth(from.getMonth() - 14);
-
-  const params = new URLSearchParams({
-    symbol: symbol.toUpperCase(),
-    series: '["EQ"]',
-    from: fmtNSEDate(from),
-    to: fmtNSEDate(to),
+async function fetchYahooPrice(symbol) {
+  const yahooSym = symbol.replace(/&/g, '-') + '.NS';
+  const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + yahooSym + '?range=14mo&interval=1mo';
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
   });
+  if (!res.ok) throw new Error('Yahoo ' + res.status + ' for ' + yahooSym);
+  const json = await res.json();
+  const result = json.chart && json.chart.result && json.chart.result[0];
+  if (!result) throw new Error('No Yahoo data for ' + yahooSym);
 
-  // NSE requires a warm-up request to the equity page before historical API
-  await nseGet(`/get-quotes/equity?symbol=${encodeURIComponent(symbol.toUpperCase())}`, cookie).catch(() => {});
-  await new Promise(r => setTimeout(r, 400));
+  const meta = result.meta || {};
+  const timestamps = result.timestamp || [];
+  const q = (result.indicators && result.indicators.quote && result.indicators.quote[0]) || {};
+  const w52h = String(meta.fiftyTwoWeekHigh || 0);
+  const w52l = String(meta.fiftyTwoWeekLow || 0);
 
-  const json = await nseGet(`/api/historical/cm/equity?${params}`, cookie);
-  return json; // { data: [...], meta: {...} }
+  const data = timestamps.map(function(ts, i) {
+    const d = new Date(ts * 1000);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return {
+      CH_TIMESTAMP: yyyy + '-' + mm + '-' + dd,
+      CH_OPENING_PRICE: String(q.open && q.open[i] || 0),
+      CH_TRADE_HIGH_PRICE: String(q.high && q.high[i] || 0),
+      CH_TRADE_LOW_PRICE: String(q.low && q.low[i] || 0),
+      CH_CLOSING_PRICE: String(q.close && q.close[i] || 0),
+      CH_TOT_TRADED_QTY: String(q.volume && q.volume[i] || 0),
+      CH_52WEEK_HIGH_PRICE: w52h,
+      CH_52WEEK_LOW_PRICE: w52l,
+    };
+  }).filter(function(r) { return parseFloat(r.CH_CLOSING_PRICE) > 0; });
+
+  return { data: data };
 }
 
-// Parse NSE option chain response into strike map per expiry
-function parseOptionChain(json: any, maxExpiries = 4): Array<{ expiry: string; strikes: Record<string, any>; spotPrice: number }> {
-  const expiryDates: string[] = json.records?.expiryDates || [];
-  const allData: any[] = json.filtered?.data || json.records?.data || [];
-  const spotPrice: number = json.records?.underlyingValue || 0;
+function parseNSEChain(json, max) {
+  const expiries = (json.records && json.records.expiryDates) || [];
+  const rows = (json.records && json.records.data) || (json.filtered && json.filtered.data) || [];
+  const spot = (json.records && json.records.underlyingValue) || 0;
+  const months = { Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12' };
 
-  // Take up to maxExpiries
-  const selectedExpiries = expiryDates.slice(0, maxExpiries);
-
-  return selectedExpiries.map(expiry => {
-    const rows = allData.filter((d: any) => d.expiryDate === expiry);
-    const strikes: Record<string, any> = {};
-
-    rows.forEach((row: any) => {
-      const strike = row.strikePrice;
-      if (!strike) return;
-      strikes[String(strike)] = {
-        ce_oi:   row.CE?.openInterest        || 0,
-        ce_coi:  row.CE?.changeinOpenInterest || 0,
-        ce_vol:  row.CE?.totalTradedVolume    || 0,
-        ce_ltp:  row.CE?.lastPrice            || 0,
-        ce_iv:   row.CE?.impliedVolatility    || 0,
-        pe_oi:   row.PE?.openInterest         || 0,
-        pe_coi:  row.PE?.changeinOpenInterest || 0,
-        pe_vol:  row.PE?.totalTradedVolume    || 0,
-        pe_ltp:  row.PE?.lastPrice            || 0,
-        pe_iv:   row.PE?.impliedVolatility    || 0,
+  return expiries.slice(0, max || 4).map(function(exp) {
+    const strikes = {};
+    rows.filter(function(r) { return r.expiryDate === exp; }).forEach(function(r) {
+      if (!r.strikePrice) return;
+      const k = String(r.strikePrice);
+      strikes[k] = {
+        ce_oi: (r.CE && r.CE.openInterest) || 0,
+        ce_coi: (r.CE && r.CE.changeinOpenInterest) || 0,
+        ce_vol: (r.CE && r.CE.totalTradedVolume) || 0,
+        ce_ltp: (r.CE && r.CE.lastPrice) || 0,
+        ce_iv: (r.CE && r.CE.impliedVolatility) || 0,
+        pe_oi: (r.PE && r.PE.openInterest) || 0,
+        pe_coi: (r.PE && r.PE.changeinOpenInterest) || 0,
+        pe_vol: (r.PE && r.PE.totalTradedVolume) || 0,
+        pe_ltp: (r.PE && r.PE.lastPrice) || 0,
+        pe_iv: (r.PE && r.PE.impliedVolatility) || 0,
       };
     });
-
-    // Convert NSE expiry format "28-Apr-2026" → "2026-04-28"
-    let isoExpiry = expiry;
+    let iso = exp;
     try {
-      const parts = expiry.split('-');
-      const months: Record<string,string> = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
-      if (parts.length === 3) {
-        isoExpiry = `${parts[2]}-${months[parts[1]] || parts[1]}-${parts[0].padStart(2,'0')}`;
-      }
-    } catch {}
-
-    return { expiry: isoExpiry, strikes, spotPrice };
+      const p = exp.split('-');
+      if (p.length === 3) iso = p[2] + '-' + (months[p[1]] || p[1]) + '-' + p[0].padStart(2, '0');
+    } catch(e) {}
+    return { expiry: iso, strikes: strikes, spotPrice: spot };
   });
 }
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: CORS });
-  }
-
+Deno.serve(async function(req) {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try {
-    const { type, symbol } = await req.json();
+    const body = await req.json();
+    const type = body.type;
+    const symbol = body.symbol;
 
-    if (!type) {
-      return new Response(JSON.stringify({ success: false, error: 'Missing type' }), {
-        status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
-      });
-    }
+    if (!type) return new Response(JSON.stringify({ success: false, error: 'Missing type' }), { status: 400, headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }) });
 
-    // Acquire NSE session cookies
-    const cookie = await getNSESession();
-    await new Promise(r => setTimeout(r, 600));
-
-    // ── STOCK PRICE ──
     if (type === 'stock_price') {
-      if (!symbol) return new Response(JSON.stringify({ success: false, error: 'Missing symbol' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } });
-      const priceData = await fetchStockPrice(symbol, cookie);
-      return new Response(JSON.stringify({ success: true, data: priceData }), {
-        headers: { ...CORS, 'Content-Type': 'application/json' },
-      });
+      if (!symbol) return new Response(JSON.stringify({ success: false, error: 'Missing symbol' }), { status: 400, headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }) });
+      const data = await fetchYahooPrice(symbol);
+      return new Response(JSON.stringify({ success: true, data: data }), { headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }) });
     }
 
-    // ── STOCK OPTION CHAIN ──
     if (type === 'stock_chain') {
-      if (!symbol) return new Response(JSON.stringify({ success: false, error: 'Missing symbol' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } });
-
-      // Warm-up: hit the options page first
-      await nseGet(`/option-chain?underlying=${encodeURIComponent(symbol.toUpperCase())}`, cookie).catch(() => {});
-      await new Promise(r => setTimeout(r, 400));
-
-      const json = await nseGet(`/api/option-chain-equities?symbol=${encodeURIComponent(symbol.toUpperCase())}`, cookie);
-      const allExpiries = parseOptionChain(json, 4);
+      if (!symbol) return new Response(JSON.stringify({ success: false, error: 'Missing symbol' }), { status: 400, headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }) });
+      const cookie = await getNSECookies();
+      await new Promise(function(r) { setTimeout(r, 700); });
+      const json = await nseGet('/api/option-chain-equities?symbol=' + encodeURIComponent(symbol.toUpperCase()), cookie);
+      const allExpiries = parseNSEChain(json, 4);
       const tradeDate = new Date().toISOString().split('T')[0];
-
-      return new Response(JSON.stringify({ success: true, data: { allExpiries, tradeDate } }), {
-        headers: { ...CORS, 'Content-Type': 'application/json' },
-      });
+      return new Response(JSON.stringify({ success: true, data: { allExpiries: allExpiries, tradeDate: tradeDate } }), { headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }) });
     }
 
-    return new Response(JSON.stringify({ success: false, error: `Unknown type: ${type}` }), {
-      status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
-    });
+    return new Response(JSON.stringify({ success: false, error: 'Unknown type: ' + type }), { status: 400, headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }) });
 
-  } catch (err: any) {
-    return new Response(JSON.stringify({ success: false, error: err.message }), {
-      status: 500, headers: { ...CORS, 'Content-Type': 'application/json' },
-    });
+  } catch(err) {
+    return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }) });
   }
 });
