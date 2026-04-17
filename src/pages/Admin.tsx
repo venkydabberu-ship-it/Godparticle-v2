@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { runDailyAutoFetch } from '../lib/autofetch';
+import { runDailyAutoFetch, autoFetchAllStocksData, autoFetchAllFundamentals } from '../lib/autofetch';
 
 const DEFAULT_INDICES = [
   { key: 'NIFTY50', name: 'Nifty 50', exchange: 'NSE', expiry: 'weekly', upstoxKey: 'NSE_INDEX|Nifty 50', color: '#f0c040' },
@@ -48,6 +48,12 @@ export default function Admin() {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchResults, setFetchResults] = useState<any[]>([]);
   const [fetchDone, setFetchDone] = useState(false);
+  const [fetchStocksLoading, setFetchStocksLoading] = useState(false);
+  const [fetchStocksResults, setFetchStocksResults] = useState<any[]>([]);
+  const [fetchStocksDone, setFetchStocksDone] = useState(false);
+  const [fetchFundLoading, setFetchFundLoading] = useState(false);
+  const [fetchFundResults, setFetchFundResults] = useState<any[]>([]);
+  const [fetchFundDone, setFetchFundDone] = useState(false);
   const [indices, setIndices] = useState(DEFAULT_INDICES);
   const [sectors, setSectors] = useState(DEFAULT_SECTORS);
   const [newIndexKey, setNewIndexKey] = useState('');
@@ -65,6 +71,13 @@ export default function Admin() {
   const [dbDateFilter, setDbDateFilter] = useState('');
   const [dbStats, setDbStats] = useState<any>({});
   const [deleteMsg, setDeleteMsg] = useState('');
+  const [dbSubTab, setDbSubTab] = useState<'options' | 'prices' | 'fundamentals'>('options');
+  const [dbPriceData, setDbPriceData] = useState<any[]>([]);
+  const [dbPriceLoading, setDbPriceLoading] = useState(false);
+  const [dbPriceStats, setDbPriceStats] = useState<any>({});
+  const [dbFundData, setDbFundData] = useState<any[]>([]);
+  const [dbFundLoading, setDbFundLoading] = useState(false);
+  const [dbFundStats, setDbFundStats] = useState<any>({});
 
   useEffect(() => {
     if (profile?.role !== 'admin') return;
@@ -73,8 +86,11 @@ export default function Admin() {
   }, [profile]);
 
   useEffect(() => {
-    if (activeTab === 'databank') loadDataBank();
-  }, [activeTab, dbFilter, dbSearch, dbDateFilter]);
+    if (activeTab !== 'databank') return;
+    if (dbSubTab === 'options') loadDataBank();
+    else if (dbSubTab === 'prices') loadStockPrices();
+    else if (dbSubTab === 'fundamentals') loadFundamentals();
+  }, [activeTab, dbSubTab, dbFilter, dbSearch, dbDateFilter]);
 
   async function loadDataBank() {
     setDbLoading(true);
@@ -117,6 +133,57 @@ export default function Admin() {
       console.error('loadDataBank error:', err);
     } finally {
       setDbLoading(false);
+    }
+  }
+
+  async function loadStockPrices() {
+    setDbPriceLoading(true);
+    try {
+      let query = supabase
+        .from('stock_price_data')
+        .select('id, stock_name, trade_date, open, high, low, close, volume, created_at')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (dbSearch) query = query.ilike('stock_name', `%${dbSearch}%`);
+      if (dbDateFilter) query = query.eq('trade_date', dbDateFilter);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setDbPriceData(data || []);
+
+      const { count: total } = await supabase.from('stock_price_data').select('*', { count: 'exact', head: true });
+      const { count: uniqueStocks } = await supabase.from('stock_price_data').select('stock_name', { count: 'exact', head: true });
+      setDbPriceStats({ total: total || 0, stocks: uniqueStocks || 0 });
+    } catch (err: any) {
+      console.error('loadStockPrices error:', err);
+    } finally {
+      setDbPriceLoading(false);
+    }
+  }
+
+  async function loadFundamentals() {
+    setDbFundLoading(true);
+    try {
+      let query = supabase
+        .from('stock_fundamentals')
+        .select('id, stock_name, trade_date, pe_ratio, eps, book_value, face_value, market_cap, week52_high, week52_low, dividend_yield, roce, ltp, sector, created_at')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (dbSearch) query = query.ilike('stock_name', `%${dbSearch}%`);
+      if (dbDateFilter) query = query.eq('trade_date', dbDateFilter);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setDbFundData(data || []);
+
+      const { count: total } = await supabase.from('stock_fundamentals').select('*', { count: 'exact', head: true });
+      setDbFundStats({ total: total || 0 });
+    } catch (err: any) {
+      console.error('loadFundamentals error:', err);
+    } finally {
+      setDbFundLoading(false);
     }
   }
 
@@ -266,6 +333,38 @@ export default function Admin() {
       setFetchDone(true);
     } finally {
       setFetchLoading(false);
+    }
+  }
+
+  async function handleFetchStocksData() {
+    setFetchStocksLoading(true);
+    setFetchStocksDone(false);
+    setFetchStocksResults([]);
+    try {
+      const res = await autoFetchAllStocksData();
+      setFetchStocksResults(res);
+      setFetchStocksDone(true);
+    } catch (err: any) {
+      setFetchStocksResults([{ status: 'error', error: err.message }]);
+      setFetchStocksDone(true);
+    } finally {
+      setFetchStocksLoading(false);
+    }
+  }
+
+  async function handleFetchFundamentals() {
+    setFetchFundLoading(true);
+    setFetchFundDone(false);
+    setFetchFundResults([]);
+    try {
+      const res = await autoFetchAllFundamentals();
+      setFetchFundResults(res);
+      setFetchFundDone(true);
+    } catch (err: any) {
+      setFetchFundResults([{ status: 'error', error: err.message }]);
+      setFetchFundDone(true);
+    } finally {
+      setFetchFundLoading(false);
     }
   }
 
@@ -428,83 +527,197 @@ export default function Admin() {
 
         {activeTab === 'databank' && (
           <div>
-            <h2 className="text-base font-black mb-6">Data Bank</h2>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-              {[
-                { label: 'Total Records', value: dbStats.total, color: '#f0c040' },
-                { label: 'Auto-Fetched', value: dbStats.auto, color: '#39d98a' },
-                { label: 'Manual Upload', value: dbStats.manual, color: '#4d9fff' },
-                { label: 'Index Records', value: dbStats.indices, color: '#a78bfa' },
-                { label: 'Stock Records', value: dbStats.stocks, color: '#ff8c42' },
-              ].map((s, i) => (
-                <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
-                  <div className="text-xs font-mono text-[#6b6b85] mb-1">{s.label}</div>
-                  <div className="text-xl font-black" style={{ color: s.color }}>{s.value ?? 0}</div>
-                </div>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {['ALL', 'AUTO', 'MANUAL', 'INDICES', 'STOCKS'].map(f => (
-                <button key={f} onClick={() => setDbFilter(f)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${dbFilter === f ? 'bg-[#f0c040] text-black' : 'bg-[#111118] border border-[#1e1e2e] text-[#6b6b85]'}`}>
-                  {f}
+            <h2 className="text-base font-black mb-4">Data Bank</h2>
+
+            {/* Sub-tabs */}
+            <div className="flex gap-1 bg-[#0a0a0f] rounded-xl p-1 mb-6 w-fit">
+              {(['options', 'prices', 'fundamentals'] as const).map(tab => (
+                <button key={tab} onClick={() => setDbSubTab(tab)}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all capitalize ${dbSubTab === tab ? 'bg-[#16161f] text-[#e8e8f0] border border-[#1e1e2e]' : 'text-[#6b6b85]'}`}>
+                  {tab === 'options' ? 'Options' : tab === 'prices' ? 'Stock Prices' : 'Fundamentals'}
                 </button>
               ))}
             </div>
+
+            {/* Shared search / date controls */}
             <div className="flex gap-3 mb-4">
               <input type="text" value={dbSearch} onChange={e => setDbSearch(e.target.value)}
-                placeholder="Search index/stock..."
+                placeholder="Search stock/index..."
                 className="flex-1 bg-[#111118] border border-[#1e1e2e] rounded-xl px-4 py-2.5 text-xs font-mono text-[#e8e8f0] outline-none" />
               <input type="date" value={dbDateFilter} onChange={e => setDbDateFilter(e.target.value)}
                 className="bg-[#111118] border border-[#1e1e2e] rounded-xl px-4 py-2.5 text-xs font-mono text-[#e8e8f0] outline-none" />
               <button onClick={() => { setDbSearch(''); setDbDateFilter(''); setDbFilter('ALL'); }}
                 className="bg-[#16161f] border border-[#1e1e2e] rounded-xl px-3 text-xs font-mono text-[#6b6b85]">Clear</button>
-              <button onClick={loadDataBank}
+              <button onClick={() => { if (dbSubTab === 'options') loadDataBank(); else if (dbSubTab === 'prices') loadStockPrices(); else loadFundamentals(); }}
                 className="bg-[#f0c040] text-black font-black rounded-xl px-3 text-xs">Refresh</button>
             </div>
-            {deleteMsg && <div className="bg-[#39d98a]/10 border border-[#39d98a]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#39d98a] mb-3">{deleteMsg}</div>}
-            {dbLoading ? (
-              <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">Loading...</div>
-            ) : (
-              <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
-                <div className="px-4 py-3 border-b border-[#1e1e2e] flex items-center justify-between">
-                  <span className="text-xs font-mono text-[#6b6b85]">Showing {dbData.length} of {dbStats.total} records</span>
+
+            {/* OPTIONS TAB */}
+            {dbSubTab === 'options' && (
+              <div>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+                  {[
+                    { label: 'Total Records', value: dbStats.total, color: '#f0c040' },
+                    { label: 'Auto-Fetched', value: dbStats.auto, color: '#39d98a' },
+                    { label: 'Manual Upload', value: dbStats.manual, color: '#4d9fff' },
+                    { label: 'Index Records', value: dbStats.indices, color: '#a78bfa' },
+                    { label: 'Stock Records', value: dbStats.stocks, color: '#ff8c42' },
+                  ].map((s, i) => (
+                    <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
+                      <div className="text-xs font-mono text-[#6b6b85] mb-1">{s.label}</div>
+                      <div className="text-xl font-black" style={{ color: s.color }}>{s.value ?? 0}</div>
+                    </div>
+                  ))}
                 </div>
-                <table className="w-full text-xs font-mono">
-                  <thead><tr className="border-b border-[#1e1e2e]">
-                    {['Index/Stock', 'Category', 'Expiry', 'Trade Date', 'Strikes', 'Source', 'Action'].map(h => (
-                      <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr></thead>
-                  <tbody>
-                    {dbData.length === 0 ? (
-                      <tr><td colSpan={7} className="text-center py-8 text-[#6b6b85]">No data found</td></tr>
-                    ) : dbData.map((row, i) => (
-                      <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#f0c040]/5">
-                        <td className="px-4 py-3 font-black">{row.index_name}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${row.category === 'stock' ? 'bg-[#ff8c42]/15 text-[#ff8c42]' : 'bg-[#4d9fff]/15 text-[#4d9fff]'}`}>
-                            {(row.category || 'index').toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-[#6b6b85]">{row.expiry}</td>
-                        <td className="px-4 py-3 text-[#f0c040] font-bold">{row.trade_date}</td>
-                        <td className="px-4 py-3 text-[#39d98a] font-bold">{row.strikeCount}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${row.uploaded_by === 'auto-fetch' ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#f0c040]/15 text-[#f0c040]'}`}>
-                            {row.uploaded_by === 'auto-fetch' ? 'AUTO' : 'MANUAL'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <button onClick={() => handleDeleteRow(row.id)}
-                            className="text-[#ff4d6d] hover:bg-[#ff4d6d]/10 rounded px-2 py-1 text-[10px] font-bold">
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {['ALL', 'AUTO', 'MANUAL', 'INDICES', 'STOCKS'].map(f => (
+                    <button key={f} onClick={() => setDbFilter(f)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${dbFilter === f ? 'bg-[#f0c040] text-black' : 'bg-[#111118] border border-[#1e1e2e] text-[#6b6b85]'}`}>
+                      {f}
+                    </button>
+                  ))}
+                </div>
+                {deleteMsg && <div className="bg-[#39d98a]/10 border border-[#39d98a]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#39d98a] mb-3">{deleteMsg}</div>}
+                {dbLoading ? (
+                  <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">Loading...</div>
+                ) : (
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
+                    <div className="px-4 py-3 border-b border-[#1e1e2e]">
+                      <span className="text-xs font-mono text-[#6b6b85]">Showing {dbData.length} of {dbStats.total} records</span>
+                    </div>
+                    <table className="w-full text-xs font-mono">
+                      <thead><tr className="border-b border-[#1e1e2e]">
+                        {['Index/Stock', 'Category', 'Expiry', 'Trade Date', 'Strikes', 'Source', 'Action'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {dbData.length === 0 ? (
+                          <tr><td colSpan={7} className="text-center py-8 text-[#6b6b85]">No data found</td></tr>
+                        ) : dbData.map((row, i) => (
+                          <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#f0c040]/5">
+                            <td className="px-4 py-3 font-black">{row.index_name}</td>
+                            <td className="px-4 py-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${row.category === 'stock' ? 'bg-[#ff8c42]/15 text-[#ff8c42]' : 'bg-[#4d9fff]/15 text-[#4d9fff]'}`}>
+                                {(row.category || 'index').toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-[#6b6b85]">{row.expiry}</td>
+                            <td className="px-4 py-3 text-[#f0c040] font-bold">{row.trade_date}</td>
+                            <td className="px-4 py-3 text-[#39d98a] font-bold">{row.strikeCount}</td>
+                            <td className="px-4 py-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${row.uploaded_by === 'auto-fetch' ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#f0c040]/15 text-[#f0c040]'}`}>
+                                {row.uploaded_by === 'auto-fetch' ? 'AUTO' : 'MANUAL'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <button onClick={() => handleDeleteRow(row.id)}
+                                className="text-[#ff4d6d] hover:bg-[#ff4d6d]/10 rounded px-2 py-1 text-[10px] font-bold">Delete</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* STOCK PRICES TAB */}
+            {dbSubTab === 'prices' && (
+              <div>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  {[
+                    { label: 'Total Price Records', value: dbPriceStats.total, color: '#4d9fff' },
+                    { label: 'Unique Stocks', value: dbPriceStats.stocks, color: '#39d98a' },
+                  ].map((s, i) => (
+                    <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
+                      <div className="text-xs font-mono text-[#6b6b85] mb-1">{s.label}</div>
+                      <div className="text-xl font-black" style={{ color: s.color }}>{s.value ?? 0}</div>
+                    </div>
+                  ))}
+                </div>
+                {dbPriceLoading ? (
+                  <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">Loading...</div>
+                ) : (
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
+                    <div className="px-4 py-3 border-b border-[#1e1e2e]">
+                      <span className="text-xs font-mono text-[#6b6b85]">Showing {dbPriceData.length} of {dbPriceStats.total} records</span>
+                    </div>
+                    <table className="w-full text-xs font-mono">
+                      <thead><tr className="border-b border-[#1e1e2e]">
+                        {['Stock', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {dbPriceData.length === 0 ? (
+                          <tr><td colSpan={7} className="text-center py-8 text-[#6b6b85]">No price data found. Run "Fetch Stocks Data" first.</td></tr>
+                        ) : dbPriceData.map((row, i) => (
+                          <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#4d9fff]/5">
+                            <td className="px-4 py-3 font-black text-[#4d9fff]">{row.stock_name}</td>
+                            <td className="px-4 py-3 text-[#f0c040]">{row.trade_date}</td>
+                            <td className="px-4 py-3">{row.open?.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-[#39d98a]">{row.high?.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-[#ff4d6d]">{row.low?.toFixed(2)}</td>
+                            <td className="px-4 py-3 font-bold">{row.close?.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-[#6b6b85]">{row.volume?.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* FUNDAMENTALS TAB */}
+            {dbSubTab === 'fundamentals' && (
+              <div>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  {[
+                    { label: 'Total Fundamental Records', value: dbFundStats.total, color: '#a78bfa' },
+                  ].map((s, i) => (
+                    <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
+                      <div className="text-xs font-mono text-[#6b6b85] mb-1">{s.label}</div>
+                      <div className="text-xl font-black" style={{ color: s.color }}>{s.value ?? 0}</div>
+                    </div>
+                  ))}
+                </div>
+                {dbFundLoading ? (
+                  <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">Loading...</div>
+                ) : (
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
+                    <div className="px-4 py-3 border-b border-[#1e1e2e]">
+                      <span className="text-xs font-mono text-[#6b6b85]">Showing {dbFundData.length} of {dbFundStats.total} records</span>
+                    </div>
+                    <table className="w-full text-xs font-mono">
+                      <thead><tr className="border-b border-[#1e1e2e]">
+                        {['Stock', 'Date', 'LTP', 'PE', 'EPS', 'Book Val', '52W H', '52W L', 'Mkt Cap', 'ROCE'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {dbFundData.length === 0 ? (
+                          <tr><td colSpan={10} className="text-center py-8 text-[#6b6b85]">No fundamental data found. Run "Fetch Fundamentals" first.</td></tr>
+                        ) : dbFundData.map((row, i) => (
+                          <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#a78bfa]/5">
+                            <td className="px-4 py-3 font-black text-[#a78bfa]">{row.stock_name}</td>
+                            <td className="px-4 py-3 text-[#f0c040]">{row.trade_date}</td>
+                            <td className="px-4 py-3 font-bold">{row.ltp?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3">{row.pe_ratio?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3">{row.eps?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3">{row.book_value?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3 text-[#39d98a]">{row.week52_high?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3 text-[#ff4d6d]">{row.week52_low?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3 text-[#6b6b85]">{row.market_cap ? `${(row.market_cap / 10000000).toFixed(0)} Cr` : '-'}</td>
+                            <td className="px-4 py-3">{row.roce?.toFixed(2) ?? '-'}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -566,23 +779,74 @@ export default function Admin() {
                 <div className="text-[10px] font-mono text-[#6b6b85] mt-1">Stocks</div>
               </div>
             </div>
-            <button onClick={handleAutoFetch} disabled={fetchLoading}
-              className="w-full bg-[#39d98a] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
-              {fetchLoading ? 'Fetching...' : 'Run Auto Fetch Now'}
-            </button>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <button onClick={handleFetchStocksData} disabled={fetchStocksLoading}
+                className="bg-[#4d9fff] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
+                {fetchStocksLoading ? 'Fetching...' : 'Fetch Stocks Data'}
+              </button>
+              <button onClick={handleFetchFundamentals} disabled={fetchFundLoading}
+                className="bg-[#a78bfa] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
+                {fetchFundLoading ? 'Fetching...' : 'Fetch Fundamentals'}
+              </button>
+              <button onClick={handleAutoFetch} disabled={fetchLoading}
+                className="bg-[#39d98a] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
+                {fetchLoading ? 'Fetching...' : 'Fetch All'}
+              </button>
+            </div>
+
+            {fetchStocksDone && fetchStocksResults.length > 0 && (
+              <div className="bg-[#111118] border border-[#4d9fff]/30 rounded-xl p-5">
+                <div className="text-xs font-mono font-bold mb-3 text-[#4d9fff]">Stocks Data Results</div>
+                <div className="text-xs font-mono font-bold mb-3 flex gap-4 flex-wrap">
+                  <span className="text-[#39d98a]">{fetchStocksResults.filter(r => r.status === 'saved').length} saved</span>
+                  <span className="text-[#f0c040]">{fetchStocksResults.filter(r => r.status === 'duplicate').length} duplicates</span>
+                  <span className="text-[#6b6b85]">{fetchStocksResults.filter(r => r.status === 'empty').length} empty</span>
+                  <span className="text-[#ff4d6d]">{fetchStocksResults.filter(r => r.status === 'error').length} errors</span>
+                </div>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {fetchStocksResults.map((r, i) => (
+                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${r.status === 'saved' ? 'bg-[#39d98a]/10 text-[#39d98a]' : r.status === 'duplicate' ? 'bg-[#f0c040]/10 text-[#f0c040]' : r.status === 'empty' ? 'bg-[#6b6b85]/10 text-[#6b6b85]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
+                      <span>{r.index}{r.expiry ? ` | ${r.expiry}` : ''}</span>
+                      <span>{r.status === 'saved' ? `Saved${r.strikes ? ` (${r.strikes})` : ''}` : r.status === 'duplicate' ? 'Already exists' : r.status === 'empty' ? 'Market closed' : `Error: ${r.error || ''}`}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {fetchFundDone && fetchFundResults.length > 0 && (
+              <div className="bg-[#111118] border border-[#a78bfa]/30 rounded-xl p-5">
+                <div className="text-xs font-mono font-bold mb-3 text-[#a78bfa]">Fundamentals Results</div>
+                <div className="text-xs font-mono font-bold mb-3 flex gap-4 flex-wrap">
+                  <span className="text-[#39d98a]">{fetchFundResults.filter(r => r.status === 'saved' || r.status === 'updated').length} saved/updated</span>
+                  <span className="text-[#6b6b85]">{fetchFundResults.filter(r => r.status === 'empty').length} empty</span>
+                  <span className="text-[#ff4d6d]">{fetchFundResults.filter(r => r.status === 'error').length} errors</span>
+                </div>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {fetchFundResults.map((r, i) => (
+                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${r.status === 'saved' || r.status === 'updated' ? 'bg-[#39d98a]/10 text-[#39d98a]' : r.status === 'empty' ? 'bg-[#6b6b85]/10 text-[#6b6b85]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
+                      <span>{r.index}</span>
+                      <span>{r.status === 'saved' ? 'Saved' : r.status === 'updated' ? 'Updated' : r.status === 'empty' ? 'No data' : `Error: ${r.error || ''}`}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {fetchDone && fetchResults.length > 0 && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5">
+                <div className="text-xs font-mono font-bold mb-3">Full Fetch Results</div>
                 <div className="text-xs font-mono font-bold mb-3 flex gap-4 flex-wrap">
-                  <span className="text-[#39d98a]">{fetchResults.filter(r => r.status === 'saved').length} saved</span>
+                  <span className="text-[#39d98a]">{fetchResults.filter(r => r.status === 'saved' || r.status === 'updated').length} saved</span>
                   <span className="text-[#f0c040]">{fetchResults.filter(r => r.status === 'duplicate').length} duplicates</span>
                   <span className="text-[#6b6b85]">{fetchResults.filter(r => r.status === 'empty').length} empty</span>
                   <span className="text-[#ff4d6d]">{fetchResults.filter(r => r.status === 'error').length} errors</span>
                 </div>
                 <div className="space-y-1.5 max-h-60 overflow-y-auto">
                   {fetchResults.map((r, i) => (
-                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${r.status === 'saved' ? 'bg-[#39d98a]/10 text-[#39d98a]' : r.status === 'duplicate' ? 'bg-[#f0c040]/10 text-[#f0c040]' : r.status === 'empty' ? 'bg-[#6b6b85]/10 text-[#6b6b85]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
+                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${r.status === 'saved' || r.status === 'updated' ? 'bg-[#39d98a]/10 text-[#39d98a]' : r.status === 'duplicate' ? 'bg-[#f0c040]/10 text-[#f0c040]' : r.status === 'empty' ? 'bg-[#6b6b85]/10 text-[#6b6b85]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
                       <span>{r.index}{r.expiry ? ` | ${r.expiry}` : ''}</span>
-                      <span>{r.status === 'saved' ? `Saved${r.strikes ? ` (${r.strikes})` : ''}` : r.status === 'duplicate' ? 'Already exists' : r.status === 'empty' ? 'Market closed' : `Error: ${r.error || ''}`}</span>
+                      <span>{r.status === 'saved' ? `Saved${r.strikes ? ` (${r.strikes})` : ''}` : r.status === 'updated' ? 'Updated' : r.status === 'duplicate' ? 'Already exists' : r.status === 'empty' ? 'Market closed' : `Error: ${r.error || ''}`}</span>
                     </div>
                   ))}
                 </div>
