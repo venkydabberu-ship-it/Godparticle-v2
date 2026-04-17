@@ -577,6 +577,58 @@ export async function autoFetchAllStocksData(): Promise<any[]> {
   return results;
 }
 
+// ── STANDALONE: FETCH STOCK OPTIONS ONLY ──
+export async function autoFetchAllStockOptions(): Promise<any[]> {
+  const results: any[] = [];
+
+  let tradeDate = new Date().toISOString().split('T')[0];
+  try {
+    const expData = await callEdge('get_expiries');
+    if (expData?.trade_date) tradeDate = expData.trade_date;
+  } catch {}
+
+  const { sectors } = await loadConfig();
+  const allStocks = sectors.flatMap((s: any) => s.stocks);
+  const uniqueStocks = [...new Set(allStocks)] as string[];
+
+  for (let batchStart = 0; batchStart < uniqueStocks.length; batchStart += BATCH_SIZE) {
+    if (batchStart > 0) await new Promise(r => setTimeout(r, BATCH_PAUSE));
+    const batch = uniqueStocks.slice(batchStart, batchStart + BATCH_SIZE);
+    for (const stock of batch) {
+      await new Promise(r => setTimeout(r, 800));
+      await processStockOptions(stock, tradeDate, results);
+    }
+  }
+
+  const saved = results.filter(r => r.status === 'saved').length;
+  const errors = results.filter(r => r.status === 'error').length;
+  console.log(`✅ Stock options done: ${saved} saved, ${errors} errors`);
+  return results;
+}
+
+// ── STANDALONE: FETCH STOCK PRICES ONLY ──
+export async function autoFetchAllStockPrices(): Promise<any[]> {
+  const results: any[] = [];
+
+  const { sectors } = await loadConfig();
+  const allStocks = sectors.flatMap((s: any) => s.stocks);
+  const uniqueStocks = [...new Set(allStocks)] as string[];
+
+  for (let batchStart = 0; batchStart < uniqueStocks.length; batchStart += BATCH_SIZE) {
+    if (batchStart > 0) await new Promise(r => setTimeout(r, BATCH_PAUSE));
+    const batch = uniqueStocks.slice(batchStart, batchStart + BATCH_SIZE);
+    for (const stock of batch) {
+      await new Promise(r => setTimeout(r, 1200));
+      await processStockPrice(stock, results);
+    }
+  }
+
+  const saved = results.filter(r => r.status === 'saved' || r.status === 'updated').length;
+  const errors = results.filter(r => r.status === 'error').length;
+  console.log(`✅ Stock prices done: ${saved} saved, ${errors} errors`);
+  return results;
+}
+
 // ── STANDALONE: FETCH ALL FUNDAMENTALS ──
 export async function autoFetchAllFundamentals(): Promise<any[]> {
   const results: any[] = [];

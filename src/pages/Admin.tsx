@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { runDailyAutoFetch, autoFetchAllIndices, autoFetchAllStocksData, autoFetchAllFundamentals } from '../lib/autofetch';
+import { runDailyAutoFetch, autoFetchAllIndices, autoFetchAllStockOptions, autoFetchAllStockPrices, autoFetchAllFundamentals } from '../lib/autofetch';
 
 const DEFAULT_INDICES = [
   { key: 'NIFTY50', name: 'Nifty 50', exchange: 'NSE', expiry: 'weekly', upstoxKey: 'NSE_INDEX|Nifty 50', color: '#f0c040' },
@@ -92,6 +92,14 @@ export default function Admin() {
   const [fetchIndicesLoading, setFetchIndicesLoading] = useState(false);
   const [fetchIndicesResults, setFetchIndicesResults] = useState<any[]>([]);
   const [fetchIndicesDone, setFetchIndicesDone] = useState(false);
+  // Fetch stock options state
+  const [fetchStockOptLoading, setFetchStockOptLoading] = useState(false);
+  const [fetchStockOptResults, setFetchStockOptResults] = useState<any[]>([]);
+  const [fetchStockOptDone, setFetchStockOptDone] = useState(false);
+  // Fetch stock prices state
+  const [fetchStockPriceLoading, setFetchStockPriceLoading] = useState(false);
+  const [fetchStockPriceResults, setFetchStockPriceResults] = useState<any[]>([]);
+  const [fetchStockPriceDone, setFetchStockPriceDone] = useState(false);
 
   // Folder navigation for Stock Prices
   const [priceView, setPriceView] = useState<'stocks' | 'rows'>('stocks');
@@ -277,6 +285,38 @@ export default function Admin() {
       setFetchIndicesDone(true);
     } finally {
       setFetchIndicesLoading(false);
+    }
+  }
+
+  async function handleFetchStockOptions() {
+    setFetchStockOptLoading(true);
+    setFetchStockOptDone(false);
+    setFetchStockOptResults([]);
+    try {
+      const res = await autoFetchAllStockOptions();
+      setFetchStockOptResults(res);
+      setFetchStockOptDone(true);
+    } catch (err: any) {
+      setFetchStockOptResults([{ status: 'error', error: err.message }]);
+      setFetchStockOptDone(true);
+    } finally {
+      setFetchStockOptLoading(false);
+    }
+  }
+
+  async function handleFetchStockPrices() {
+    setFetchStockPriceLoading(true);
+    setFetchStockPriceDone(false);
+    setFetchStockPriceResults([]);
+    try {
+      const res = await autoFetchAllStockPrices();
+      setFetchStockPriceResults(res);
+      setFetchStockPriceDone(true);
+    } catch (err: any) {
+      setFetchStockPriceResults([{ status: 'error', error: err.message }]);
+      setFetchStockPriceDone(true);
+    } finally {
+      setFetchStockPriceLoading(false);
     }
   }
 
@@ -948,21 +988,25 @@ export default function Admin() {
                 <div className="text-[10px] font-mono text-[#6b6b85] mt-1">Stocks</div>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               <button onClick={handleFetchIndices} disabled={fetchIndicesLoading}
                 className="bg-[#f0c040] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
                 {fetchIndicesLoading ? 'Fetching...' : '📈 Fetch Index Options'}
               </button>
-              <button onClick={handleFetchStocksData} disabled={fetchStocksLoading}
+              <button onClick={handleFetchStockOptions} disabled={fetchStockOptLoading}
+                className="bg-[#ff8c42] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
+                {fetchStockOptLoading ? 'Fetching...' : '📦 Fetch Stock Options'}
+              </button>
+              <button onClick={handleFetchStockPrices} disabled={fetchStockPriceLoading}
                 className="bg-[#4d9fff] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
-                {fetchStocksLoading ? 'Fetching...' : '📦 Fetch Stock Options + Prices'}
+                {fetchStockPriceLoading ? 'Fetching...' : '💹 Fetch Stock Prices'}
               </button>
               <button onClick={handleFetchFundamentals} disabled={fetchFundLoading}
                 className="bg-[#a78bfa] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
                 {fetchFundLoading ? 'Fetching...' : '📊 Fetch Fundamentals'}
               </button>
               <button onClick={handleAutoFetch} disabled={fetchLoading}
-                className="bg-[#39d98a] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
+                className="bg-[#39d98a] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40 md:col-span-2 lg:col-span-2">
                 {fetchLoading ? 'Fetching...' : '⚡ Fetch Everything (All)'}
               </button>
             </div>
@@ -981,6 +1025,45 @@ export default function Admin() {
                     <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${r.status === 'saved' ? 'bg-[#39d98a]/10 text-[#39d98a]' : r.status === 'duplicate' ? 'bg-[#f0c040]/10 text-[#f0c040]' : r.status === 'empty' ? 'bg-[#6b6b85]/10 text-[#6b6b85]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
                       <span>{r.index}{r.expiry ? ' | ' + r.expiry : ''}</span>
                       <span>{r.status === 'saved' ? 'Saved' + (r.strikes ? ' (' + r.strikes + ')' : '') : r.status === 'duplicate' ? 'Already exists' : r.status === 'empty' ? 'Market closed' : 'Error: ' + (r.error || '')}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {fetchStockOptDone && fetchStockOptResults.length > 0 && (
+              <div className="bg-[#111118] border border-[#ff8c42]/30 rounded-xl p-5">
+                <div className="text-xs font-mono font-bold mb-3 text-[#ff8c42]">Stock Options Results</div>
+                <div className="text-xs font-mono font-bold mb-3 flex gap-4 flex-wrap">
+                  <span className="text-[#39d98a]">{fetchStockOptResults.filter(r => r.status === 'saved').length} saved</span>
+                  <span className="text-[#f0c040]">{fetchStockOptResults.filter(r => r.status === 'duplicate').length} duplicates</span>
+                  <span className="text-[#6b6b85]">{fetchStockOptResults.filter(r => r.status === 'empty').length} empty</span>
+                  <span className="text-[#ff4d6d]">{fetchStockOptResults.filter(r => r.status === 'error').length} errors</span>
+                </div>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {fetchStockOptResults.map((r, i) => (
+                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${r.status === 'saved' ? 'bg-[#39d98a]/10 text-[#39d98a]' : r.status === 'duplicate' ? 'bg-[#f0c040]/10 text-[#f0c040]' : r.status === 'empty' ? 'bg-[#6b6b85]/10 text-[#6b6b85]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
+                      <span>{r.index}{r.expiry ? ' | ' + r.expiry : ''}</span>
+                      <span>{r.status === 'saved' ? 'Saved' + (r.strikes ? ' (' + r.strikes + ')' : '') : r.status === 'duplicate' ? 'Already exists' : r.status === 'empty' ? 'No data' : 'Error: ' + (r.error || '')}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {fetchStockPriceDone && fetchStockPriceResults.length > 0 && (
+              <div className="bg-[#111118] border border-[#4d9fff]/30 rounded-xl p-5">
+                <div className="text-xs font-mono font-bold mb-3 text-[#4d9fff]">Stock Prices Results</div>
+                <div className="text-xs font-mono font-bold mb-3 flex gap-4 flex-wrap">
+                  <span className="text-[#39d98a]">{fetchStockPriceResults.filter(r => r.status === 'saved' || r.status === 'updated').length} saved/updated</span>
+                  <span className="text-[#6b6b85]">{fetchStockPriceResults.filter(r => r.status === 'empty').length} empty</span>
+                  <span className="text-[#ff4d6d]">{fetchStockPriceResults.filter(r => r.status === 'error').length} errors</span>
+                </div>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {fetchStockPriceResults.map((r, i) => (
+                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${r.status === 'saved' || r.status === 'updated' ? 'bg-[#39d98a]/10 text-[#39d98a]' : r.status === 'empty' ? 'bg-[#6b6b85]/10 text-[#6b6b85]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
+                      <span>{r.index}</span>
+                      <span>{r.status === 'saved' ? 'Saved' : r.status === 'updated' ? 'Updated' : r.status === 'empty' ? 'No data' : 'Error: ' + (r.error || '')}</span>
                     </div>
                   ))}
                 </div>
