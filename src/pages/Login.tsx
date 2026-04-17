@@ -87,11 +87,18 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-6 text-center text-sm font-mono text-[#6b6b85]">
-            Don't have an account?{' '}
-            <Link to="/signup" className="text-[#f0c040] hover:underline">
-              Sign up free
-            </Link>
+          <div className="mt-6 text-center text-sm font-mono text-[#6b6b85] space-y-2">
+            <div>
+              <Link to="/forgot-password" className="text-[#6b6b85] hover:text-[#f0c040] underline">
+                Forgot password?
+              </Link>
+            </div>
+            <div>
+              Don't have an account?{' '}
+              <Link to="/signup" className="text-[#f0c040] hover:underline">
+                Sign up free
+              </Link>
+            </div>
           </div>
         </div>
 

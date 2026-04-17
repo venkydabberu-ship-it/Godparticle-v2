@@ -9,6 +9,7 @@ import Pricing from './pages/Pricing';
 import Admin from './pages/Admin';
 import ZeroToHero from './pages/ZeroToHero';
 import StockAnalysis from './pages/StockAnalysis';
+import ForgotPassword from './pages/ForgotPassword';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -54,6 +55,9 @@ export default function App() {
           } />
           <Route path="/signup" element={
             <PublicRoute><Signup /></PublicRoute>
+          } />
+          <Route path="/forgot-password" element={
+            <PublicRoute><ForgotPassword /></PublicRoute>
           } />
           <Route path="/dashboard" element={
             <ProtectedRoute><Dashboard /></ProtectedRoute>
