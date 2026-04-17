@@ -253,16 +253,30 @@ async function saveFundamentalData(symbol: string, data: any) {
 }
 
 // ── PROCESS FUNDAMENTALS FOR ONE STOCK ──
+// Derives 52W high/low and LTP from already-saved stock_price_data
 async function processFundamentals(symbol: string, results: any[]) {
   try {
-    const data = await callEdge('stock_fundamentals', symbol);
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const fromDate = oneYearAgo.toISOString().split('T')[0];
 
-    if (!data) {
-      results.push({ index: `${symbol}_FUND`, status: 'empty', error: 'No fundamental data' });
+    const { data: rows } = await supabase
+      .from('stock_price_data')
+      .select('trade_date, high, low, close')
+      .eq('stock_name', symbol.toUpperCase())
+      .gte('trade_date', fromDate)
+      .order('trade_date', { ascending: false });
+
+    if (!rows || rows.length === 0) {
+      results.push({ index: `${symbol}_FUND`, status: 'empty', error: 'No price data to derive from' });
       return;
     }
 
-    const result = await saveFundamentalData(symbol, data);
+    const ltp = rows[0].close;
+    const week52High = Math.max(...rows.map((r: any) => r.high));
+    const week52Low = Math.min(...rows.map((r: any) => r.low));
+
+    const result = await saveFundamentalData(symbol, { ltp, week52High, week52Low });
     results.push({ index: `${symbol}_FUND`, status: result.status, error: result.error });
   } catch (err: any) {
     results.push({ index: `${symbol}_FUND`, status: 'error', error: err.message });
@@ -270,7 +284,7 @@ async function processFundamentals(symbol: string, results: any[]) {
 }
 
 // ── PROCESS STOCK PRICE ──
-// Saves 14 months of daily OHLC
+// Saves 14 months of daily OHLC and extracts fundamentals from NSE response
 async function processStockPrice(symbol: string, results: any[]) {
   try {
     const data = await callEdge('stock_price', symbol);
@@ -301,6 +315,18 @@ async function processStockPrice(symbol: string, results: any[]) {
     await supabase
       .from('stock_price_data')
       .upsert(toSave, { onConflict: 'stock_name,trade_date' });
+
+    // Extract 52W high/low and LTP from the latest NSE record
+    const sorted = [...toSave].sort((a, b) => b.trade_date.localeCompare(a.trade_date));
+    const latest = sorted[0];
+    const latestRaw = records.find((r: any) => r.CH_TIMESTAMP === latest.trade_date);
+    if (latestRaw) {
+      await saveFundamentalData(symbol, {
+        ltp: latest.close,
+        week52High: parseFloat(latestRaw.CH_52WEEK_HIGH_PRICE || 0),
+        week52Low: parseFloat(latestRaw.CH_52WEEK_LOW_PRICE || 0),
+      });
+    }
 
     results.push({
       index: `${symbol}_PRICE`,
