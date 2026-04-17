@@ -284,7 +284,7 @@ async function processFundamentals(symbol: string, results: any[]) {
 }
 
 // ── PROCESS STOCK PRICE ──
-// Saves 14 months of daily OHLC and extracts fundamentals from NSE response
+// Fetches daily data, aggregates to monthly OHLC (last 14 months, 1 record per month)
 async function processStockPrice(symbol: string, results: any[]) {
   try {
     const data = await callEdge('stock_price', symbol);
@@ -295,44 +295,60 @@ async function processStockPrice(symbol: string, results: any[]) {
       return;
     }
 
-    const toSave = records
+    const daily = records
       .filter((r: any) => r.CH_TIMESTAMP && parseFloat(r.CH_CLOSING_PRICE) > 0)
       .map((r: any) => ({
-        stock_name: symbol.toUpperCase(),
-        trade_date: r.CH_TIMESTAMP,
+        trade_date: r.CH_TIMESTAMP as string,
         open: parseFloat(r.CH_OPENING_PRICE || 0),
         high: parseFloat(r.CH_TRADE_HIGH_PRICE || 0),
         low: parseFloat(r.CH_TRADE_LOW_PRICE || 0),
         close: parseFloat(r.CH_CLOSING_PRICE || 0),
         volume: parseFloat(r.CH_TOT_TRADED_QTY || 0),
-      }));
+        raw: r,
+      }))
+      .sort((a, b) => a.trade_date.localeCompare(b.trade_date));
 
-    if (toSave.length === 0) {
+    if (daily.length === 0) {
       results.push({ index: `${symbol}_PRICE`, status: 'empty', error: 'No valid candles' });
       return;
     }
 
+    // Aggregate daily → monthly (last 14 months, 1 candle per month)
+    const byMonth: Record<string, typeof daily> = {};
+    daily.forEach(d => {
+      const key = d.trade_date.substring(0, 7); // YYYY-MM
+      if (!byMonth[key]) byMonth[key] = [];
+      byMonth[key].push(d);
+    });
+
+    const monthlySave = Object.entries(byMonth)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-14)
+      .map(([, days]) => ({
+        stock_name: symbol.toUpperCase(),
+        trade_date: days[days.length - 1].trade_date,       // last trading day of month
+        open: days[0].open,                                  // first day open
+        high: Math.max(...days.map(d => d.high)),
+        low: Math.min(...days.map(d => d.low)),
+        close: days[days.length - 1].close,                  // last day close
+        volume: days.reduce((s, d) => s + d.volume, 0),      // total month volume
+      }));
+
     await supabase
       .from('stock_price_data')
-      .upsert(toSave, { onConflict: 'stock_name,trade_date' });
+      .upsert(monthlySave, { onConflict: 'stock_name,trade_date' });
 
-    // Extract 52W high/low and LTP from the latest NSE record
-    const sorted = [...toSave].sort((a, b) => b.trade_date.localeCompare(a.trade_date));
-    const latest = sorted[0];
-    const latestRaw = records.find((r: any) => r.CH_TIMESTAMP === latest.trade_date);
-    if (latestRaw) {
+    // Save fundamentals (52W H/L + LTP) from latest NSE raw record
+    const latestDaily = daily[daily.length - 1];
+    if (latestDaily) {
       await saveFundamentalData(symbol, {
-        ltp: latest.close,
-        week52High: parseFloat(latestRaw.CH_52WEEK_HIGH_PRICE || 0),
-        week52Low: parseFloat(latestRaw.CH_52WEEK_LOW_PRICE || 0),
+        ltp: latestDaily.close,
+        week52High: parseFloat(latestDaily.raw.CH_52WEEK_HIGH_PRICE || 0),
+        week52Low: parseFloat(latestDaily.raw.CH_52WEEK_LOW_PRICE || 0),
       });
     }
 
-    results.push({
-      index: `${symbol}_PRICE`,
-      status: 'saved',
-      strikes: toSave.length
-    });
+    results.push({ index: `${symbol}_PRICE`, status: 'saved', strikes: monthlySave.length });
   } catch (err: any) {
     results.push({ index: `${symbol}_PRICE`, status: 'error', error: err.message });
   }
@@ -480,6 +496,29 @@ export async function autoFetchStockPrice(symbol: string): Promise<any[]> {
   }
 
   return toSave;
+}
+
+// ── STANDALONE: FETCH ALL INDICES ──
+export async function autoFetchAllIndices(): Promise<any[]> {
+  const results: any[] = [];
+
+  let tradeDate = new Date().toISOString().split('T')[0];
+  try {
+    const expData = await callEdge('get_expiries');
+    if (expData?.trade_date) tradeDate = expData.trade_date;
+  } catch {}
+
+  const { indices } = await loadConfig();
+  for (const idx of indices) {
+    await new Promise(r => setTimeout(r, 800));
+    const isZ2H = idx.key === 'NIFTY50' || idx.key === 'SENSEX';
+    await processIndex(idx.key, idx.name, idx.edgeType, tradeDate, results, isZ2H);
+  }
+
+  const saved = results.filter(r => r.status === 'saved').length;
+  const errors = results.filter(r => r.status === 'error').length;
+  console.log(`✅ Indices done: ${saved} saved, ${errors} errors`);
+  return results;
 }
 
 // ── STANDALONE: FETCH ALL STOCKS DATA (options + price) ──

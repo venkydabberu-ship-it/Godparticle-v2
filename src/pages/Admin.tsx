@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { runDailyAutoFetch, autoFetchAllStocksData, autoFetchAllFundamentals } from '../lib/autofetch';
+import { runDailyAutoFetch, autoFetchAllIndices, autoFetchAllStocksData, autoFetchAllFundamentals } from '../lib/autofetch';
 
 const DEFAULT_INDICES = [
   { key: 'NIFTY50', name: 'Nifty 50', exchange: 'NSE', expiry: 'weekly', upstoxKey: 'NSE_INDEX|Nifty 50', color: '#f0c040' },
@@ -48,6 +48,9 @@ export default function Admin() {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchResults, setFetchResults] = useState<any[]>([]);
   const [fetchDone, setFetchDone] = useState(false);
+  const [fetchIndicesLoading, setFetchIndicesLoading] = useState(false);
+  const [fetchIndicesResults, setFetchIndicesResults] = useState<any[]>([]);
+  const [fetchIndicesDone, setFetchIndicesDone] = useState(false);
   const [fetchStocksLoading, setFetchStocksLoading] = useState(false);
   const [fetchStocksResults, setFetchStocksResults] = useState<any[]>([]);
   const [fetchStocksDone, setFetchStocksDone] = useState(false);
@@ -333,6 +336,22 @@ export default function Admin() {
       setFetchDone(true);
     } finally {
       setFetchLoading(false);
+    }
+  }
+
+  async function handleFetchIndices() {
+    setFetchIndicesLoading(true);
+    setFetchIndicesDone(false);
+    setFetchIndicesResults([]);
+    try {
+      const res = await autoFetchAllIndices();
+      setFetchIndicesResults(res);
+      setFetchIndicesDone(true);
+    } catch (err: any) {
+      setFetchIndicesResults([{ status: 'error', error: err.message }]);
+      setFetchIndicesDone(true);
+    } finally {
+      setFetchIndicesLoading(false);
     }
   }
 
@@ -779,7 +798,11 @@ export default function Admin() {
                 <div className="text-[10px] font-mono text-[#6b6b85] mt-1">Stocks</div>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={handleFetchIndices} disabled={fetchIndicesLoading}
+                className="bg-[#f0c040] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
+                {fetchIndicesLoading ? 'Fetching...' : 'Fetch Indices'}
+              </button>
               <button onClick={handleFetchStocksData} disabled={fetchStocksLoading}
                 className="bg-[#4d9fff] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
                 {fetchStocksLoading ? 'Fetching...' : 'Fetch Stocks Data'}
@@ -793,6 +816,26 @@ export default function Admin() {
                 {fetchLoading ? 'Fetching...' : 'Fetch All'}
               </button>
             </div>
+
+            {fetchIndicesDone && fetchIndicesResults.length > 0 && (
+              <div className="bg-[#111118] border border-[#f0c040]/30 rounded-xl p-5">
+                <div className="text-xs font-mono font-bold mb-3 text-[#f0c040]">Indices Results</div>
+                <div className="text-xs font-mono font-bold mb-3 flex gap-4 flex-wrap">
+                  <span className="text-[#39d98a]">{fetchIndicesResults.filter(r => r.status === 'saved').length} saved</span>
+                  <span className="text-[#f0c040]">{fetchIndicesResults.filter(r => r.status === 'duplicate').length} duplicates</span>
+                  <span className="text-[#6b6b85]">{fetchIndicesResults.filter(r => r.status === 'empty').length} market closed</span>
+                  <span className="text-[#ff4d6d]">{fetchIndicesResults.filter(r => r.status === 'error').length} errors</span>
+                </div>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {fetchIndicesResults.map((r, i) => (
+                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${r.status === 'saved' ? 'bg-[#39d98a]/10 text-[#39d98a]' : r.status === 'duplicate' ? 'bg-[#f0c040]/10 text-[#f0c040]' : r.status === 'empty' ? 'bg-[#6b6b85]/10 text-[#6b6b85]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
+                      <span>{r.index}{r.expiry ? ` | ${r.expiry}` : ''}</span>
+                      <span>{r.status === 'saved' ? `Saved (${r.strikes ?? ''})` : r.status === 'duplicate' ? 'Already exists' : r.status === 'empty' ? 'Market closed' : `Error: ${r.error || ''}`}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {fetchStocksDone && fetchStocksResults.length > 0 && (
               <div className="bg-[#111118] border border-[#4d9fff]/30 rounded-xl p-5">
