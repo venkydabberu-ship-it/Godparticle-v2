@@ -2,8 +2,6 @@
 // Handles stock price history and stock option chains from NSE
 // Deploy: supabase functions deploy fetch-stock-data
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -129,7 +127,7 @@ function parseOptionChain(json: any, maxExpiries = 4): Array<{ expiry: string; s
   });
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS });
   }
