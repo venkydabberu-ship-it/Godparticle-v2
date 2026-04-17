@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { computeGodParticle, saveAnalysis } from '../lib/market';
@@ -45,6 +45,27 @@ export default function StockAnalysis() {
 
   const canAccess = ['premium', 'pro', 'admin'].includes(role);
   const canAutoFetch = ['pro', 'admin'].includes(role);
+
+  const location = useLocation();
+  useEffect(() => {
+    const replay = (location.state as any)?.replay;
+    if (!replay?.result) return;
+    const r = replay.result;
+    if (r.type === 'gct') {
+      setStockName(r.stockName || replay.index_name || '');
+      setResult(r);
+      setStep('result');
+    } else {
+      setStockName(r.stockName || replay.index_name || '');
+      setOptStrike(String(replay.strike || ''));
+      setOptType(replay.option_type || 'CE');
+      setOptExpiry(replay.expiry || '');
+      setAnalysisType('options');
+      setResult({ type: 'options', ...r, stockName: r.stockName || replay.index_name });
+      setActiveTab('raw');
+      setStep('result');
+    }
+  }, []);
 
   // ── AUTO FETCH STOCK PRICE — uses Edge Function ──
   async function handleAutoFetchPrice() {
@@ -383,7 +404,7 @@ export default function StockAnalysis() {
       if (roceVal) fssChecks.push({ name: 'ROCE', pass: roceVal >= 8, value: `${roceVal}%` });
       const fssScore = fssChecks.filter(c => c.pass).length;
       const fssVerdict = ['💀 VALUE TRAP','🔴 RISKY','⚠️ CAREFUL','⚡ DECENT BUY','✅ GOOD BUY','🟢 STRONG BUY'][fssScore];
-      setResult({
+      const stockGctResult = {
         type: 'gct', stockName, currentPrice: Math.round(currentPrice),
         mgc: Math.round(mgc), vwar: Math.round(vwar),
         mcl: Math.round(mcl), al: Math.round(al), cl: Math.round(cl),
@@ -391,7 +412,9 @@ export default function StockAnalysis() {
         fssChecks, fssScore, fssVerdict,
         dataMonths: data.length,
         firstDate: data[0].date, lastDate: data[data.length-1].date
-      });
+      };
+      if (user) saveAnalysis(user.id, stockName.toUpperCase(), 0, 'STOCK_GCT', new Date().toISOString().split('T')[0], stockGctResult).catch(() => {});
+      setResult(stockGctResult);
       setStep('result');
     } catch (err: any) {
       setError(err.message || 'Analysis failed!');

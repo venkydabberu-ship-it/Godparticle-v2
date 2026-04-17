@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   getMarketData, getAvailableExpiries, getAvailableDates,
@@ -45,6 +45,19 @@ export default function Analysis() {
   const [scenarios, setScenarios] = useState<any[]>([]);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('raw');
+
+  const location = useLocation();
+  useEffect(() => {
+    const replay = (location.state as any)?.replay;
+    if (!replay?.result) return;
+    setIndexName(replay.index_name || 'NIFTY50');
+    setExpiry(replay.expiry || '');
+    setStrike(String(replay.strike || ''));
+    setOptType(replay.option_type || 'CE');
+    setResult(replay.result);
+    setScenarios(generateScenarioMatrix(replay.result, replay.index_name || 'NIFTY50'));
+    setActiveTab('gp');
+  }, []);
 
   // Load expiries when index changes
   useEffect(() => {
