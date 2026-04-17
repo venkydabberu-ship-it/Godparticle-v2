@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 export default function Pricing() {
   const { profile, refreshProfile } = useAuth();
@@ -11,25 +12,38 @@ export default function Pricing() {
   async function handlePayment(plan: string, amount: number, credits: number) {
     setLoading(plan);
     setError('');
+    setSuccess('');
+    const options = {
+      key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+      amount: amount * 100,
+      currency: 'INR',
+      name: 'God Particle',
+      description: plan + ' Plan — ' + credits + ' credits/month',
+      handler: async function(response: any) {
+        try {
+          const { data, error: fnErr } = await supabase.functions.invoke('activate-plan', {
+            body: { payment_id: response.razorpay_payment_id, plan }
+          });
+          if (fnErr || !data?.success) {
+            setError('Payment received but activation failed. Save this Payment ID and contact support: ' + response.razorpay_payment_id);
+          } else {
+            setSuccess(plan + ' plan activated! Welcome to God Particle ' + plan + '.');
+            await refreshProfile();
+          }
+        } catch {
+          setError('Activation error. Save this Payment ID: ' + response.razorpay_payment_id);
+        }
+        setLoading('');
+      },
+      modal: { ondismiss: function() { setLoading(''); } },
+      prefill: { email: profile?.username ?? '' },
+      theme: { color: '#f0c040' }
+    };
     try {
-      const options = {
-        key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-        amount: amount * 100,
-        currency: 'INR',
-        name: 'God Particle',
-        description: `${plan} Plan — ${credits} credits/month`,
-        handler: async function(response: any) {
-          setSuccess(`Payment successful! Your ${plan} plan is now active. Payment ID: ${response.razorpay_payment_id}`);
-          await refreshProfile();
-        },
-        prefill: { email: profile?.username ?? '' },
-        theme: { color: '#f0c040' }
-      };
       const rzp = new (window as any).Razorpay(options);
       rzp.open();
     } catch (err: any) {
-      setError(err.message || 'Payment failed!');
-    } finally {
+      setError(err.message || 'Could not open payment. Please try again.');
       setLoading('');
     }
   }
@@ -38,24 +52,37 @@ export default function Pricing() {
     const amount = credits * 2;
     setLoading('credits');
     setError('');
+    setSuccess('');
+    const options = {
+      key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+      amount: amount * 100,
+      currency: 'INR',
+      name: 'God Particle',
+      description: credits + ' Credits Purchase',
+      handler: async function(response: any) {
+        try {
+          const { data, error: fnErr } = await supabase.functions.invoke('activate-plan', {
+            body: { payment_id: response.razorpay_payment_id, credits }
+          });
+          if (fnErr || !data?.success) {
+            setError('Payment received but credits not added. Save Payment ID: ' + response.razorpay_payment_id);
+          } else {
+            setSuccess(credits + ' credits added to your account!');
+            await refreshProfile();
+          }
+        } catch {
+          setError('Error adding credits. Save Payment ID: ' + response.razorpay_payment_id);
+        }
+        setLoading('');
+      },
+      modal: { ondismiss: function() { setLoading(''); } },
+      theme: { color: '#f0c040' }
+    };
     try {
-      const options = {
-        key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-        amount: amount * 100,
-        currency: 'INR',
-        name: 'God Particle',
-        description: `${credits} Credits Purchase`,
-        handler: async function(response: any) {
-          setSuccess(`${credits} credits will be added shortly! Payment ID: ${response.razorpay_payment_id}`);
-          await refreshProfile();
-        },
-        theme: { color: '#f0c040' }
-      };
       const rzp = new (window as any).Razorpay(options);
       rzp.open();
     } catch (err: any) {
-      setError(err.message || 'Payment failed!');
-    } finally {
+      setError(err.message || 'Could not open payment. Please try again.');
       setLoading('');
     }
   }

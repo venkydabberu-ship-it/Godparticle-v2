@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { runDailyAutoFetch, autoFetchAllIndices, autoFetchAllStocksData, autoFetchAllFundamentals, retryFailedStocks } from '../lib/autofetch';
+import { runDailyAutoFetch, autoFetchAllStocksData, autoFetchAllFundamentals } from '../lib/autofetch';
 
 const DEFAULT_INDICES = [
   { key: 'NIFTY50', name: 'Nifty 50', exchange: 'NSE', expiry: 'weekly', upstoxKey: 'NSE_INDEX|Nifty 50', color: '#f0c040' },
@@ -48,18 +48,12 @@ export default function Admin() {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchResults, setFetchResults] = useState<any[]>([]);
   const [fetchDone, setFetchDone] = useState(false);
-  const [fetchIndicesLoading, setFetchIndicesLoading] = useState(false);
-  const [fetchIndicesResults, setFetchIndicesResults] = useState<any[]>([]);
-  const [fetchIndicesDone, setFetchIndicesDone] = useState(false);
   const [fetchStocksLoading, setFetchStocksLoading] = useState(false);
   const [fetchStocksResults, setFetchStocksResults] = useState<any[]>([]);
   const [fetchStocksDone, setFetchStocksDone] = useState(false);
   const [fetchFundLoading, setFetchFundLoading] = useState(false);
   const [fetchFundResults, setFetchFundResults] = useState<any[]>([]);
   const [fetchFundDone, setFetchFundDone] = useState(false);
-  const [retryLoading, setRetryLoading] = useState(false);
-  const [retryResults, setRetryResults] = useState<any[]>([]);
-  const [retryDone, setRetryDone] = useState(false);
   const [indices, setIndices] = useState(DEFAULT_INDICES);
   const [sectors, setSectors] = useState(DEFAULT_SECTORS);
   const [newIndexKey, setNewIndexKey] = useState('');
@@ -84,10 +78,17 @@ export default function Admin() {
   const [dbFundData, setDbFundData] = useState<any[]>([]);
   const [dbFundLoading, setDbFundLoading] = useState(false);
   const [dbFundStats, setDbFundStats] = useState<any>({});
-  const [selectedPriceStock, setSelectedPriceStock] = useState<string | null>(null);
-  const [uniquePriceStocks, setUniquePriceStocks] = useState<string[]>([]);
-  const [selectedFundStock, setSelectedFundStock] = useState<string | null>(null);
-  const [uniqueFundStocks, setUniqueFundStocks] = useState<string[]>([]);
+
+  // Folder navigation for Stock Prices
+  const [priceView, setPriceView] = useState<'stocks' | 'rows'>('stocks');
+  const [priceStockNames, setPriceStockNames] = useState<string[]>([]);
+  const [selectedPriceStock, setSelectedPriceStock] = useState('');
+  const [priceRowsForStock, setPriceRowsForStock] = useState<any[]>([]);
+  // Folder navigation for Fundamentals
+  const [fundView, setFundView] = useState<'stocks' | 'rows'>('stocks');
+  const [fundStockNames, setFundStockNames] = useState<string[]>([]);
+  const [selectedFundStock, setSelectedFundStock] = useState('');
+  const [fundRowsForStock, setFundRowsForStock] = useState<any[]>([]);
 
   useEffect(() => {
     if (profile?.role !== 'admin') return;
@@ -97,10 +98,17 @@ export default function Admin() {
 
   useEffect(() => {
     if (activeTab !== 'databank') return;
+    setPriceView('stocks');
+    setFundView('stocks');
     if (dbSubTab === 'options') loadDataBank();
     else if (dbSubTab === 'prices') loadStockPrices();
     else if (dbSubTab === 'fundamentals') loadFundamentals();
-  }, [activeTab, dbSubTab, dbFilter, dbSearch, dbDateFilter, selectedPriceStock, selectedFundStock]);
+  }, [activeTab, dbSubTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'databank' || dbSubTab !== 'options') return;
+    loadDataBank();
+  }, [dbFilter, dbSearch, dbDateFilter]);
 
   async function loadDataBank() {
     setDbLoading(true);
@@ -148,32 +156,13 @@ export default function Admin() {
 
   async function loadStockPrices() {
     setDbPriceLoading(true);
+    setPriceView('stocks');
     try {
-      // Load unique stock names for folder view
-      const { data: nameRows } = await supabase
-        .from('stock_price_data').select('stock_name').order('stock_name').limit(5000);
-      const names = [...new Set((nameRows || []).map((r: any) => r.stock_name))].sort() as string[];
-      setUniquePriceStocks(names);
-      // Use count query for total records so it's accurate beyond the 5000 limit
-      const { count: totalRows } = await supabase
-        .from('stock_price_data').select('*', { count: 'exact', head: true });
-      setDbPriceStats({ total: totalRows || 0, stocks: names.length });
-
-      // If a stock is selected, load its records
-      if (selectedPriceStock) {
-        let query = supabase
-          .from('stock_price_data')
-          .select('id, stock_name, trade_date, open, high, low, close, volume, created_at')
-          .eq('stock_name', selectedPriceStock)
-          .order('trade_date', { ascending: false })
-          .limit(200);
-        if (dbDateFilter) query = query.eq('trade_date', dbDateFilter);
-        const { data, error } = await query;
-        if (error) throw error;
-        setDbPriceData(data || []);
-      } else {
-        setDbPriceData([]);
-      }
+      const { data } = await supabase.from('stock_price_data').select('stock_name').order('stock_name');
+      const names: string[] = [...new Set((data || []).map((r: any) => r.stock_name))];
+      setPriceStockNames(names);
+      const { count: total } = await supabase.from('stock_price_data').select('*', { count: 'exact', head: true });
+      setDbPriceStats({ total: total || 0, stocks: names.length });
     } catch (err: any) {
       console.error('loadStockPrices error:', err);
     } finally {
@@ -181,34 +170,47 @@ export default function Admin() {
     }
   }
 
+  async function openPriceStock(stock: string) {
+    setDbPriceLoading(true);
+    try {
+      const { data } = await supabase.from('stock_price_data')
+        .select('*').eq('stock_name', stock).order('trade_date', { ascending: false });
+      setSelectedPriceStock(stock);
+      setPriceRowsForStock(data || []);
+      setPriceView('rows');
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setDbPriceLoading(false);
+    }
+  }
+
   async function loadFundamentals() {
     setDbFundLoading(true);
+    setFundView('stocks');
     try {
-      // Load unique stock names for folder view
-      const { data: nameRows } = await supabase
-        .from('stock_fundamentals').select('stock_name').order('stock_name').limit(5000);
-      const names = [...new Set((nameRows || []).map((r: any) => r.stock_name))].sort() as string[];
-      setUniqueFundStocks(names);
-      setDbFundStats({ total: nameRows?.length || 0, stocks: names.length });
-
-      let query = supabase
-        .from('stock_fundamentals')
-        .select('id, stock_name, trade_date, pe_ratio, eps, book_value, face_value, market_cap, week52_high, week52_low, dividend_yield, roce, ltp, sector, created_at')
-        .order('trade_date', { ascending: false })
-        .limit(200);
-
-      if (selectedFundStock) query = query.eq('stock_name', selectedFundStock);
-      if (dbSearch) query = query.ilike('stock_name', `%${dbSearch}%`);
-      if (dbDateFilter) query = query.eq('trade_date', dbDateFilter);
-
-      const { data, error } = await query;
-      if (error) throw error;
-      setDbFundData(data || []);
-
+      const { data } = await supabase.from('stock_fundamentals').select('stock_name').order('stock_name');
+      const names: string[] = [...new Set((data || []).map((r: any) => r.stock_name))];
+      setFundStockNames(names);
       const { count: total } = await supabase.from('stock_fundamentals').select('*', { count: 'exact', head: true });
       setDbFundStats({ total: total || 0 });
     } catch (err: any) {
       console.error('loadFundamentals error:', err);
+    } finally {
+      setDbFundLoading(false);
+    }
+  }
+
+  async function openFundStock(stock: string) {
+    setDbFundLoading(true);
+    try {
+      const { data } = await supabase.from('stock_fundamentals')
+        .select('*').eq('stock_name', stock).order('trade_date', { ascending: false });
+      setSelectedFundStock(stock);
+      setFundRowsForStock(data || []);
+      setFundView('rows');
+    } catch (err: any) {
+      console.error(err);
     } finally {
       setDbFundLoading(false);
     }
@@ -363,22 +365,6 @@ export default function Admin() {
     }
   }
 
-  async function handleFetchIndices() {
-    setFetchIndicesLoading(true);
-    setFetchIndicesDone(false);
-    setFetchIndicesResults([]);
-    try {
-      const res = await autoFetchAllIndices();
-      setFetchIndicesResults(res);
-      setFetchIndicesDone(true);
-    } catch (err: any) {
-      setFetchIndicesResults([{ status: 'error', error: err.message }]);
-      setFetchIndicesDone(true);
-    } finally {
-      setFetchIndicesLoading(false);
-    }
-  }
-
   async function handleFetchStocksData() {
     setFetchStocksLoading(true);
     setFetchStocksDone(false);
@@ -408,30 +394,6 @@ export default function Admin() {
       setFetchFundDone(true);
     } finally {
       setFetchFundLoading(false);
-    }
-  }
-
-  async function handleRetryFailed() {
-    const allResults = [...fetchStocksResults, ...fetchResults];
-    const failedSymbols = [...new Set(
-      allResults
-        .filter(r => r.status === 'error')
-        .map(r => (r.index as string).replace('_PRICE', '').replace('_FUND', ''))
-        .filter(s => s && !s.startsWith('SYSTEM'))
-    )];
-    if (!failedSymbols.length) return;
-    setRetryLoading(true);
-    setRetryDone(false);
-    setRetryResults([]);
-    try {
-      const res = await retryFailedStocks(failedSymbols);
-      setRetryResults(res);
-      setRetryDone(true);
-    } catch (err: any) {
-      setRetryResults([{ status: 'error', error: err.message }]);
-      setRetryDone(true);
-    } finally {
-      setRetryLoading(false);
     }
   }
 
@@ -690,73 +652,77 @@ export default function Admin() {
               </div>
             )}
 
-            {/* STOCK PRICES TAB — folder view */}
+            {/* STOCK PRICES TAB */}
             {dbSubTab === 'prices' && (
               <div>
                 <div className="grid grid-cols-2 gap-3 mb-4">
-                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
-                    <div className="text-xs font-mono text-[#6b6b85] mb-1">Total Records</div>
-                    <div className="text-xl font-black text-[#4d9fff]">{dbPriceStats.total ?? 0}</div>
-                  </div>
-                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
-                    <div className="text-xs font-mono text-[#6b6b85] mb-1">Stocks in Bank</div>
-                    <div className="text-xl font-black text-[#39d98a]">{dbPriceStats.stocks ?? 0}</div>
-                  </div>
+                  {[
+                    { label: 'Total Records', value: dbPriceStats.total, color: '#4d9fff' },
+                    { label: 'Stocks in Bank', value: dbPriceStats.stocks, color: '#39d98a' },
+                  ].map((s, i) => (
+                    <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
+                      <div className="text-xs font-mono text-[#6b6b85] mb-1">{s.label}</div>
+                      <div className="text-xl font-black" style={{ color: s.color }}>{s.value ?? 0}</div>
+                    </div>
+                  ))}
                 </div>
+
+                {priceView === 'rows' && (
+                  <div className="flex items-center gap-2 mb-4 text-xs font-mono">
+                    <button onClick={() => { setPriceView('stocks'); loadStockPrices(); }}
+                      className="text-[#f0c040] hover:underline">← All Stocks</button>
+                    <span className="text-[#6b6b85]">›</span>
+                    <span className="text-[#e8e8f0] font-black">{selectedPriceStock}</span>
+                    <span className="text-[#6b6b85]">({priceRowsForStock.length} records)</span>
+                  </div>
+                )}
+
                 {dbPriceLoading ? (
                   <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">Loading...</div>
-                ) : !selectedPriceStock ? (
-                  /* Level 1 — stock name grid */
-                  uniquePriceStocks.length === 0 ? (
-                    <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">No stock price data yet. Run "Fetch Stocks Data" first.</div>
+                ) : priceView === 'stocks' ? (
+                  priceStockNames.length === 0 ? (
+                    <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">No price data yet. Run "Fetch Stocks Data" first.</div>
                   ) : (
-                    <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
-                      {uniquePriceStocks.map(name => (
-                        <button key={name} onClick={() => setSelectedPriceStock(name)}
-                          className="bg-[#111118] border border-[#1e1e2e] hover:border-[#4d9fff]/50 rounded-xl p-3 text-xs font-black text-[#4d9fff] text-center transition-all hover:bg-[#4d9fff]/5">
-                          {name}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {priceStockNames.map((name, i) => (
+                        <button key={i} onClick={() => openPriceStock(name)}
+                          className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 hover:border-[#4d9fff] transition-all text-left">
+                          <div className="text-2xl mb-2">📁</div>
+                          <div className="text-xs font-black text-[#4d9fff]">{name}</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85] mt-1">Tap to view data</div>
                         </button>
                       ))}
                     </div>
                   )
                 ) : (
-                  /* Level 2 — selected stock's records */
-                  <div>
-                    <div className="flex items-center gap-3 mb-4">
-                      <button onClick={() => setSelectedPriceStock(null)}
-                        className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040]">← All Stocks</button>
-                      <span className="text-sm font-black text-[#4d9fff]">{selectedPriceStock}</span>
-                      <span className="text-xs font-mono text-[#6b6b85]">{dbPriceData.length} records</span>
-                    </div>
-                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
-                      <table className="w-full text-xs font-mono">
-                        <thead><tr className="border-b border-[#1e1e2e]">
-                          {['Month End Date', 'Open', 'High', 'Low', 'Close', 'Volume'].map(h => (
-                            <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
-                          ))}
-                        </tr></thead>
-                        <tbody>
-                          {dbPriceData.length === 0 ? (
-                            <tr><td colSpan={6} className="text-center py-8 text-[#6b6b85]">No records for {selectedPriceStock}</td></tr>
-                          ) : dbPriceData.map((row, i) => (
-                            <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#4d9fff]/5">
-                              <td className="px-4 py-3 text-[#f0c040] font-bold">{row.trade_date}</td>
-                              <td className="px-4 py-3">{row.open?.toFixed(2)}</td>
-                              <td className="px-4 py-3 text-[#39d98a]">{row.high?.toFixed(2)}</td>
-                              <td className="px-4 py-3 text-[#ff4d6d]">{row.low?.toFixed(2)}</td>
-                              <td className="px-4 py-3 font-bold">{row.close?.toFixed(2)}</td>
-                              <td className="px-4 py-3 text-[#6b6b85]">{row.volume?.toLocaleString()}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
+                    <table className="w-full text-xs font-mono">
+                      <thead><tr className="border-b border-[#1e1e2e]">
+                        {['Date', 'Open', 'High', 'Low', 'Close', 'Volume'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {priceRowsForStock.length === 0 ? (
+                          <tr><td colSpan={6} className="text-center py-8 text-[#6b6b85]">No data</td></tr>
+                        ) : priceRowsForStock.map((row, i) => (
+                          <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#4d9fff]/5">
+                            <td className="px-4 py-3 text-[#f0c040] font-bold">{row.trade_date}</td>
+                            <td className="px-4 py-3">{row.open?.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-[#39d98a]">{row.high?.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-[#ff4d6d]">{row.low?.toFixed(2)}</td>
+                            <td className="px-4 py-3 font-bold">{row.close?.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-[#6b6b85]">{row.volume?.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
             )}
 
-            {/* FUNDAMENTALS TAB — folder view */}
+            {/* FUNDAMENTALS TAB */}
             {dbSubTab === 'fundamentals' && (
               <div>
                 <div className="grid grid-cols-2 gap-3 mb-4">
@@ -766,60 +732,62 @@ export default function Admin() {
                   </div>
                   <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
                     <div className="text-xs font-mono text-[#6b6b85] mb-1">Stocks in Bank</div>
-                    <div className="text-xl font-black text-[#39d98a]">{dbFundStats.stocks ?? 0}</div>
+                    <div className="text-xl font-black text-[#39d98a]">{fundStockNames.length}</div>
                   </div>
                 </div>
+
+                {fundView === 'rows' && (
+                  <div className="flex items-center gap-2 mb-4 text-xs font-mono">
+                    <button onClick={() => { setFundView('stocks'); loadFundamentals(); }}
+                      className="text-[#f0c040] hover:underline">← All Stocks</button>
+                    <span className="text-[#6b6b85]">›</span>
+                    <span className="text-[#e8e8f0] font-black">{selectedFundStock}</span>
+                    <span className="text-[#6b6b85]">({fundRowsForStock.length} records)</span>
+                  </div>
+                )}
+
                 {dbFundLoading ? (
                   <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">Loading...</div>
-                ) : !selectedFundStock ? (
-                  /* Level 1 — stock name grid */
-                  uniqueFundStocks.length === 0 ? (
-                    <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">No fundamental data yet. Run "Fetch Fundamentals" first.</div>
+                ) : fundView === 'stocks' ? (
+                  fundStockNames.length === 0 ? (
+                    <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">No fundamentals yet. Run "Fetch Fundamentals" first.</div>
                   ) : (
-                    <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
-                      {uniqueFundStocks.map(name => (
-                        <button key={name} onClick={() => setSelectedFundStock(name)}
-                          className="bg-[#111118] border border-[#1e1e2e] hover:border-[#a78bfa]/50 rounded-xl p-3 text-xs font-black text-[#a78bfa] text-center transition-all hover:bg-[#a78bfa]/5">
-                          {name}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {fundStockNames.map((name, i) => (
+                        <button key={i} onClick={() => openFundStock(name)}
+                          className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 hover:border-[#a78bfa] transition-all text-left">
+                          <div className="text-2xl mb-2">📊</div>
+                          <div className="text-xs font-black text-[#a78bfa]">{name}</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85] mt-1">Tap to view data</div>
                         </button>
                       ))}
                     </div>
                   )
                 ) : (
-                  /* Level 2 — selected stock's fundamentals */
-                  <div>
-                    <div className="flex items-center gap-3 mb-4">
-                      <button onClick={() => setSelectedFundStock(null)}
-                        className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040]">← All Stocks</button>
-                      <span className="text-sm font-black text-[#a78bfa]">{selectedFundStock}</span>
-                      <span className="text-xs font-mono text-[#6b6b85]">{dbFundData.length} records</span>
-                    </div>
-                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
-                      <table className="w-full text-xs font-mono">
-                        <thead><tr className="border-b border-[#1e1e2e]">
-                          {['Date', 'LTP', 'PE', 'EPS', 'Book Val', '52W H', '52W L', 'Mkt Cap', 'ROCE'].map(h => (
-                            <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
-                          ))}
-                        </tr></thead>
-                        <tbody>
-                          {dbFundData.length === 0 ? (
-                            <tr><td colSpan={9} className="text-center py-8 text-[#6b6b85]">No records for {selectedFundStock}</td></tr>
-                          ) : dbFundData.map((row, i) => (
-                            <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#a78bfa]/5">
-                              <td className="px-4 py-3 text-[#f0c040] font-bold">{row.trade_date}</td>
-                              <td className="px-4 py-3 font-bold">{row.ltp?.toFixed(2) ?? '-'}</td>
-                              <td className="px-4 py-3">{row.pe_ratio?.toFixed(2) ?? '-'}</td>
-                              <td className="px-4 py-3">{row.eps?.toFixed(2) ?? '-'}</td>
-                              <td className="px-4 py-3">{row.book_value?.toFixed(2) ?? '-'}</td>
-                              <td className="px-4 py-3 text-[#39d98a]">{row.week52_high?.toFixed(2) ?? '-'}</td>
-                              <td className="px-4 py-3 text-[#ff4d6d]">{row.week52_low?.toFixed(2) ?? '-'}</td>
-                              <td className="px-4 py-3 text-[#6b6b85]">{row.market_cap ? `${(row.market_cap / 10000000).toFixed(0)} Cr` : '-'}</td>
-                              <td className="px-4 py-3">{row.roce != null ? `${row.roce.toFixed(2)}%` : '-'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
+                    <table className="w-full text-xs font-mono">
+                      <thead><tr className="border-b border-[#1e1e2e]">
+                        {['Date', 'LTP', 'PE', 'EPS', 'Book Val', '52W H', '52W L', 'ROCE'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {fundRowsForStock.length === 0 ? (
+                          <tr><td colSpan={8} className="text-center py-8 text-[#6b6b85]">No data</td></tr>
+                        ) : fundRowsForStock.map((row, i) => (
+                          <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#a78bfa]/5">
+                            <td className="px-4 py-3 text-[#f0c040] font-bold">{row.trade_date}</td>
+                            <td className="px-4 py-3 font-bold">{row.ltp?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3">{row.pe_ratio?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3">{row.eps?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3">{row.book_value?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3 text-[#39d98a]">{row.week52_high?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3 text-[#ff4d6d]">{row.week52_low?.toFixed(2) ?? '-'}</td>
+                            <td className="px-4 py-3">{row.roce?.toFixed(2) ?? '-'}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
@@ -883,11 +851,7 @@ export default function Admin() {
                 <div className="text-[10px] font-mono text-[#6b6b85] mt-1">Stocks</div>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={handleFetchIndices} disabled={fetchIndicesLoading}
-                className="bg-[#f0c040] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
-                {fetchIndicesLoading ? 'Fetching...' : 'Fetch Indices'}
-              </button>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <button onClick={handleFetchStocksData} disabled={fetchStocksLoading}
                 className="bg-[#4d9fff] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40">
                 {fetchStocksLoading ? 'Fetching...' : 'Fetch Stocks Data'}
@@ -901,67 +865,6 @@ export default function Admin() {
                 {fetchLoading ? 'Fetching...' : 'Fetch All'}
               </button>
             </div>
-
-            {/* Retry Failed Stocks button — shown when there are errors from a stocks/all fetch */}
-            {(fetchStocksResults.some(r => r.status === 'error') || fetchResults.some(r => r.status === 'error')) && (
-              <div className="bg-[#111118] border border-[#ff4d6d]/30 rounded-xl p-4 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-black text-[#ff4d6d] mb-1">Some stocks failed</div>
-                  <div className="text-xs font-mono text-[#6b6b85]">
-                    {[...new Set(
-                      [...fetchStocksResults, ...fetchResults]
-                        .filter(r => r.status === 'error')
-                        .map(r => (r.index as string).replace('_PRICE', '').replace('_FUND', ''))
-                        .filter(s => s && !s.startsWith('SYSTEM'))
-                    )].join(', ')}
-                  </div>
-                </div>
-                <button onClick={handleRetryFailed} disabled={retryLoading}
-                  className="ml-4 bg-[#ff4d6d] text-white font-black text-xs px-5 py-3 rounded-xl disabled:opacity-40 whitespace-nowrap">
-                  {retryLoading ? 'Retrying...' : 'Retry Failed'}
-                </button>
-              </div>
-            )}
-
-            {retryDone && retryResults.length > 0 && (
-              <div className="bg-[#111118] border border-[#ff4d6d]/30 rounded-xl p-5">
-                <div className="text-xs font-mono font-bold mb-3 text-[#ff4d6d]">Retry Results</div>
-                <div className="text-xs font-mono font-bold mb-3 flex gap-4 flex-wrap">
-                  <span className="text-[#39d98a]">{retryResults.filter(r => r.status === 'saved').length} saved</span>
-                  <span className="text-[#f0c040]">{retryResults.filter(r => r.status === 'duplicate').length} duplicates</span>
-                  <span className="text-[#6b6b85]">{retryResults.filter(r => r.status === 'empty').length} empty</span>
-                  <span className="text-[#ff4d6d]">{retryResults.filter(r => r.status === 'error').length} still failing</span>
-                </div>
-                <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                  {retryResults.map((r, i) => (
-                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${r.status === 'saved' ? 'bg-[#39d98a]/10 text-[#39d98a]' : r.status === 'duplicate' ? 'bg-[#f0c040]/10 text-[#f0c040]' : r.status === 'empty' ? 'bg-[#6b6b85]/10 text-[#6b6b85]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
-                      <span>{r.index}{r.expiry ? ` | ${r.expiry}` : ''}</span>
-                      <span>{r.status === 'saved' ? `Saved${r.strikes ? ` (${r.strikes})` : ''}` : r.status === 'duplicate' ? 'Already exists' : r.status === 'empty' ? 'No data' : `Error: ${r.error || ''}`}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {fetchIndicesDone && fetchIndicesResults.length > 0 && (
-              <div className="bg-[#111118] border border-[#f0c040]/30 rounded-xl p-5">
-                <div className="text-xs font-mono font-bold mb-3 text-[#f0c040]">Indices Results</div>
-                <div className="text-xs font-mono font-bold mb-3 flex gap-4 flex-wrap">
-                  <span className="text-[#39d98a]">{fetchIndicesResults.filter(r => r.status === 'saved').length} saved</span>
-                  <span className="text-[#f0c040]">{fetchIndicesResults.filter(r => r.status === 'duplicate').length} duplicates</span>
-                  <span className="text-[#6b6b85]">{fetchIndicesResults.filter(r => r.status === 'empty').length} market closed</span>
-                  <span className="text-[#ff4d6d]">{fetchIndicesResults.filter(r => r.status === 'error').length} errors</span>
-                </div>
-                <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                  {fetchIndicesResults.map((r, i) => (
-                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${r.status === 'saved' ? 'bg-[#39d98a]/10 text-[#39d98a]' : r.status === 'duplicate' ? 'bg-[#f0c040]/10 text-[#f0c040]' : r.status === 'empty' ? 'bg-[#6b6b85]/10 text-[#6b6b85]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
-                      <span>{r.index}{r.expiry ? ` | ${r.expiry}` : ''}</span>
-                      <span>{r.status === 'saved' ? `Saved (${r.strikes ?? ''})` : r.status === 'duplicate' ? 'Already exists' : r.status === 'empty' ? 'Market closed' : `Error: ${r.error || ''}`}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {fetchStocksDone && fetchStocksResults.length > 0 && (
               <div className="bg-[#111118] border border-[#4d9fff]/30 rounded-xl p-5">

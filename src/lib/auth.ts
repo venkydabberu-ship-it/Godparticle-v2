@@ -109,3 +109,49 @@ export async function updateProfile(
   if (error) throw error;
   return data;
 }
+
+export async function resendSignupOTP(email: string) {
+  const { data, error } = await supabase.auth.resend({
+    type: 'signup',
+    email,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function verifySignupOTP(email: string, token: string) {
+  const { data, error } = await supabase.auth.verifyOtp({
+    email,
+    token,
+    type: 'signup',
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function sendPasswordResetOTP(email: string) {
+  const { data, error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: false },
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function verifyPasswordResetOTP(email: string, token: string) {
+  const { data, error } = await supabase.auth.verifyOtp({
+    email,
+    token,
+    type: 'email',
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function updatePassword(newPassword: string) {
+  const { data, error } = await supabase.auth.updateUser({
+    password: newPassword,
+  });
+  if (error) throw error;
+  return data;
+}

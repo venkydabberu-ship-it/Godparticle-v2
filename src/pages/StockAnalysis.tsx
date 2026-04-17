@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { computeGodParticle, saveAnalysis } from '../lib/market';
@@ -23,9 +23,6 @@ export default function StockAnalysis() {
   const [optFetchLoading, setOptFetchLoading] = useState(false);
   const [optFetchMsg, setOptFetchMsg] = useState('');
   const [optDataSource, setOptDataSource] = useState<'upload' | 'autofetch'>('upload');
-  const [exchange, setExchange] = useState<'NSE' | 'BSE'>('NSE');
-  const [fundDbMsg, setFundDbMsg] = useState('');
-  const [fundDbLoading, setFundDbLoading] = useState(false);
   const [pe, setPe] = useState('');
   const [eps, setEps] = useState('');
   const [bookValue, setBookValue] = useState('');
@@ -48,6 +45,27 @@ export default function StockAnalysis() {
 
   const canAccess = ['premium', 'pro', 'admin'].includes(role);
   const canAutoFetch = ['pro', 'admin'].includes(role);
+
+  const location = useLocation();
+  useEffect(() => {
+    const replay = (location.state as any)?.replay;
+    if (!replay?.result) return;
+    const r = replay.result;
+    if (r.type === 'gct') {
+      setStockName(r.stockName || replay.index_name || '');
+      setResult(r);
+      setStep('result');
+    } else {
+      setStockName(r.stockName || replay.index_name || '');
+      setOptStrike(String(replay.strike || ''));
+      setOptType(replay.option_type || 'CE');
+      setOptExpiry(replay.expiry || '');
+      setAnalysisType('options');
+      setResult({ type: 'options', ...r, stockName: r.stockName || replay.index_name });
+      setActiveTab('raw');
+      setStep('result');
+    }
+  }, []);
 
   // ── AUTO FETCH STOCK PRICE — uses Edge Function ──
   async function handleAutoFetchPrice() {
@@ -82,10 +100,11 @@ export default function StockAnalysis() {
         return;
       }
 
-      setFetchMsg('⏳ Fetching 14-month price data...');
+      setFetchMsg('⏳ Fetching from NSE via server...');
 
-      const { data, error: fnError } = await supabase.functions.invoke('smooth-endpoint', {
-        body: { type: 'stock_price', symbol: stockName.toUpperCase(), exchange }
+      // Use Supabase Edge Function
+      const { data, error: fnError } = await supabase.functions.invoke('fetch-nse-data', {
+        body: { type: 'stock_price', symbol: stockName.toUpperCase() }
       });
 
       if (fnError) throw new Error(fnError.message);
@@ -107,21 +126,7 @@ export default function StockAnalysis() {
       await supabase.from('stock_price_data')
         .upsert(toSave, { onConflict: 'stock_name,trade_date' });
 
-      // Save fundamentals (52W H/L + LTP) to data bank
-      const sorted = [...toSave].sort((a, b) => b.trade_date.localeCompare(a.trade_date));
-      const latestRaw = records.find((r: any) => r.CH_TIMESTAMP === sorted[0]?.trade_date);
-      if (latestRaw) {
-        const today = new Date().toISOString().split('T')[0];
-        await supabase.from('stock_fundamentals').upsert({
-          stock_name: stockName.toUpperCase(),
-          trade_date: today,
-          ltp: sorted[0].close,
-          week52_high: parseFloat(latestRaw.CH_52WEEK_HIGH_PRICE || 0) || null,
-          week52_low: parseFloat(latestRaw.CH_52WEEK_LOW_PRICE || 0) || null,
-        }, { onConflict: 'stock_name,trade_date' });
-      }
-
-      setFetchMsg(`✅ Fetched ${records.length} days — saved to Data Bank!`);
+      setFetchMsg(`✅ Fetched ${records.length} days from NSE!`);
       processMonthlyData(toSave);
 
     } catch (err: any) {
@@ -170,20 +175,35 @@ export default function StockAnalysis() {
         return;
       }
 
-      setOptFetchMsg('⏳ Fetching stock option chain...');
+      setOptFetchMsg('⏳ Fetching stock option chain via server...');
 
-      const { data, error: fnError } = await supabase.functions.invoke('smooth-endpoint', {
-        body: { type: 'stock_chain', symbol: stockName.toUpperCase(), exchange }
+      // Use Supabase Edge Function
+      const { data, error: fnError } = await supabase.functions.invoke('fetch-nse-data', {
+        body: { type: 'stock_chain', symbol: stockName.toUpperCase() }
       });
 
       if (fnError) throw new Error(fnError.message);
       if (!data?.success) throw new Error(data?.error || 'Fetch failed');
 
-      // smooth-endpoint returns { allExpiries: [{expiry, strikes, spotPrice}] }
-      const allExpiries: any[] = data.data?.allExpiries || [];
-      const targetExpiry = allExpiries.find((e: any) => e.expiry === optExpiry) || allExpiries[0];
-      const strikes: Record<string, any> = targetExpiry?.strikes || {};
-      if (!Object.keys(strikes).length) throw new Error(`No options data for ${stockName}`);
+      const records = data.data?.records?.data || [];
+      if (!records.length) throw new Error(`No options data for ${stockName}`);
+
+      // Parse strikes
+      const strikes: Record<string, any> = {};
+      records.forEach((r: any) => {
+        const strike = r.strikePrice;
+        if (!strike) return;
+        strikes[strike] = {
+          ce_ltp: r.CE?.lastPrice || 0,
+          ce_oi: r.CE?.openInterest || 0,
+          ce_chng_oi: r.CE?.changeinOpenInterest || 0,
+          ce_vol: r.CE?.totalTradedVolume || 0,
+          pe_ltp: r.PE?.lastPrice || 0,
+          pe_oi: r.PE?.openInterest || 0,
+          pe_chng_oi: r.PE?.changeinOpenInterest || 0,
+          pe_vol: r.PE?.totalTradedVolume || 0,
+        };
+      });
 
       const today = new Date().toISOString().split('T')[0];
 
@@ -198,7 +218,7 @@ export default function StockAnalysis() {
         timeframe: 'daily'
       });
 
-      setOptFetchMsg(`✅ Fetched ${Object.keys(strikes).length} strikes for ${stockName} — saved to Data Bank!`);
+      setOptFetchMsg(`✅ Fetched ${Object.keys(strikes).length} strikes for ${stockName}!`);
 
       // Get last 6 days from DB now
       const { data: rows } = await supabase
@@ -271,37 +291,6 @@ export default function StockAnalysis() {
     setCsvData(monthlyData as any[]);
     setFetchMsg(prev => prev + ` · ${monthlyData.length} months ready!`);
   }
-
-  // ── LOAD FUNDAMENTALS FROM DATA BANK ──
-  async function handleLoadFundamentals() {
-    if (!stockName.trim()) { setFundDbMsg('⚠️ Enter stock name first'); return; }
-    setFundDbLoading(true);
-    setFundDbMsg('');
-    try {
-      const { data } = await supabase
-        .from('stock_fundamentals')
-        .select('*')
-        .eq('stock_name', stockName.toUpperCase())
-        .order('trade_date', { ascending: false })
-        .limit(1);
-
-      if (data && data.length > 0) {
-        const f = data[0];
-        if (f.pe_ratio)   setPe(String(f.pe_ratio));
-        if (f.eps)        setEps(String(f.eps));
-        if (f.book_value) setBookValue(String(f.book_value));
-        if (f.roce)       setRoce(String(f.roce));
-        setFundDbMsg(`✅ Loaded from data bank (${f.trade_date})${!f.pe_ratio && !f.eps ? ' — PE/EPS missing, enter manually' : ''}`);
-      } else {
-        setFundDbMsg('⚠️ Not in data bank — run "Fetch Fundamentals" from Admin panel first');
-      }
-    } catch (err: any) {
-      setFundDbMsg('Error: ' + err.message);
-    } finally {
-      setFundDbLoading(false);
-    }
-  }
-
 
   // ── CSV UPLOAD — PRICE ──
   async function handlePriceCSV(e: React.ChangeEvent<HTMLInputElement>) {
@@ -415,7 +404,7 @@ export default function StockAnalysis() {
       if (roceVal) fssChecks.push({ name: 'ROCE', pass: roceVal >= 8, value: `${roceVal}%` });
       const fssScore = fssChecks.filter(c => c.pass).length;
       const fssVerdict = ['💀 VALUE TRAP','🔴 RISKY','⚠️ CAREFUL','⚡ DECENT BUY','✅ GOOD BUY','🟢 STRONG BUY'][fssScore];
-      setResult({
+      const stockGctResult = {
         type: 'gct', stockName, currentPrice: Math.round(currentPrice),
         mgc: Math.round(mgc), vwar: Math.round(vwar),
         mcl: Math.round(mcl), al: Math.round(al), cl: Math.round(cl),
@@ -423,23 +412,9 @@ export default function StockAnalysis() {
         fssChecks, fssScore, fssVerdict,
         dataMonths: data.length,
         firstDate: data[0].date, lastDate: data[data.length-1].date
-      });
-
-      // Save manually entered fundamental values to data bank
-      const fundRecord: Record<string, any> = {
-        stock_name: stockName.toUpperCase(),
-        trade_date: new Date().toISOString().split('T')[0],
-        ltp: Math.round(currentPrice),
       };
-      if (pe)        fundRecord.pe_ratio   = parseFloat(pe);
-      if (eps)       fundRecord.eps        = parseFloat(eps);
-      if (bookValue) fundRecord.book_value = parseFloat(bookValue);
-      if (roce)      fundRecord.roce       = parseFloat(roce);
-      try {
-        await supabase.from('stock_fundamentals')
-          .upsert(fundRecord, { onConflict: 'stock_name,trade_date' });
-      } catch {}
-
+      if (user) saveAnalysis(user.id, stockName.toUpperCase(), 0, 'STOCK_GCT', new Date().toISOString().split('T')[0], stockGctResult).catch(() => {});
+      setResult(stockGctResult);
       setStep('result');
     } catch (err: any) {
       setError(err.message || 'Analysis failed!');
@@ -552,21 +527,11 @@ export default function StockAnalysis() {
               <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">Step 2 — Stock Details</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">Stock Symbol</label>
-                  <div className="flex gap-2">
-                    <div className="flex rounded-lg overflow-hidden border border-[#1e1e2e] shrink-0">
-                      {(['NSE', 'BSE'] as const).map(ex => (
-                        <button key={ex} onClick={() => setExchange(ex)}
-                          className={`px-3 py-2.5 text-xs font-black transition-all ${exchange === ex ? 'bg-[#f0c040] text-black' : 'bg-[#16161f] text-[#6b6b85]'}`}>
-                          {ex}
-                        </button>
-                      ))}
-                    </div>
-                    <input type="text" value={stockName}
-                      onChange={e => setStockName(e.target.value.toUpperCase())}
-                      placeholder="e.g. RELIANCE, SBI, TCS"
-                      className="flex-1 bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
-                  </div>
+                  <label className="block text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">NSE Symbol</label>
+                  <input type="text" value={stockName}
+                    onChange={e => setStockName(e.target.value.toUpperCase())}
+                    placeholder="e.g. RELIANCE, SBI, TCS"
+                    className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
                 </div>
                 {analysisType === 'gct' && (
                   <div>
@@ -718,18 +683,7 @@ export default function StockAnalysis() {
             {analysisType === 'gct' && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
                 <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-1">Step 4 — Fundamental Data (Optional)</h2>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="text-xs font-mono text-[#6b6b85]">Enter manually or load from data bank</div>
-                  <button onClick={handleLoadFundamentals} disabled={fundDbLoading}
-                    className="bg-[#a78bfa] text-black font-black text-xs px-4 py-1.5 rounded-lg disabled:opacity-40">
-                    {fundDbLoading ? 'Loading...' : 'Load from Data Bank'}
-                  </button>
-                </div>
-                {fundDbMsg && (
-                  <div className={`text-xs font-mono mb-3 px-3 py-2 rounded-lg ${fundDbMsg.startsWith('✅') ? 'bg-[#39d98a]/10 text-[#39d98a]' : 'bg-[#f0c040]/10 text-[#f0c040]'}`}>
-                    {fundDbMsg}
-                  </div>
-                )}
+                <div className="text-xs font-mono text-[#6b6b85] mb-4">Enter from screener.in or moneycontrol.com</div>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {[
                     { label: 'PE Ratio', val: pe, set: setPe, placeholder: 'e.g. 22.5' },

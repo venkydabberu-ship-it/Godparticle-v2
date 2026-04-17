@@ -20,6 +20,17 @@ export default function Dashboard() {
   const role = profile?.role ?? 'free';
   const isAdmin = role === 'admin';
 
+  const INDEX_KEYS = new Set(['NIFTY50', 'SENSEX', 'BANKNIFTY', 'FINNIFTY', 'MIDCAPNIFTY', 'NIFTYNEXT50', 'BANKEX']);
+
+  function handleRevisit(a: any) {
+    const isIndex = INDEX_KEYS.has(a.index_name);
+    if (isIndex) {
+      navigate('/analysis', { state: { replay: a } });
+    } else {
+      navigate('/stock-analysis', { state: { replay: a } });
+    }
+  }
+
   const today = new Date();
   const dayOfWeek = today.getDay();
   const isTuesday = dayOfWeek === 2;
@@ -299,20 +310,36 @@ export default function Dashboard() {
           ) : (
             <div className="space-y-2">
               {analyses.map((a, i) => (
-                <div key={i} className="flex items-center justify-between px-4 py-3 bg-[#16161f] rounded-xl">
+                <button
+                  key={i}
+                  onClick={() => handleRevisit(a)}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-[#16161f] rounded-xl hover:border hover:border-[#f0c040]/30 transition-all text-left"
+                >
                   <div className="flex items-center gap-3">
-                    <span className={`text-xs font-black px-2 py-0.5 rounded ${a.option_type === 'CE' ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#ff4d6d]/15 text-[#ff4d6d]'}`}>
-                      {a.option_type}
+                    <span className={`text-xs font-black px-2 py-0.5 rounded ${
+                      a.option_type === 'CE' ? 'bg-[#39d98a]/15 text-[#39d98a]'
+                      : a.option_type === 'PE' ? 'bg-[#ff4d6d]/15 text-[#ff4d6d]'
+                      : 'bg-[#f0c040]/15 text-[#f0c040]'
+                    }`}>
+                      {a.option_type === 'STOCK_GCT' ? 'GCT' : a.option_type}
                     </span>
                     <div>
-                      <div className="text-xs font-bold">{a.index_name} {a.strike}</div>
-                      <div className="text-[10px] font-mono text-[#6b6b85]">Expiry: {a.expiry}</div>
+                      <div className="text-xs font-bold">
+                        {a.index_name}{a.strike > 0 ? ` ${a.strike}` : ''}
+                      </div>
+                      <div className="text-[10px] font-mono text-[#6b6b85]">
+                        {INDEX_KEYS.has(a.index_name) ? 'Index Analysis' : 'Stock Analysis'}
+                        {a.expiry ? ` · ${a.expiry}` : ''}
+                      </div>
                     </div>
                   </div>
-                  <div className="text-[10px] font-mono text-[#6b6b85]">
-                    {new Date(a.created_at).toLocaleDateString('en-IN')}
+                  <div className="flex items-center gap-2">
+                    <div className="text-[10px] font-mono text-[#6b6b85]">
+                      {new Date(a.created_at).toLocaleDateString('en-IN')}
+                    </div>
+                    <span className="text-[10px] text-[#f0c040] font-mono">→</span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
