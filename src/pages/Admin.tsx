@@ -154,7 +154,10 @@ export default function Admin() {
         .from('stock_price_data').select('stock_name').order('stock_name').limit(5000);
       const names = [...new Set((nameRows || []).map((r: any) => r.stock_name))].sort() as string[];
       setUniquePriceStocks(names);
-      setDbPriceStats({ total: nameRows?.length || 0, stocks: names.length });
+      // Use count query for total records so it's accurate beyond the 5000 limit
+      const { count: totalRows } = await supabase
+        .from('stock_price_data').select('*', { count: 'exact', head: true });
+      setDbPriceStats({ total: totalRows || 0, stocks: names.length });
 
       // If a stock is selected, load its records
       if (selectedPriceStock) {

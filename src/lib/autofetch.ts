@@ -8,12 +8,17 @@ const BATCH_SIZE = 5;   // stocks per batch
 const BATCH_PAUSE = 10000; // ms pause between batches
 
 // ── CALL EDGE FUNCTION (with aggressive retry + backoff) ──
+// stock_price and stock_chain route to fetch-stock-data; everything else to fetch-nse-data
 async function callEdge(type: string, symbol?: string, expiry?: string, retries = 5) {
+  const fnName = (type === 'stock_price' || type === 'stock_chain')
+    ? 'fetch-stock-data'
+    : 'fetch-nse-data';
+
   let lastError: Error = new Error('Unknown error');
   for (let attempt = 0; attempt < retries; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, BACKOFF[attempt - 1] ?? 90000));
     try {
-      const { data, error } = await supabase.functions.invoke('fetch-nse-data', {
+      const { data, error } = await supabase.functions.invoke(fnName, {
         body: { type, symbol, expiry }
       });
       if (error) throw new Error(error.message);
