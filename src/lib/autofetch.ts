@@ -363,9 +363,10 @@ async function processStockPrice(symbol: string, results: any[]) {
         volume: days.reduce((s, d) => s + d.volume, 0),      // total month volume
       }));
 
-    await supabase
+    const { error: upsertErr } = await supabase
       .from('stock_price_data')
       .upsert(monthlySave, { onConflict: 'stock_name,trade_date' });
+    if (upsertErr) throw new Error('DB upsert failed: ' + upsertErr.message);
 
     // Save fundamentals (52W H/L + LTP) from latest NSE raw record
     const latestDaily = daily[daily.length - 1];
@@ -511,9 +512,10 @@ export async function autoFetchStockPrice(symbol: string): Promise<any[]> {
       volume: parseFloat(r.CH_TOT_TRADED_QTY || 0),
     }));
 
-  await supabase
+  const { error: upsertErr } = await supabase
     .from('stock_price_data')
     .upsert(toSave, { onConflict: 'stock_name,trade_date' });
+  if (upsertErr) throw new Error('DB upsert failed: ' + upsertErr.message);
 
   // Also save fundamentals from raw NSE response
   const sorted = [...toSave].sort((a, b) => b.trade_date.localeCompare(a.trade_date));

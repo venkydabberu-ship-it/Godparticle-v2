@@ -126,11 +126,11 @@ Deno.serve(async function(req) {
       if (!symbol) return respond({ success: false, error: 'Missing symbol' }, 400);
       var token = Deno.env.get('UPSTOX_ACCESS_TOKEN');
       var base = Deno.env.get('UPSTOX_URL');
-      if (!token) return respond({ success: false, error: 'UPSTOX_ACCESS_TOKEN not set' }, 500);
-      if (!base)  return respond({ success: false, error: 'UPSTOX_URL not set' }, 500);
+      if (!token) return respond({ success: false, error: 'UPSTOX_ACCESS_TOKEN not set' });
+      if (!base)  return respond({ success: false, error: 'UPSTOX_URL not set' });
       var instrKey = 'NSE_EQ|' + symbol.toUpperCase();
       var expiries = await getExpiries(instrKey, token, 4, base);
-      if (!expiries.length) return respond({ success: false, error: 'No expiries for ' + symbol }, 500);
+      if (!expiries.length) return respond({ success: false, error: 'No expiries for ' + symbol });
       var chains = await Promise.all(expiries.map(function(exp) {
         return getChain(instrKey, exp, token, base).catch(function(err) {
           return { expiry: exp, strikes: {}, spotPrice: 0, error: err.message };
@@ -142,6 +142,6 @@ Deno.serve(async function(req) {
 
     return respond({ success: false, error: 'Unknown type: ' + type }, 400);
   } catch (err) {
-    return respond({ success: false, error: err.message }, 500);
+    return respond({ success: false, error: err.message });
   }
 });

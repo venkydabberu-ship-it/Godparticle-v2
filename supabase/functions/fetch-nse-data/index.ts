@@ -84,8 +84,8 @@ Deno.serve(async function(req) {
     var token = Deno.env.get('UPSTOX_ACCESS_TOKEN');
     var base = Deno.env.get('UPSTOX_URL');
     console.log('token set:', !!token, '| base set:', !!base);
-    if (!token) return respond({ success: false, error: 'UPSTOX_ACCESS_TOKEN not set' }, 500);
-    if (!base)  return respond({ success: false, error: 'UPSTOX_URL not set' }, 500);
+    if (!token) return respond({ success: false, error: 'UPSTOX_ACCESS_TOKEN not set' });
+    if (!base)  return respond({ success: false, error: 'UPSTOX_URL not set' });
 
     var body = await req.json();
     var type = body.type;
@@ -101,7 +101,7 @@ Deno.serve(async function(req) {
 
     var expiries = await getExpiries(config.key, token, config.maxExp, base);
     console.log('expiries found:', expiries.length, expiries);
-    if (!expiries.length) return respond({ success: false, error: 'No expiries for ' + type }, 500);
+    if (!expiries.length) return respond({ success: false, error: 'No expiries for ' + type });
 
     var chains = await Promise.all(expiries.map(function(exp) {
       return getChain(config.key, exp, token, base).catch(function(err) {
@@ -114,6 +114,6 @@ Deno.serve(async function(req) {
     return respond({ success: true, data: chains });
   } catch (err) {
     console.error('top-level error:', err.message);
-    return respond({ success: false, error: err.message }, 500);
+    return respond({ success: false, error: err.message });
   }
 });
