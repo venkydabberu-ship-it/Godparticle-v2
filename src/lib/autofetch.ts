@@ -396,7 +396,16 @@ async function loadConfig() {
   if (data) {
     data.forEach((s: any) => {
       if (s.key === 'autofetch_indices') {
-        try { indices = JSON.parse(s.value); } catch {}
+        try {
+          const loaded = JSON.parse(s.value);
+          // Admin panel saves indices without edgeType — merge from DEFAULT_INDICES
+          const merged = loaded.map((idx: any) => {
+            if (idx.edgeType) return idx;
+            const def = DEFAULT_INDICES.find((d: any) => d.key === idx.key);
+            return { ...idx, edgeType: def?.edgeType };
+          }).filter((idx: any) => idx.edgeType);
+          if (merged.length) indices = merged;
+        } catch {}
       }
       if (s.key === 'autofetch_sectors') {
         try { sectors = JSON.parse(s.value); } catch {}
