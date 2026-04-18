@@ -5,13 +5,13 @@ import { supabase } from '../lib/supabase';
 import { runDailyAutoFetch, autoFetchAllIndices, autoFetchAllStockOptions, autoFetchAllStockPrices, autoFetchAllFundamentals } from '../lib/autofetch';
 
 const DEFAULT_INDICES = [
-  { key: 'NIFTY50', name: 'Nifty 50', exchange: 'NSE', expiry: 'weekly', upstoxKey: 'NSE_INDEX|Nifty 50', color: '#f0c040' },
-  { key: 'SENSEX', name: 'Sensex', exchange: 'BSE', expiry: 'weekly', upstoxKey: 'BSE_INDEX|SENSEX', color: '#4d9fff' },
-  { key: 'BANKNIFTY', name: 'Bank Nifty', exchange: 'NSE', expiry: 'monthly', upstoxKey: 'NSE_INDEX|Nifty Bank', color: '#39d98a' },
-  { key: 'FINNIFTY', name: 'Fin Nifty', exchange: 'NSE', expiry: 'monthly', upstoxKey: 'NSE_INDEX|Nifty Fin Service', color: '#a78bfa' },
-  { key: 'MIDCAPNIFTY', name: 'Midcap Nifty', exchange: 'NSE', expiry: 'monthly', upstoxKey: 'NSE_INDEX|Nifty Midcap Select', color: '#ff8c42' },
-  { key: 'NIFTYNEXT50', name: 'Nifty Next 50', exchange: 'NSE', expiry: 'monthly', upstoxKey: 'NSE_INDEX|Nifty Next 50', color: '#ff4d6d' },
-  { key: 'BANKEX', name: 'Bankex', exchange: 'BSE', expiry: 'monthly', upstoxKey: 'BSE_INDEX|BANKEX', color: '#39d98a' },
+  { key: 'NIFTY50',     name: 'Nifty 50',     exchange: 'NSE', expiry: 'weekly',  upstoxKey: 'NSE_INDEX|Nifty 50',            color: '#f0c040', edgeType: 'nifty_chain' },
+  { key: 'SENSEX',      name: 'Sensex',        exchange: 'BSE', expiry: 'weekly',  upstoxKey: 'BSE_INDEX|SENSEX',              color: '#4d9fff', edgeType: 'sensex_chain' },
+  { key: 'BANKNIFTY',   name: 'Bank Nifty',    exchange: 'NSE', expiry: 'monthly', upstoxKey: 'NSE_INDEX|Nifty Bank',          color: '#39d98a', edgeType: 'banknifty_chain' },
+  { key: 'FINNIFTY',    name: 'Fin Nifty',     exchange: 'NSE', expiry: 'monthly', upstoxKey: 'NSE_INDEX|Nifty Fin Service',   color: '#a78bfa', edgeType: 'finnifty_chain' },
+  { key: 'MIDCAPNIFTY', name: 'Midcap Nifty',  exchange: 'NSE', expiry: 'monthly', upstoxKey: 'NSE_INDEX|Nifty Midcap Select', color: '#ff8c42', edgeType: 'midcapnifty_chain' },
+  { key: 'NIFTYNEXT50', name: 'Nifty Next 50', exchange: 'NSE', expiry: 'monthly', upstoxKey: 'NSE_INDEX|Nifty Next 50',       color: '#ff4d6d', edgeType: 'niftynext50_chain' },
+  { key: 'BANKEX',      name: 'Bankex',        exchange: 'BSE', expiry: 'monthly', upstoxKey: 'BSE_INDEX|BANKEX',              color: '#39d98a', edgeType: 'bankex_chain' },
 ];
 
 const DEFAULT_SECTORS = [
@@ -375,7 +375,8 @@ export default function Admin() {
 
   function handleAddIndex() {
     if (!newIndexKey || !newIndexName || !newIndexUpstox) return;
-    const newIdx = { key: newIndexKey.toUpperCase(), name: newIndexName, exchange: newIndexExchange, expiry: newIndexExpiry, upstoxKey: newIndexUpstox, color: '#f0c040' };
+    const derivedEdgeType = newIndexKey.toUpperCase().replace(/[^A-Z0-9]/g, '').toLowerCase() + '_chain';
+    const newIdx = { key: newIndexKey.toUpperCase(), name: newIndexName, exchange: newIndexExchange, expiry: newIndexExpiry, upstoxKey: newIndexUpstox, color: '#f0c040', edgeType: derivedEdgeType };
     const updated = [...indices, newIdx];
     setIndices(updated);
     saveAutoFetchConfig(updated, sectors);

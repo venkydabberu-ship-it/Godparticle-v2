@@ -10,6 +10,7 @@ const BATCH_PAUSE = 10000; // ms pause between batches
 // ── CALL EDGE FUNCTION (with aggressive retry + backoff) ──
 // stock_price and stock_chain route to fetch-stock-data; everything else to fetch-nse-data
 async function callEdge(type: string, symbol?: string, expiry?: string, retries = 5) {
+  if (!type) throw new Error('callEdge: type is required (got undefined — check index edgeType config)');
   const fnName = (type === 'stock_price' || type === 'stock_chain')
     ? 'smooth-endpoint'
     : 'fetch-nse-data';
