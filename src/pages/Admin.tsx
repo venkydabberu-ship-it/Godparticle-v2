@@ -178,8 +178,18 @@ export default function Admin() {
     setDbPriceLoading(true);
     setPriceView('stocks');
     try {
-      const { data } = await supabase.from('stock_price_data').select('stock_name').order('stock_name');
-      const names: string[] = [...new Set((data || []).map((r: any) => r.stock_name))];
+      // Paginate to get all stock names (old stocks have thousands of rows each)
+      const pageSize = 1000;
+      let allNames: string[] = [];
+      let from = 0;
+      while (true) {
+        const { data } = await supabase.from('stock_price_data').select('stock_name').order('stock_name').range(from, from + pageSize - 1);
+        if (!data || data.length === 0) break;
+        allNames = [...allNames, ...data.map((r: any) => r.stock_name)];
+        if (data.length < pageSize) break;
+        from += pageSize;
+      }
+      const names: string[] = [...new Set(allNames)];
       setPriceStockNames(names);
       const { count: total } = await supabase.from('stock_price_data').select('*', { count: 'exact', head: true });
       setDbPriceStats({ total: total || 0, stocks: names.length });
