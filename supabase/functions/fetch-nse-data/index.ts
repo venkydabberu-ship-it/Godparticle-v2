@@ -1,215 +1,78 @@
-// fetch-nse-data edge function
-// Handles all index options chains for NSE and BSE indices
-// Returns: { success: true, data: [{ expiry, strikes, spotPrice }] }
+// fetch-nse-data — index option chains via Upstox v2 API
+// Secrets required: UPSTOX_ACCESS_TOKEN, UPSTOX_URL (value: https://api.upstox.com/v2/option/)
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const NSE_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-  'Accept': 'application/json, text/plain, */*',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Referer': 'https://www.nseindia.com/',
-  'sec-fetch-dest': 'empty',
-  'sec-fetch-mode': 'cors',
-  'sec-fetch-site': 'same-origin',
-  'Connection': 'keep-alive',
-};
-
-const BSE_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-  'Accept': 'application/json, text/plain, */*',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Referer': 'https://www.bseindia.com/',
-  'Origin': 'https://www.bseindia.com',
-  'Connection': 'keep-alive',
-};
-
-// Map edge type to exchange config
-// maxExp: how many expiries to store
-// weekly indices get 8 (4 weekly + 4 monthly), monthly get 4
 const TYPE_CONFIG = {
-  'nifty_chain':       { symbol: 'NIFTY',       exchange: 'NSE', maxExp: 8 },
-  'banknifty_chain':   { symbol: 'BANKNIFTY',   exchange: 'NSE', maxExp: 4 },
-  'finnifty_chain':    { symbol: 'FINNIFTY',    exchange: 'NSE', maxExp: 4 },
-  'midcapnifty_chain': { symbol: 'MIDCPNIFTY',  exchange: 'NSE', maxExp: 4 },
-  'niftynext50_chain': { symbol: 'NIFTYNXT50',  exchange: 'NSE', maxExp: 4 },
-  'sensex_chain':      { symbol: 'SENSEX',      exchange: 'BSE', maxExp: 8 },
-  'bankex_chain':      { symbol: 'BANKEX',      exchange: 'BSE', maxExp: 4 },
+  'nifty_chain':       { key: 'NSE_INDEX|Nifty 50',            maxExp: 8 },
+  'banknifty_chain':   { key: 'NSE_INDEX|Nifty Bank',          maxExp: 4 },
+  'finnifty_chain':    { key: 'NSE_INDEX|Nifty Fin Service',   maxExp: 4 },
+  'midcapnifty_chain': { key: 'NSE_INDEX|Nifty Midcap Select', maxExp: 4 },
+  'niftynext50_chain': { key: 'NSE_INDEX|Nifty Next 50',       maxExp: 4 },
+  'sensex_chain':      { key: 'BSE_INDEX|SENSEX',              maxExp: 8 },
+  'bankex_chain':      { key: 'BSE_INDEX|BANKEX',              maxExp: 4 },
 };
 
-const MONTH_MAP = {
-  'Jan':'01','Feb':'02','Mar':'03','Apr':'04','May':'05','Jun':'06',
-  'Jul':'07','Aug':'08','Sep':'09','Oct':'10','Nov':'11','Dec':'12',
-};
-
-// Convert "30-Apr-2026" or "30 Apr 2026" to "2026-04-30"
-function toISO(dateStr) {
-  if (!dateStr) return dateStr;
-  const s = String(dateStr).trim();
-  // Already ISO
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  // "30-Apr-2026"
-  const parts = s.split(/[-\s]+/);
-  if (parts.length === 3) {
-    const d = parts[0].padStart(2, '0');
-    const m = MONTH_MAP[parts[1]] || parts[1];
-    const y = parts[2];
-    if (y.length === 4) return y + '-' + m + '-' + d;
-  }
-  return s;
+function hdrs(token) {
+  return { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' };
 }
 
-// ── NSE HELPERS ──
+// Only encode characters that break query strings: space and &
+function encKey(k) {
+  return k.split(' ').join('%20').split('&').join('%26');
+}
 
-async function getNSECookies() {
-  const res = await fetch('https://www.nseindia.com/', {
-    headers: Object.assign({}, NSE_HEADERS, {
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    }),
-    redirect: 'follow',
+async function getExpiries(instrKey, token, maxExp, base) {
+  var url = base + 'contract?instrument_key=' + encKey(instrKey);
+  var res = await fetch(url, { headers: hdrs(token) });
+  if (!res.ok) throw new Error('Upstox expiries HTTP ' + res.status);
+  var json = await res.json();
+  var seen = new Set();
+  var expiries = [];
+  (json.data || []).forEach(function(c) {
+    if (c.expiry && !seen.has(c.expiry)) { seen.add(c.expiry); expiries.push(c.expiry); }
   });
-  const raw = res.headers.get('set-cookie') || '';
-  const cookies = [];
-  raw.split(/,\s*(?=[a-zA-Z_][^=,]*=)/).forEach(function(part) {
-    const kv = part.trim().split(';')[0].trim();
-    if (kv && kv.includes('=')) cookies.push(kv);
-  });
-  return cookies.join('; ');
+  expiries.sort();
+  return expiries.slice(0, maxExp);
 }
 
-async function nseGet(path, cookie) {
-  const res = await fetch('https://www.nseindia.com' + path, {
-    headers: Object.assign({}, NSE_HEADERS, { 'Cookie': cookie }),
-  });
-  if (!res.ok) throw new Error('NSE ' + res.status + ' for ' + path);
-  return await res.json();
-}
-
-function parseNSEChain(json, maxExp) {
-  const expiries = (json.records && json.records.expiryDates) || [];
-  const rows = (json.records && json.records.data) || [];
-  const spot = (json.records && json.records.underlyingValue) || 0;
-
-  return expiries.slice(0, maxExp).map(function(exp) {
-    const strikes = {};
-    rows.filter(function(r) { return r.expiryDate === exp; }).forEach(function(r) {
-      if (!r.strikePrice) return;
-      const k = String(r.strikePrice);
-      strikes[k] = {
-        ce_oi:  (r.CE && r.CE.openInterest)          || 0,
-        ce_coi: (r.CE && r.CE.changeinOpenInterest)   || 0,
-        ce_vol: (r.CE && r.CE.totalTradedVolume)      || 0,
-        ce_ltp: (r.CE && r.CE.lastPrice)              || 0,
-        ce_iv:  (r.CE && r.CE.impliedVolatility)      || 0,
-        pe_oi:  (r.PE && r.PE.openInterest)           || 0,
-        pe_coi: (r.PE && r.PE.changeinOpenInterest)   || 0,
-        pe_vol: (r.PE && r.PE.totalTradedVolume)      || 0,
-        pe_ltp: (r.PE && r.PE.lastPrice)              || 0,
-        pe_iv:  (r.PE && r.PE.impliedVolatility)      || 0,
-      };
-    });
-    return { expiry: toISO(exp), strikes: strikes, spotPrice: spot };
-  });
-}
-
-async function fetchNSEIndexChain(symbol, maxExp) {
-  const cookie = await getNSECookies();
-  await new Promise(function(r) { setTimeout(r, 800); });
-  const json = await nseGet('/api/option-chain-indices?symbol=' + encodeURIComponent(symbol), cookie);
-  const chain = parseNSEChain(json, maxExp);
-  if (!chain || chain.length === 0) throw new Error('No data for ' + symbol);
-  return chain;
-}
-
-// ── BSE HELPERS ──
-
-async function bseGet(url) {
-  const res = await fetch(url, { headers: BSE_HEADERS });
-  if (!res.ok) throw new Error('BSE ' + res.status + ' for ' + url);
-  return await res.json();
-}
-
-async function getBSEExpiries(symbol) {
-  // symbol: 'SENSEX' or 'BANKEX'
-  const base = 'https://api.bseindia.com/BseIndiaAPI/api/';
-  const path = symbol === 'BANKEX'
-    ? 'GetBankexExpDate/w'
-    : 'GetSensexExpDate/w';
-  const json = await bseGet(base + path);
-  // Response is array of { ExpiryDate: "30 Apr 2026" } or plain strings
-  if (Array.isArray(json)) return json;
-  if (json && json.Table) return json.Table;
-  return [];
-}
-
-function parseBSEChain(rows, expISO) {
-  const strikes = {};
-  rows.forEach(function(r) {
-    const sp = r.Strike_Price || r.StrikePrice || r.strikePrice;
-    if (!sp) return;
-    const k = String(sp);
+async function getChain(instrKey, expiry, token, base) {
+  var url = base + 'chain?instrument_key=' + encKey(instrKey) + '&expiry_date=' + expiry;
+  var res = await fetch(url, { headers: hdrs(token) });
+  if (!res.ok) throw new Error('Upstox chain HTTP ' + res.status + ' for ' + expiry);
+  var json = await res.json();
+  var strikes = {};
+  var spot = 0;
+  (json.data || []).forEach(function(r) {
+    if (r.underlying_spot_price) spot = r.underlying_spot_price;
+    var k = String(r.strike_price);
+    var cm = (r.call_options && r.call_options.market_data) || {};
+    var cg = (r.call_options && r.call_options.option_greeks) || {};
+    var pm = (r.put_options && r.put_options.market_data) || {};
+    var pg = (r.put_options && r.put_options.option_greeks) || {};
     strikes[k] = {
-      ce_oi:  parseFloat(r.CE_OI  || r.Call_OI     || r.CE_OpenInterest  || 0) || 0,
-      ce_coi: parseFloat(r.CE_COI || r.Call_COI    || r.CE_ChgOI         || 0) || 0,
-      ce_vol: parseFloat(r.CE_Vol || r.Call_Volume  || r.CE_Volume        || 0) || 0,
-      ce_ltp: parseFloat(r.CE_LTP || r.Call_LTP     || r.CE_LastPrice     || 0) || 0,
-      ce_iv:  parseFloat(r.CE_IV  || r.Call_IV      || r.CE_ImpVol        || 0) || 0,
-      pe_oi:  parseFloat(r.PE_OI  || r.Put_OI       || r.PE_OpenInterest  || 0) || 0,
-      pe_coi: parseFloat(r.PE_COI || r.Put_COI      || r.PE_ChgOI         || 0) || 0,
-      pe_vol: parseFloat(r.PE_Vol || r.Put_Volume    || r.PE_Volume        || 0) || 0,
-      pe_ltp: parseFloat(r.PE_LTP || r.Put_LTP      || r.PE_LastPrice     || 0) || 0,
-      pe_iv:  parseFloat(r.PE_IV  || r.Put_IV        || r.PE_ImpVol        || 0) || 0,
+      ce_oi:  cm.oi   || 0,
+      ce_coi: (cm.oi || 0) - (cm.prev_oi || 0),
+      ce_vol: cm.volume || 0,
+      ce_ltp: cm.ltp  || 0,
+      ce_iv:  cg.iv   || 0,
+      pe_oi:  pm.oi   || 0,
+      pe_coi: (pm.oi || 0) - (pm.prev_oi || 0),
+      pe_vol: pm.volume || 0,
+      pe_ltp: pm.ltp  || 0,
+      pe_iv:  pg.iv   || 0,
     };
   });
-  return { expiry: expISO, strikes: strikes, spotPrice: 0 };
+  return { expiry: expiry, strikes: strikes, spotPrice: spot };
 }
-
-async function fetchBSEIndexChain(symbol, maxExp) {
-  const base = 'https://api.bseindia.com/BseIndiaAPI/api/';
-  const expiriesRaw = await getBSEExpiries(symbol);
-
-  const expiries = expiriesRaw
-    .map(function(e) {
-      if (typeof e === 'string') return e;
-      return e.ExpiryDate || e.expiryDate || e.expiry || '';
-    })
-    .filter(Boolean)
-    .slice(0, maxExp);
-
-  if (expiries.length === 0) throw new Error('No BSE expiries for ' + symbol);
-
-  const results = [];
-  for (let i = 0; i < expiries.length; i++) {
-    const expRaw = expiries[i];
-    const expISO = toISO(expRaw);
-    try {
-      await new Promise(function(r) { setTimeout(r, 600); });
-      const chainPath = symbol === 'BANKEX'
-        ? 'GetBankexoptionChain/w?ExpiryDate=' + encodeURIComponent(expRaw)
-        : 'GetSensexoptionChain/w?scripcode=&ExpiryDate=' + encodeURIComponent(expRaw);
-      const json = await bseGet(base + chainPath);
-      const rows = json.Table || json.data || json.Options || [];
-      if (rows.length > 0) {
-        results.push(parseBSEChain(rows, expISO));
-      } else {
-        results.push({ expiry: expISO, strikes: {}, spotPrice: 0 });
-      }
-    } catch (err) {
-      results.push({ expiry: expISO, strikes: {}, error: err.message });
-    }
-  }
-  return results;
-}
-
-// ── MAIN HANDLER ──
 
 Deno.serve(async function(req) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
-  const respond = function(body, status) {
+  var respond = function(body, status) {
     return new Response(JSON.stringify(body), {
       status: status || 200,
       headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }),
@@ -217,33 +80,32 @@ Deno.serve(async function(req) {
   };
 
   try {
-    const body = await req.json();
-    const type = body.type;
+    var token = Deno.env.get('UPSTOX_ACCESS_TOKEN');
+    var base = Deno.env.get('UPSTOX_URL');
+    if (!token) return respond({ success: false, error: 'UPSTOX_ACCESS_TOKEN not set' }, 500);
+    if (!base)  return respond({ success: false, error: 'UPSTOX_URL not set' }, 500);
 
+    var body = await req.json();
+    var type = body.type;
     if (!type) return respond({ success: false, error: 'Missing type' }, 400);
 
-    // Trade date check — used by autofetch to get current market date
     if (type === 'get_expiries') {
-      const tradeDate = new Date().toISOString().split('T')[0];
-      return respond({ success: true, data: { trade_date: tradeDate } });
+      return respond({ success: true, data: { trade_date: new Date().toISOString().split('T')[0] } });
     }
 
-    const config = TYPE_CONFIG[type];
+    var config = TYPE_CONFIG[type];
     if (!config) return respond({ success: false, error: 'Unknown type: ' + type }, 400);
 
-    let chain;
-    if (config.exchange === 'NSE') {
-      chain = await fetchNSEIndexChain(config.symbol, config.maxExp);
-    } else {
-      chain = await fetchBSEIndexChain(config.symbol, config.maxExp);
-    }
+    var expiries = await getExpiries(config.key, token, config.maxExp, base);
+    if (!expiries.length) return respond({ success: false, error: 'No expiries for ' + type }, 500);
 
-    if (!chain || chain.length === 0) {
-      return respond({ success: false, error: 'No data returned for ' + config.symbol });
-    }
+    var chains = await Promise.all(expiries.map(function(exp) {
+      return getChain(config.key, exp, token, base).catch(function(err) {
+        return { expiry: exp, strikes: {}, spotPrice: 0, error: err.message };
+      });
+    }));
 
-    return respond({ success: true, data: chain });
-
+    return respond({ success: true, data: chains });
   } catch (err) {
     return respond({ success: false, error: err.message }, 500);
   }
