@@ -89,15 +89,15 @@ Deno.serve(async function(req) {
 
     var body = await req.json();
     var type = body.type;
-    console.log('type:', type);
-    if (!type) return respond({ success: false, error: 'Missing type' }, 400);
+    console.log('body:', JSON.stringify(body), '| type:', type);
+    if (!type) return respond({ success: false, error: 'Missing type: body=' + JSON.stringify(body) });
 
     if (type === 'get_expiries') {
       return respond({ success: true, data: { trade_date: new Date().toISOString().split('T')[0] } });
     }
 
     var config = TYPE_CONFIG[type];
-    if (!config) return respond({ success: false, error: 'Unknown type: ' + type }, 400);
+    if (!config) return respond({ success: false, error: 'Unknown type: ' + type });
 
     var expiries = await getExpiries(config.key, token, config.maxExp, base);
     console.log('expiries found:', expiries.length, expiries);
