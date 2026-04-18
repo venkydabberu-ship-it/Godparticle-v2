@@ -130,7 +130,7 @@ Deno.serve(async function(req) {
       const cookie = await getNSECookies();
       await new Promise(function(r) { setTimeout(r, 700); });
       const json = await nseGet('/api/option-chain-equities?symbol=' + encodeURIComponent(symbol.toUpperCase()), cookie);
-      const allExpiries = parseNSEChain(json, 4);
+      const allExpiries = parseNSEChain(json, 6);
       const tradeDate = new Date().toISOString().split('T')[0];
       return new Response(JSON.stringify({ success: true, data: { allExpiries: allExpiries, tradeDate: tradeDate } }), { headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }) });
     }
