@@ -10,6 +10,7 @@ const BATCH_PAUSE = 10000; // ms pause between batches
 // ── CALL EDGE FUNCTION (with aggressive retry + backoff) ──
 // stock_price and stock_chain route to fetch-stock-data; everything else to fetch-nse-data
 async function callEdge(type: string, symbol?: string, expiry?: string, retries = 5) {
+  if (!type) throw new Error('callEdge: type is required (got undefined — check index edgeType config)');
   const fnName = (type === 'stock_price' || type === 'stock_chain')
     ? 'smooth-endpoint'
     : 'fetch-nse-data';
@@ -363,9 +364,10 @@ async function processStockPrice(symbol: string, results: any[]) {
         volume: days.reduce((s, d) => s + d.volume, 0),      // total month volume
       }));
 
-    await supabase
+    const { error: upsertErr } = await supabase
       .from('stock_price_data')
       .upsert(monthlySave, { onConflict: 'stock_name,trade_date' });
+    if (upsertErr) throw new Error('DB upsert failed: ' + upsertErr.message);
 
     // Save fundamentals (52W H/L + LTP) from latest NSE raw record
     const latestDaily = daily[daily.length - 1];
@@ -396,7 +398,16 @@ async function loadConfig() {
   if (data) {
     data.forEach((s: any) => {
       if (s.key === 'autofetch_indices') {
-        try { indices = JSON.parse(s.value); } catch {}
+        try {
+          const loaded = JSON.parse(s.value);
+          // Admin panel saves indices without edgeType — merge from DEFAULT_INDICES
+          const merged = loaded.map((idx: any) => {
+            if (idx.edgeType) return idx;
+            const def = DEFAULT_INDICES.find((d: any) => d.key === idx.key);
+            return { ...idx, edgeType: def?.edgeType };
+          }).filter((idx: any) => idx.edgeType);
+          if (merged.length) indices = merged;
+        } catch {}
       }
       if (s.key === 'autofetch_sectors') {
         try { sectors = JSON.parse(s.value); } catch {}
@@ -502,9 +513,10 @@ export async function autoFetchStockPrice(symbol: string): Promise<any[]> {
       volume: parseFloat(r.CH_TOT_TRADED_QTY || 0),
     }));
 
-  await supabase
+  const { error: upsertErr } = await supabase
     .from('stock_price_data')
     .upsert(toSave, { onConflict: 'stock_name,trade_date' });
+  if (upsertErr) throw new Error('DB upsert failed: ' + upsertErr.message);
 
   // Also save fundamentals from raw NSE response
   const sorted = [...toSave].sort((a, b) => b.trade_date.localeCompare(a.trade_date));

@@ -1,117 +1,173 @@
-// activate-plan edge function
-// Verifies Razorpay payment then upgrades user plan or adds credits
+// activate-plan edge function — Cashfree payment gateway
+// Secrets: CASHFREE_APP_ID, CASHFREE_SECRET_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Amounts in rupees (Cashfree uses rupees, not paise)
 const PLANS = {
-  'Basic':   { role: 'basic',   credits: 50,   amount: 10000  },
-  'Premium': { role: 'premium', credits: 200,  amount: 30000  },
-  'Pro':     { role: 'pro',     credits: 3000, amount: 250000 },
+  'Basic':   { role: 'basic',   credits: 50,   amount: 100   },
+  'Premium': { role: 'premium', credits: 200,  amount: 300   },
+  'Pro':     { role: 'pro',     credits: 3000, amount: 2500  },
 };
 
 const CREDIT_PACKS = {
-  25:  5000,
-  50:  10000,
-  100: 20000,
-  250: 50000,
+  25:  50,
+  50:  100,
+  100: 200,
+  250: 500,
 };
+
+const CF_BASE = 'https://api.cashfree.com/pg';
 
 Deno.serve(async function(req) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
-  const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  const RZP_KEY_ID = Deno.env.get('RAZORPAY_KEY_ID');
-  const RZP_KEY_SECRET = Deno.env.get('RAZORPAY_KEY_SECRET');
+  var SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+  var SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  var CF_APP_ID    = Deno.env.get('CASHFREE_APP_ID');
+  var CF_SECRET    = Deno.env.get('CASHFREE_SECRET_KEY');
+
+  var respond = function(body, status) {
+    return new Response(JSON.stringify(body), {
+      status: status || 200,
+      headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }),
+    });
+  };
 
   try {
-    const body = await req.json();
-    const paymentId = body.payment_id;
-    const plan = body.plan;
-    const credits = body.credits;
-
-    if (!paymentId) throw new Error('Missing payment_id');
+    var body = await req.json();
+    var action = body.action;
 
     // Identify user from JWT
-    const authHeader = req.headers.get('Authorization') || '';
-    const userRes = await fetch(SUPABASE_URL + '/auth/v1/user', {
+    var authHeader = req.headers.get('Authorization') || '';
+    var userRes = await fetch(SUPABASE_URL + '/auth/v1/user', {
       headers: { 'Authorization': authHeader, 'apikey': SERVICE_KEY },
     });
-    const userData = await userRes.json();
-    const userId = userData && userData.id;
+    var userData = await userRes.json();
+    var userId = userData && userData.id;
     if (!userId) throw new Error('Unauthorized');
 
-    // Verify payment with Razorpay API
-    const credentials = btoa(RZP_KEY_ID + ':' + RZP_KEY_SECRET);
-    const rzpRes = await fetch('https://api.razorpay.com/v1/payments/' + paymentId, {
-      headers: { 'Authorization': 'Basic ' + credentials },
-    });
-    if (!rzpRes.ok) throw new Error('Could not verify payment — Razorpay API error ' + rzpRes.status);
-    const payment = await rzpRes.json();
+    var cfHeaders = {
+      'x-client-id':     CF_APP_ID,
+      'x-client-secret': CF_SECRET,
+      'x-api-version':   '2023-08-01',
+      'Content-Type':    'application/json',
+    };
 
-    if (payment.status !== 'captured') {
-      throw new Error('Payment not captured. Status: ' + payment.status);
-    }
+    // ── CREATE ORDER ──
+    // Returns payment_session_id so frontend can open Cashfree checkout
+    if (action === 'create_order') {
+      var amount    = Number(body.amount);
+      var email     = String(body.email  || 'user@godparticle.app');
+      var phone     = String(body.phone  || '9999999999').replace(/\D/g, '').slice(0, 10) || '9999999999';
+      var returnUrl = String(body.return_url || 'https://godparticle-v2-ivory.vercel.app/pricing');
 
-    if (plan) {
-      // ── Plan subscription ──
-      const planConfig = PLANS[plan];
-      if (!planConfig) throw new Error('Invalid plan: ' + plan);
-      if (payment.amount !== planConfig.amount) {
-        throw new Error('Amount mismatch. Expected ' + planConfig.amount + ' paise, got ' + payment.amount);
-      }
+      var orderId = 'gp' + userId.replace(/-/g, '').slice(0, 10) + Date.now();
 
-      const updateRes = await fetch(SUPABASE_URL + '/rest/v1/profiles?id=eq.' + userId, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': 'Bearer ' + SERVICE_KEY,
-          'apikey': SERVICE_KEY,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal',
-        },
-        body: JSON.stringify({ role: planConfig.role, credits: planConfig.credits }),
-      });
-      if (!updateRes.ok) throw new Error('Profile update failed');
-
-    } else if (credits !== undefined && credits !== null) {
-      // ── Credit pack purchase ──
-      const creditNum = parseInt(String(credits));
-      const expectedAmount = CREDIT_PACKS[creditNum];
-      if (!expectedAmount) throw new Error('Invalid credit pack: ' + credits);
-      if (payment.amount !== expectedAmount) {
-        throw new Error('Amount mismatch for credits');
-      }
-
-      await fetch(SUPABASE_URL + '/rest/v1/rpc/add_credits', {
+      var cfRes = await fetch(CF_BASE + '/orders', {
         method: 'POST',
-        headers: {
-          'Authorization': 'Bearer ' + SERVICE_KEY,
-          'apikey': SERVICE_KEY,
-          'Content-Type': 'application/json',
-        },
+        headers: cfHeaders,
         body: JSON.stringify({
-          p_user_id: userId,
-          p_credits: creditNum,
-          p_type: 'purchase',
-          p_description: 'Purchased ' + creditNum + ' credits',
+          order_id:      orderId,
+          order_amount:  amount,
+          order_currency: 'INR',
+          customer_details: {
+            customer_id:    userId.replace(/-/g, '').slice(0, 32),
+            customer_email: email,
+            customer_phone: phone,
+          },
+          order_meta: {
+            return_url: returnUrl,
+          },
         }),
       });
-    } else {
-      throw new Error('Must provide plan or credits');
+
+      if (!cfRes.ok) {
+        var cfErr = await cfRes.json();
+        throw new Error('Cashfree order failed: ' + (cfErr.message || cfRes.status));
+      }
+
+      var cfOrder = await cfRes.json();
+      return respond({
+        order_id:           cfOrder.order_id,
+        payment_session_id: cfOrder.payment_session_id,
+      });
     }
 
-    return new Response(
-      JSON.stringify({ success: true }),
-      { headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }) }
-    );
+    // ── VERIFY PAYMENT ──
+    // Fetches order from Cashfree, checks PAID status and amount, then activates
+    if (action === 'verify_payment') {
+      var orderId   = body.order_id;
+      var plan      = body.plan;
+      var credits   = body.credits;
+
+      if (!orderId) throw new Error('Missing order_id');
+
+      var cfRes = await fetch(CF_BASE + '/orders/' + orderId, { headers: cfHeaders });
+      if (!cfRes.ok) throw new Error('Cashfree verification failed: ' + cfRes.status);
+      var cfOrder = await cfRes.json();
+
+      if (cfOrder.order_status !== 'PAID') {
+        throw new Error('Payment not completed. Status: ' + cfOrder.order_status);
+      }
+
+      var paidAmount = Number(cfOrder.order_amount);
+
+      if (plan) {
+        var planConfig = PLANS[plan];
+        if (!planConfig) throw new Error('Invalid plan: ' + plan);
+        if (Math.abs(paidAmount - planConfig.amount) > 1) {
+          throw new Error('Amount mismatch. Expected ₹' + planConfig.amount + ', got ₹' + paidAmount);
+        }
+
+        var updateRes = await fetch(SUPABASE_URL + '/rest/v1/profiles?id=eq.' + userId, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': 'Bearer ' + SERVICE_KEY,
+            'apikey':         SERVICE_KEY,
+            'Content-Type':   'application/json',
+            'Prefer':         'return=minimal',
+          },
+          body: JSON.stringify({ role: planConfig.role, credits: planConfig.credits }),
+        });
+        if (!updateRes.ok) throw new Error('Profile update failed');
+
+      } else if (credits !== undefined && credits !== null) {
+        var creditNum      = parseInt(String(credits));
+        var expectedAmount = CREDIT_PACKS[creditNum];
+        if (!expectedAmount) throw new Error('Invalid credit pack: ' + credits);
+        if (Math.abs(paidAmount - expectedAmount) > 1) {
+          throw new Error('Amount mismatch for credits');
+        }
+
+        await fetch(SUPABASE_URL + '/rest/v1/rpc/add_credits', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + SERVICE_KEY,
+            'apikey':         SERVICE_KEY,
+            'Content-Type':   'application/json',
+          },
+          body: JSON.stringify({
+            p_user_id:    userId,
+            p_credits:    creditNum,
+            p_type:       'purchase',
+            p_description: 'Purchased ' + creditNum + ' credits via Cashfree',
+          }),
+        });
+
+      } else {
+        throw new Error('Must provide plan or credits');
+      }
+
+      return respond({ success: true });
+    }
+
+    throw new Error('Unknown action: ' + action);
 
   } catch (err) {
-    return new Response(
-      JSON.stringify({ success: false, error: err.message }),
-      { status: 400, headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }) }
-    );
+    return respond({ success: false, error: err.message }, 400);
   }
 });

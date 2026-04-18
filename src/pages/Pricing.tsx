@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -9,82 +9,113 @@ export default function Pricing() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  // Handle return from Cashfree UPI redirect (order_id appears in URL)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get('order_id');
+    if (!orderId) return;
+
+    const savedPlan = sessionStorage.getItem('cf_plan');
+    const savedCredits = sessionStorage.getItem('cf_credits');
+    setLoading(savedPlan || 'credits');
+
+    const body: any = { action: 'verify_payment', order_id: orderId };
+    if (savedPlan) body.plan = savedPlan;
+    if (savedCredits) body.credits = parseInt(savedCredits);
+
+    supabase.functions.invoke('activate-plan', { body }).then(({ data, error: fnErr }) => {
+      sessionStorage.removeItem('cf_plan');
+      sessionStorage.removeItem('cf_credits');
+      window.history.replaceState({}, '', window.location.pathname);
+      if (fnErr || !data?.success) {
+        setError('Payment received but activation failed. Order ID: ' + orderId + '. Contact support.');
+      } else {
+        setSuccess(savedPlan ? savedPlan + ' plan activated! Welcome to God Particle.' : savedCredits + ' credits added to your account!');
+        refreshProfile();
+      }
+      setLoading('');
+    });
+  }, []);
+
+  async function openCashfree(
+    amountRupees: number,
+    label: string,
+    body: { plan?: string; credits?: number }
+  ) {
+    // Step 1 — create order server-side, get payment_session_id
+    const returnUrl = window.location.origin + '/pricing?order_id={order_id}';
+    const { data: orderData, error: orderErr } = await supabase.functions.invoke('activate-plan', {
+      body: {
+        action: 'create_order',
+        amount: amountRupees,
+        email: profile?.username ?? '',
+        phone: (profile as any)?.phone ?? '9999999999',
+        return_url: returnUrl,
+        ...body,
+      },
+    });
+    if (orderErr || !orderData?.payment_session_id) {
+      throw new Error(orderErr?.message || orderData?.error || 'Could not create payment order');
+    }
+
+    // Save plan/credits so redirect flow can verify after UPI redirect
+    if (body.plan) sessionStorage.setItem('cf_plan', body.plan);
+    if (body.credits) sessionStorage.setItem('cf_credits', String(body.credits));
+
+    // Step 2 — open Cashfree checkout modal
+    const cashfree = (window as any).Cashfree({ mode: 'production' });
+    const result = await cashfree.checkout({
+      paymentSessionId: orderData.payment_session_id,
+      redirectTarget: '_modal',
+    });
+
+    // If redirected (UPI apps), page will reload and useEffect handles verification
+    if (result?.redirect) return;
+
+    if (result?.error) {
+      sessionStorage.removeItem('cf_plan');
+      sessionStorage.removeItem('cf_credits');
+      throw new Error(result.error.message || 'Payment was cancelled');
+    }
+
+    // Step 3 — verify payment with backend
+    const { data: verifyData, error: verifyErr } = await supabase.functions.invoke('activate-plan', {
+      body: { action: 'verify_payment', order_id: orderData.order_id, ...body },
+    });
+    sessionStorage.removeItem('cf_plan');
+    sessionStorage.removeItem('cf_credits');
+    if (verifyErr || !verifyData?.success) {
+      throw new Error('Payment received but activation failed. Order ID: ' + orderData.order_id);
+    }
+    return true;
+  }
+
   async function handlePayment(plan: string, amount: number, credits: number) {
     setLoading(plan);
     setError('');
     setSuccess('');
-    const options = {
-      key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-      amount: amount * 100,
-      currency: 'INR',
-      name: 'God Particle',
-      description: plan + ' Plan — ' + credits + ' credits/month',
-      handler: async function(response: any) {
-        try {
-          const { data, error: fnErr } = await supabase.functions.invoke('activate-plan', {
-            body: { payment_id: response.razorpay_payment_id, plan }
-          });
-          if (fnErr || !data?.success) {
-            setError('Payment received but activation failed. Save this Payment ID and contact support: ' + response.razorpay_payment_id);
-          } else {
-            setSuccess(plan + ' plan activated! Welcome to God Particle ' + plan + '.');
-            await refreshProfile();
-          }
-        } catch {
-          setError('Activation error. Save this Payment ID: ' + response.razorpay_payment_id);
-        }
-        setLoading('');
-      },
-      modal: { ondismiss: function() { setLoading(''); } },
-      prefill: { email: profile?.username ?? '' },
-      theme: { color: '#f0c040' }
-    };
     try {
-      const rzp = new (window as any).Razorpay(options);
-      rzp.open();
+      await openCashfree(amount, plan, { plan });
+      setSuccess(plan + ' plan activated! Welcome to God Particle ' + plan + '.');
+      await refreshProfile();
     } catch (err: any) {
-      setError(err.message || 'Could not open payment. Please try again.');
-      setLoading('');
+      setError(err.message || 'Payment failed. Please try again.');
     }
+    setLoading('');
   }
 
   async function handleBuyCredits(credits: number) {
-    const amount = credits * 2;
     setLoading('credits');
     setError('');
     setSuccess('');
-    const options = {
-      key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-      amount: amount * 100,
-      currency: 'INR',
-      name: 'God Particle',
-      description: credits + ' Credits Purchase',
-      handler: async function(response: any) {
-        try {
-          const { data, error: fnErr } = await supabase.functions.invoke('activate-plan', {
-            body: { payment_id: response.razorpay_payment_id, credits }
-          });
-          if (fnErr || !data?.success) {
-            setError('Payment received but credits not added. Save Payment ID: ' + response.razorpay_payment_id);
-          } else {
-            setSuccess(credits + ' credits added to your account!');
-            await refreshProfile();
-          }
-        } catch {
-          setError('Error adding credits. Save Payment ID: ' + response.razorpay_payment_id);
-        }
-        setLoading('');
-      },
-      modal: { ondismiss: function() { setLoading(''); } },
-      theme: { color: '#f0c040' }
-    };
     try {
-      const rzp = new (window as any).Razorpay(options);
-      rzp.open();
+      await openCashfree(credits * 2, 'credits', { credits });
+      setSuccess(credits + ' credits added to your account!');
+      await refreshProfile();
     } catch (err: any) {
-      setError(err.message || 'Could not open payment. Please try again.');
-      setLoading('');
+      setError(err.message || 'Payment failed. Please try again.');
     }
+    setLoading('');
   }
 
   const plans = [

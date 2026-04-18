@@ -26,8 +26,8 @@ export interface Subscription {
   user_id: string;
   plan: 'basic' | 'premium';
   status: 'active' | 'cancelled' | 'expired';
-  razorpay_payment_id: string;
-  razorpay_order_id: string;
+  payment_order_id: string;
+  payment_session_id: string;
   amount: number;
   started_at: string;
   expires_at: string;
