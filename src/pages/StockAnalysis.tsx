@@ -1228,52 +1228,205 @@ export default function StockAnalysis() {
               )}
 
               {/* ── MY PLAN TAB ── */}
-              {gctTab === 'plan' && (
-                <div className="space-y-4">
-                  {/* Personalised buy plan */}
-                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
-                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Personalised Buy Plan</div>
-                    <div className="text-base font-black mb-4" style={{ color: zc }}>{result.buyPlanTitle}</div>
-                    <div className="space-y-2">
-                      {result.buyPlanLines.map((line: string, i: number) => (
-                        <div key={i} className="flex gap-3 text-xs font-mono text-[#e8e8f0] p-3 rounded-lg bg-[#16161f]">
-                          <span className="text-[#6b6b85] shrink-0">{i + 1}.</span>
-                          <span>{line}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+              {gctTab === 'plan' && (() => {
+                const upsidePct  = Math.round((result.upsideLevels[4].price - result.currentPrice) / result.currentPrice * 100);
+                const downPct    = Math.round((result.currentPrice - result.crashLevels[4].price) / result.currentPrice * 100);
+                const rrRatio    = downPct > 0 ? (upsidePct / downPct).toFixed(1) : '∞';
+                const uScore     = Math.min(100, Math.max(0, Math.round(
+                  (upsidePct / (upsidePct + downPct)) * 60 +
+                  result.avgVms * 25 +
+                  (result.hasFundamentals ? (result.fssScore / result.fssTotal) * 15 : 7.5)
+                )));
+                const uScoreColor = uScore >= 70 ? '#39d98a' : uScore >= 45 ? '#f0c040' : '#ff4d6d';
+                const uScoreLabel = uScore >= 70 ? 'Strong Upside' : uScore >= 45 ? 'Moderate Upside' : 'Limited Upside';
+                return (
+                  <div className="space-y-4">
 
-                  {/* Key levels quick reference */}
-                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
-                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">Key Levels Quick Reference</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {[
-                        { label: 'U5 — Final Exit',    price: result.upsideLevels[4].price, color: '#ff4d6d' },
-                        { label: 'U2 — First Target',  price: result.upsideLevels[1].price, color: '#39d98a' },
-                        { label: 'AL — Buy Zone',       price: result.al,                    color: '#39d98a' },
-                        { label: 'MGC — Soul',          price: result.mgc,                   color: '#4d9fff' },
-                        { label: 'MCL — Commitment',    price: result.mcl,                   color: '#a78bfa' },
-                        { label: 'CL — Danger',         price: result.cl,                    color: '#ff8c42' },
-                        { label: 'L3 — Panic Buy',      price: result.crashLevels[2].price,  color: '#ff4d6d' },
-                        { label: 'L5 — Hard SL',        price: result.crashLevels[4].price,  color: '#6b6b85' },
-                      ].map((lv, i) => (
-                        <div key={i} className="flex justify-between items-center p-2.5 rounded-lg bg-[#16161f] text-xs font-mono">
-                          <span style={{ color: lv.color }}>{lv.label}</span>
-                          <span className="font-black text-[#e8e8f0]">₹{lv.price.toLocaleString()}</span>
+                    {/* ── Block A: Snapshot ── */}
+                    <div className="rounded-2xl p-5" style={{ background: `linear-gradient(135deg,#0a0a0f,${zc}18)`, border: `1px solid ${zc}50` }}>
+                      <div className="flex items-center justify-between flex-wrap gap-3">
+                        <div>
+                          <div className="text-xs font-mono text-[#6b6b85] mb-1">CURRENT PRICE</div>
+                          <div className="text-4xl font-black">₹{result.currentPrice.toLocaleString()}</div>
+                          <div className="inline-block mt-2 px-3 py-1 rounded-full text-xs font-black" style={{ background: `${zc}25`, color: zc }}>{result.zone}</div>
                         </div>
-                      ))}
+                        <div className="text-right">
+                          <div className="text-xs font-mono text-[#6b6b85] mb-1">UPSIDE SCORE</div>
+                          <div className="text-5xl font-black" style={{ color: uScoreColor }}>{uScore}</div>
+                          <div className="text-xs font-bold mt-1" style={{ color: uScoreColor }}>{uScoreLabel}</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                        <div className="bg-[#16161f] rounded-xl p-2">
+                          <div className="text-[10px] font-mono text-[#6b6b85]">UPSIDE TO U5</div>
+                          <div className="text-lg font-black text-[#39d98a]">+{upsidePct}%</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85]">₹{result.upsideLevels[4].price.toLocaleString()}</div>
+                        </div>
+                        <div className="bg-[#16161f] rounded-xl p-2">
+                          <div className="text-[10px] font-mono text-[#6b6b85]">RISK TO L5</div>
+                          <div className="text-lg font-black text-[#ff4d6d]">-{downPct}%</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85]">₹{result.crashLevels[4].price.toLocaleString()}</div>
+                        </div>
+                        <div className="bg-[#16161f] rounded-xl p-2">
+                          <div className="text-[10px] font-mono text-[#6b6b85]">RISK:REWARD</div>
+                          <div className="text-lg font-black text-[#f0c040]">{rrRatio}:1</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85]">in your favour</div>
+                        </div>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* One-line verdict */}
-                  <div className="rounded-2xl p-6" style={{ background: `linear-gradient(135deg,#0a0a0f,${zc}15)`, border: `1px solid ${zc}40` }}>
-                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">⚛ One-Line Verdict</div>
-                    <div className="text-sm font-bold leading-relaxed" style={{ color: '#e8e8f0' }}>{result.verdict}</div>
-                    <div className="mt-3 text-[10px] font-mono text-[#6b6b85]">Not Financial Advice · GCT v3.0 · God Particle ⚛</div>
+                    {/* ── Block B: Buy if Stock Goes UP ── */}
+                    <div className="bg-[#111118] border border-[#39d98a]/30 rounded-2xl p-5">
+                      <div className="text-sm font-black text-[#39d98a] mb-1">📈 IF STOCK GOES UP — Breakout Buy Plan</div>
+                      <div className="text-xs font-mono text-[#6b6b85] mb-4">Both conditions must be true before buying on upside</div>
+                      <div className="space-y-2 mb-4">
+                        <div className="flex gap-3 p-3 rounded-xl bg-[#39d98a]/10 text-xs font-mono">
+                          <span className="text-[#39d98a] font-black shrink-0">✅ Cond 1</span>
+                          <span>Monthly CLOSE must be above the level — not intraday, full month close</span>
+                        </div>
+                        <div className="flex gap-3 p-3 rounded-xl bg-[#39d98a]/10 text-xs font-mono">
+                          <span className="text-[#39d98a] font-black shrink-0">✅ Cond 2</span>
+                          <span>Price must hold above that level for 3+ consecutive trading days after</span>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs font-mono">
+                          <thead>
+                            <tr className="border-b border-[#1e1e2e]">
+                              {['Level','Price','Action','Capital %','Stop Loss'].map(h => (
+                                <th key={h} className="text-left px-2 py-2 text-[#6b6b85] font-normal">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[
+                              { lv: result.upsideLevels[0], action: 'BUY full size', alloc: '100%', sl: `₹${result.mgc.toLocaleString()} (MGC)` },
+                              { lv: result.upsideLevels[1], action: 'Add small', alloc: '20%',  sl: `₹${result.upsideLevels[0].price.toLocaleString()} (U1)` },
+                              { lv: result.upsideLevels[2], action: 'HOLD only', alloc: '—',    sl: `₹${result.upsideLevels[0].price.toLocaleString()} (U1)` },
+                              { lv: result.upsideLevels[3], action: 'HOLD, alert', alloc: '—',  sl: `₹${result.upsideLevels[1].price.toLocaleString()} (U2)` },
+                              { lv: result.upsideLevels[4], action: '🚨 EXIT 100%', alloc: 'SELL', sl: 'No SL — just exit' },
+                            ].map(({ lv, action, alloc, sl }) => {
+                              const color = ['#39d98a','#4d9fff','#f0c040','#ff8c42','#ff4d6d'][lv.n - 1];
+                              const here = result.currentPrice >= lv.price - result.vwar * 0.5 && result.currentPrice < lv.price + result.vwar * 0.5;
+                              return (
+                                <tr key={lv.n} className={`border-b border-[#1e1e2e]/50 ${here ? 'bg-[#39d98a]/10' : ''}`}>
+                                  <td className="px-2 py-2.5 font-bold" style={{ color }}>{lv.emoji} U{lv.n}</td>
+                                  <td className="px-2 py-2.5 font-black" style={{ color }}>₹{lv.price.toLocaleString()}</td>
+                                  <td className="px-2 py-2.5" style={{ color }}>{action}</td>
+                                  <td className="px-2 py-2.5 text-[#f0c040] font-bold">{alloc}</td>
+                                  <td className="px-2 py-2.5 text-[#6b6b85]">{sl}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* ── Block C: Buy if Stock Crashes ── */}
+                    <div className="bg-[#111118] border border-[#ff4d6d]/30 rounded-2xl p-5">
+                      <div className="text-sm font-black text-[#ff4d6d] mb-1">💥 IF STOCK CRASHES — Accumulation Plan</div>
+                      <div className="text-xs font-mono text-[#6b6b85] mb-4">Never invest all at once. Spread across levels as price falls.</div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs font-mono">
+                          <thead>
+                            <tr className="border-b border-[#1e1e2e]">
+                              {['Level','Price','Market Mood','Invest','SL'].map(h => (
+                                <th key={h} className="text-left px-2 py-2 text-[#6b6b85] font-normal">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {result.crashLevels.map((lv: any) => {
+                              const here = result.currentPrice <= lv.price + result.vwar * 0.5 &&
+                                (lv.n === 1 || result.currentPrice > result.crashLevels[lv.n - 2].price - result.vwar * 0.5);
+                              return (
+                                <tr key={lv.n} className={`border-b border-[#1e1e2e]/50 ${here ? 'bg-[#f0c040]/10' : ''}`}>
+                                  <td className="px-2 py-2.5 font-bold">{lv.emoji} L{lv.n}</td>
+                                  <td className="px-2 py-2.5 font-black text-[#f0c040]">
+                                    ₹{lv.price.toLocaleString()}
+                                    {here && <span className="ml-1 text-[9px] bg-[#f0c040] text-black px-1 rounded">NOW</span>}
+                                  </td>
+                                  <td className="px-2 py-2.5 text-[#6b6b85]">{lv.mood}</td>
+                                  <td className="px-2 py-2.5 font-black text-[#39d98a]">{lv.alloc}%</td>
+                                  <td className="px-2 py-2.5 text-[#6b6b85]">Below L5</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="mt-3 p-3 rounded-xl bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 text-xs font-mono text-[#ff4d6d]">
+                        ⛔ Hard Stop Loss: Monthly CLOSE below L5 ₹{result.crashLevels[4].price.toLocaleString()} → EXIT EVERYTHING immediately
+                      </div>
+                    </div>
+
+                    {/* ── Block D: Already Bought? ── */}
+                    <div className="bg-[#111118] border border-[#a78bfa]/30 rounded-2xl p-5">
+                      <div className="text-sm font-black text-[#a78bfa] mb-4">🤝 ALREADY BOUGHT? — Hold & Exit Rules</div>
+                      <div className="space-y-2 mb-4">
+                        <div className="text-xs font-black text-[#39d98a] mb-1">STAY IN (HOLD) when:</div>
+                        {[
+                          `Price is between AL ₹${result.al.toLocaleString()} and U5 ₹${result.upsideLevels[4].price.toLocaleString()}`,
+                          `Monthly close stays above your entry price`,
+                          `Price pulls back to AL ₹${result.al.toLocaleString()} — that's normal, AL is now support`,
+                        ].map((line, i) => (
+                          <div key={i} className="flex gap-2 p-2.5 rounded-lg bg-[#39d98a]/08 text-xs font-mono">
+                            <span className="text-[#39d98a] shrink-0">✅</span><span>{line}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="space-y-2 mb-4">
+                        <div className="text-xs font-black text-[#ff4d6d] mb-1">EXIT — STOP LOSS when:</div>
+                        {[
+                          `Two consecutive monthly closes below MGC ₹${result.mgc.toLocaleString()} — trend is broken`,
+                          `Monthly close drops below AL ₹${result.al.toLocaleString()} after a confirmed breakout`,
+                          `Monthly close below L5 ₹${result.crashLevels[4].price.toLocaleString()} — hard stop, exit all`,
+                        ].map((line, i) => (
+                          <div key={i} className="flex gap-2 p-2.5 rounded-lg bg-[#ff4d6d]/08 text-xs font-mono">
+                            <span className="text-[#ff4d6d] shrink-0">🛑</span><span>{line}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="space-y-2">
+                        <div className="text-xs font-black text-[#f0c040] mb-1">EXIT — TARGET when:</div>
+                        <div className="flex gap-2 p-2.5 rounded-lg bg-[#f0c040]/08 text-xs font-mono">
+                          <span className="text-[#f0c040] shrink-0">🎯</span>
+                          <span>Price hits U5 ₹{result.upsideLevels[4].price.toLocaleString()} → sell 100% immediately. No exceptions. That is the blow-off top.</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ── Block E: Trailing SL ── */}
+                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                      <div className="text-sm font-black text-[#f0c040] mb-1">🪜 TRAILING STOP LOSS — Lock In Profit As You Rise</div>
+                      <div className="text-xs font-mono text-[#6b6b85] mb-3">As price moves up, move your SL up to protect gains</div>
+                      <div className="space-y-2">
+                        {[
+                          { when: `Price reaches U1 ₹${result.upsideLevels[0].price.toLocaleString()}`, sl: `Move SL to MGC ₹${result.mgc.toLocaleString()}` },
+                          { when: `Price reaches U2 ₹${result.upsideLevels[1].price.toLocaleString()}`, sl: `Move SL to U1 ₹${result.upsideLevels[0].price.toLocaleString()}` },
+                          { when: `Price reaches U3 ₹${result.upsideLevels[2].price.toLocaleString()}`, sl: `Keep SL at U1 ₹${result.upsideLevels[0].price.toLocaleString()} (give breathing room)` },
+                          { when: `Price reaches U4 ₹${result.upsideLevels[3].price.toLocaleString()}`, sl: `Move SL to U2 ₹${result.upsideLevels[1].price.toLocaleString()}` },
+                          { when: `Price reaches U5 ₹${result.upsideLevels[4].price.toLocaleString()}`, sl: `🚨 EXIT 100% — target reached` },
+                        ].map((row, i) => (
+                          <div key={i} className="flex items-center justify-between p-2.5 rounded-lg bg-[#16161f] text-xs font-mono gap-2">
+                            <span className="text-[#6b6b85]">{row.when}</span>
+                            <span className="font-bold text-[#f0c040] shrink-0">→ {row.sl}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* ── Block F: One-line verdict ── */}
+                    <div className="rounded-2xl p-5" style={{ background: `linear-gradient(135deg,#0a0a0f,${zc}15)`, border: `1px solid ${zc}40` }}>
+                      <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">⚛ Verdict</div>
+                      <div className="text-sm font-bold leading-relaxed">{result.verdict}</div>
+                      <div className="mt-3 text-[10px] font-mono text-[#6b6b85]">Not Financial Advice · GCT v3.0 · God Particle ⚛</div>
+                    </div>
+
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           );
         })()}
