@@ -480,12 +480,17 @@ export default function Analysis() {
                 )}
                 <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl px-4 py-2 text-xs font-mono text-[#f0c040] mb-3">
                   ⚛ PCB ₹{result.pcb.toFixed(1)} = Key level · Gap step: {getGapStep(indexName)} pts · Range: ±{getMaxGap(indexName)} pts
+                  {result.daysSinceClose > 0 && (
+                    <span className="ml-2 text-[#ff8c42]">
+                      · {result.daysSinceClose}d theta decay applied to open estimates
+                    </span>
+                  )}
                 </div>
                 <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
                   <table className="w-full text-xs font-mono">
                     <thead>
                       <tr className="border-b border-[#1e1e2e]">
-                        {['Scenario', 'CE Opens Est', 'Buy Zone', 'Target 1', 'Target 2', 'SL'].map(h => (
+                        {['Scenario', 'Opens Est', 'Buy Zone', 'Target 1', 'Target 2', 'SL'].map(h => (
                           <th key={h} className="text-left px-3 py-3 text-[#6b6b85] uppercase tracking-widest font-normal">{h}</th>
                         ))}
                       </tr>

@@ -288,10 +288,16 @@ export function computeGodParticle(
   const lastClose = data[data.length - 1].close;
   const dte = getDTE(expiry);
 
-  // Gap step and max based on index
-  const indexName = normalizeIndexName(''); // passed separately
-  const gapStep = 50; // default, overridden in UI
-  const maxGap = 500;
+  // Calendar days elapsed since the last data point was captured.
+  // This drives the theta-decay correction in the scenario matrix:
+  // 0 = same-day analysis, 2 = Saturday/Sunday after Friday close, 3 = Monday view of Friday data.
+  const lastDataDate = data[data.length - 1]?.date;
+  let daysSinceClose = 0;
+  if (lastDataDate) {
+    const lastMs  = new Date(lastDataDate + 'T00:00:00').getTime();
+    const todayMs = new Date().setHours(0, 0, 0, 0) as number;
+    daysSinceClose = Math.max(0, Math.round((todayMs - lastMs) / 86400000));
+  }
 
   return {
     data,
@@ -300,6 +306,7 @@ export function computeGodParticle(
     optType,
     expiry,
     dte,
+    daysSinceClose,
     vwap: Math.round(vwap * 100) / 100,
     oiwap: Math.round(oiwap * 100) / 100,
     pcb: Math.round(pcb * 100) / 100,
@@ -322,32 +329,66 @@ export function getDTE(expiry: string): number {
 // Invariant guaranteed for every non-avoided row:
 //   sl < openEst < entryLow < entryHigh < target1 < target2
 //
-// Logic:
-//   openEst  = where the option will likely open given the index gap
-//   entryLow/High = breakout buy zone, always ABOVE openEst
-//                   (wait 15 min, enter only after option shows strength)
-//   target1/2 = profit exits above the buy zone
-//   sl        = hard stop, always below openEst
+// openEst is a THETA-ADJUSTED estimate of where the option will open.
+// Problem with using raw lc: on weekends and multi-day gaps, theta erodes
+// the option price significantly even when the underlying opens flat.
+// Solution: split lc into (core value + time premium) and decay only the
+// time premium based on calendar days elapsed since last close.
+//
+// Core value  ≈ min(PCB, lc × 0.85)  — acts as intrinsic/institutional floor
+// Time premium = lc − core value      — the portion that decays with theta
+//
+// Theta factor = baseTheta(DTE) × dayPenalty(daysSinceClose)
+// thetaBase    = core + timePremium × thetaFactor
+// All scenarios scale their openEst from thetaBase, not raw lc.
 //
 export function generateScenarioMatrix(
   result: any,
   indexName: string
 ): any[] {
-  const lc   = result.lc;
-  const pcb  = result.pcb;
-  const dte  = result.dte;
-  const isCE = result.optType === 'CE';
+  const lc             = result.lc;
+  const pcb            = result.pcb;
+  const dte            = result.dte;
+  const daysSinceClose = result.daysSinceClose ?? 0;
+  const isCE           = result.optType === 'CE';
 
-  // Theta discount: fewer days → targets pulled closer
+  // Theta discount applied to targets
   const td = dte <= 0 ? 0.50
            : dte <= 1 ? 0.65
            : dte <= 2 ? 0.78
            : dte <= 4 ? 0.92
            : 1.00;
 
-  const gapStep    = getGapStep(indexName); // 50 for Nifty family, 100 for Sensex/Bankex
-  const maxGap     = getMaxGap(indexName);  // 500 for Nifty family, 1500 for Sensex/Bankex
-  const avoidLimit = maxGap * 0.40;         // 200 for Nifty, 600 for Sensex
+  const gapStep    = getGapStep(indexName);
+  const maxGap     = getMaxGap(indexName);
+  const avoidLimit = maxGap * 0.40; // 200 for Nifty, 600 for Sensex
+
+  // ── Theta-adjusted base price ──
+  // Split option price into core (institutional floor) + time premium (decays).
+  // This prevents flat-open showing raw lc after a weekend with DTE=2.
+  const coreValue   = Math.min(pcb, Math.round(lc * 0.85));
+  const timePremium = Math.max(lc - coreValue, 0);
+
+  // How much of the time premium survives to next market open
+  const baseTheta = dte <= 0 ? 0.00   // expiry — only intrinsic remains
+                  : dte === 1 ? 0.35   // expiry eve — heavy decay
+                  : dte === 2 ? 0.70   // 2 DTE — moderate decay
+                  : dte <= 4 ? 0.88   // 3–4 DTE — mild decay
+                  : 0.95;             // 5+ DTE — minimal daily decay
+
+  // Extra penalty for calendar days since last close (Sat/Sun, long weekends)
+  const dayPenalty = daysSinceClose >= 3 ? 0.50
+                   : daysSinceClose === 2 ? 0.65   // typical weekend
+                   : daysSinceClose === 1 ? 0.85   // overnight weekday
+                   : 1.00;                         // same session
+
+  const thetaFactor = baseTheta * dayPenalty;
+
+  // thetaBase = realistic flat-open price for next session
+  const thetaBase = Math.max(
+    Math.round(coreValue + timePremium * thetaFactor),
+    1
+  );
 
   const gaps: number[] = [];
   for (let g = maxGap; g >= -maxGap; g -= gapStep) gaps.push(g);
@@ -363,18 +404,16 @@ export function generateScenarioMatrix(
     const isAdv     = isCE ? (gap < 0) : (gap > 0);
     const avoid     = isAdv && absGap >= avoidLimit;
 
-    // ── Open Estimate ──
-    // Option price moves proportionally with the underlying gap.
-    // Scale factor is relative to maxGap so Nifty and Sensex are proportional.
+    // ── Open Estimate — built on theta-adjusted base, not raw lc ──
+    // Proportional scaling: gap / maxGap gives a 0–1 ratio consistent across
+    // Nifty (±500, 50pt steps) and Sensex (±1500, 100pt steps).
     let openEst: number;
     if (isFav) {
-      // Favorable: option opens higher (CE on gap-up, PE on gap-down)
-      openEst = Math.round(lc * (1 + (absGap / maxGap) * 0.85));
+      openEst = Math.round(thetaBase * (1 + (absGap / maxGap) * 0.85));
     } else if (isNeutral) {
-      openEst = Math.round(lc);
+      openEst = thetaBase; // flat open = theta-adjusted base directly
     } else {
-      // Adverse: option opens lower, floored at 10% of last close
-      openEst = Math.round(lc * Math.max(1 - (absGap / maxGap) * 0.70, 0.10));
+      openEst = Math.round(thetaBase * Math.max(1 - (absGap / maxGap) * 0.70, 0.10));
     }
     openEst = Math.max(openEst, 1);
 
@@ -387,7 +426,7 @@ export function generateScenarioMatrix(
     }
 
     // ── Buy Zone — STRICTLY above openEst ──
-    // Wait for option to confirm strength after open; enter only above open.
+    // Wait 15 min after open; enter only after option confirms strength.
     const entryLow  = Math.max(Math.round(openEst * 1.06), openEst + 1);
     const entryHigh = Math.max(Math.round(openEst * 1.17), entryLow  + 1);
 
@@ -396,19 +435,15 @@ export function generateScenarioMatrix(
     let target2: number;
 
     if (isFav) {
-      // Strong move in our direction; PCB or 28% above entryHigh (higher wins)
       target1 = Math.round(Math.max(pcb, entryHigh * 1.28) * td);
       target2 = Math.round(entryHigh * 1.65 * td);
     } else if (isNeutral) {
-      // Flat open; PCB is the natural first target
       target1 = Math.round(Math.max(pcb, entryHigh * 1.20) * td);
       target2 = Math.round(entryHigh * 1.50 * td);
     } else {
-      // Adverse but not avoided; smaller recovery targets
       target1 = Math.round(entryHigh * 1.20 * td);
       target2 = Math.round(entryHigh * 1.40 * td);
     }
-    // Hard-clamp to maintain strict ordering
     target1 = Math.max(target1, entryHigh + 1);
     target2 = Math.max(target2, target1  + 1);
 
