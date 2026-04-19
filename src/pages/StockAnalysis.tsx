@@ -37,6 +37,7 @@ export default function StockAnalysis() {
   const [error, setError] = useState('');
   const [step, setStep] = useState<'input' | 'result'>('input');
   const [activeTab, setActiveTab] = useState('raw');
+  const [gctTab, setGctTab] = useState('overview');
 
   const sectorPE: Record<string, number> = {
     'Energy/Oil': 18, 'Banking': 20, 'IT': 28,
@@ -285,18 +286,24 @@ export default function StockAnalysis() {
       if (!date) return;
       const d = new Date(date);
       const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      // Yahoo Finance monthly candles: one record per month — just store it
       if (!monthly[key] || new Date(date) > new Date(monthly[key].date)) {
         monthly[key] = {
           date,
-          high: parseFloat(row.high || 0),
-          low: parseFloat(row.low || 0),
-          close: parseFloat(row.close || 0),
+          open:   parseFloat(row.open  || 0),
+          high:   parseFloat(row.high  || 0),
+          low:    parseFloat(row.low   || 0),
+          close:  parseFloat(row.close || 0),
           volume: parseFloat(row.volume || 0),
         };
       }
     });
-    const monthlyData = Object.values(monthly).slice(-12)
-      .filter((r: any) => r.high > 0 && r.volume > 0);
+    // Sort oldest → newest (required for GCT sequential calculations)
+    const monthlyData = Object.entries(monthly)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, v]) => v)
+      .filter((r: any) => r.high > 0 && r.volume > 0)
+      .slice(-14); // use up to 14 months
     if (monthlyData.length < 6) {
       setError('Not enough data! Need at least 6 months.');
       return;
@@ -362,72 +369,237 @@ export default function StockAnalysis() {
     setOptCsvData(optData);
   }
 
-  // ── RUN GCT ──
+  // ── RUN GCT v3.0 ──
   function runGCT() {
-    if (csvData.length < 6) { setError('Need at least 6 months!'); return; }
+    if (csvData.length < 6) { setError('Need at least 6 months of data!'); return; }
     setLoading(true);
     setError('');
     try {
-      const data = csvData;
+      const data = [...csvData].sort((a, b) => a.date.localeCompare(b.date));
+
+      // ── Step 1: Per-month calculations ──
       const totalVol = data.reduce((s, d) => s + d.volume, 0);
-      const tp = data.map(d => (d.high + d.low + d.close) / 3);
+      if (totalVol === 0) throw new Error('Volume data is zero — check data source.');
+      const tp    = data.map(d => (d.high + d.low + d.close) / 3);
+      const range = data.map(d => d.high - d.low);
+      const vmsArr = data.map(d => {
+        const r = d.high - d.low;
+        return r === 0 ? 0.5 : Math.max(0, Math.min(1, (d.close - d.low) / r));
+      });
+
+      // ── Step 2: MGC — Monthly Gravitational Core ──
       const mgc = data.reduce((s, d, i) => s + tp[i] * d.volume, 0) / totalVol;
-      const vwar = data.reduce((s, d) => s + (d.high - d.low) * d.volume, 0) / totalVol;
+
+      // ── Step 3: VWAR — Volume Weighted Average Range ──
+      let vwar = data.reduce((s, d, i) => s + range[i] * d.volume, 0) / totalVol;
+      if (vwar < mgc * 0.01) vwar = mgc * 0.01; // minimum 1% of MGC
+
+      // ── Step 4: MCL — Monthly Commitment Line ──
       const mcl = data.reduce((s, d) => s + d.close * d.volume, 0) / totalVol;
+
+      // ── Step 5: Core levels ──
       const al = mgc + vwar;
       const cl = mgc - vwar;
-      const vms = data.map(d => {
-        const range = d.high - d.low;
-        return range === 0 ? 0.5 : (d.close - d.low) / range;
-      });
-      const avgVms = vms.reduce((s, v) => s + v, 0) / vms.length;
+
+      // ── Step 6: VMS — Volumetric Momentum Skew ──
+      const avgVms = vmsArr.reduce((s, v) => s + v, 0) / vmsArr.length;
+      const vmsLabel = avgVms > 0.6 ? 'Buyers are strong' : avgVms >= 0.4 ? 'Market is balanced' : 'Sellers are dominant';
+
+      // ── Step 7: Crash levels L1–L5 ──
       const crashLevels = [1,2,3,4,5].map(n => ({
-        level: n,
-        price: Math.round(mgc - vwar * n),
-        label: ['Fear starts','Everyone scared','Panic/Blood on streets','Major crash','Black swan'][n-1],
-        allocation: [20,30,30,15,5][n-1],
-        emoji: ['🟡','🟠','🔴','💀','☠️'][n-1]
+        n, price: Math.round(mgc - vwar * n),
+        mood:  ['Fear starts','Everyone scared','Panic — blood on streets','Major crash','Black swan event'][n-1],
+        alloc: [20, 30, 30, 15, 5][n-1],
+        emoji: ['🟡','🟠','🔴','💀','☠️'][n-1],
       }));
-      const currentPrice = data[data.length-1].close;
-      const zone = currentPrice >= al ? 'BUY ZONE' :
-        currentPrice >= mgc ? 'WATCH ZONE' :
-        currentPrice >= cl ? 'DANGER ZONE' : 'CRASH ZONE';
-      const peVal = parseFloat(pe);
-      const epsVal = parseFloat(eps);
-      const bvVal = parseFloat(bookValue);
-      const roceVal = parseFloat(roce);
-      const benchmarkPE = sectorPE[sector] || 25;
+
+      // ── Step 8: Upside levels U1–U5 ──
+      const upsideLevels = [1,2,3,4,5].map(n => ({
+        n, price: Math.round(mgc + vwar * n),
+        signal: ['BUY — Fresh entry, full size','ADD SMALL — momentum confirmed','HOLD only — no fresh buying','HOLD — stay alert, overheated','EXIT 100% — no exceptions'][n-1],
+        action: ['Monthly close above + hold 3+ days to confirm','Hold existing. Small fresh buy allowed.','Hold only. Do not buy more.','Hold. Very alert. Overheated zone.','Exit everything immediately. Target reached.'][n-1],
+        trailSLLabel: ['MGC','U1 / AL','U1 / AL','U2','EXIT'][n-1],
+        trailSLPrice: [Math.round(mgc), Math.round(mgc+vwar), Math.round(mgc+vwar), Math.round(mgc+vwar*2), 0][n-1],
+        emoji: ['🟢','🔵','🟡','🟠','🔴'][n-1],
+      }));
+
+      // ── Current price & zone ──
+      const currentPrice = data[data.length - 1].close;
+      let zone: string, zoneDesc: string, zoneCol: string;
+      if (currentPrice >= al) {
+        zone = 'BUY ZONE'; zoneDesc = 'Safe to buy. Markup phase.'; zoneCol = '#39d98a';
+      } else if (currentPrice >= mgc) {
+        zone = 'WATCH ZONE'; zoneDesc = 'Above soul. Wait for AL breakout.'; zoneCol = '#f0c040';
+      } else if (currentPrice >= cl) {
+        zone = 'DANGER ZONE'; zoneDesc = 'Below soul. Risky. Avoid fresh buying.'; zoneCol = '#ff8c42';
+      } else {
+        zone = 'CRASH ZONE'; zoneDesc = 'Crash territory. Accumulate in parts only.'; zoneCol = '#ff4d6d';
+      }
+
+      // ── FSS Checks ──
+      const peVal    = parseFloat(pe);
+      const epsVal   = parseFloat(eps);
+      const bvVal    = parseFloat(bookValue);
+      const roceVal  = parseFloat(roce);
+      const benchPE  = sectorPE[sector] || 25;
       const fssChecks: any[] = [];
-      if (peVal && epsVal) {
-        const peAtLevel = currentPrice / epsVal;
-        fssChecks.push({ name: 'PE Ratio', pass: peAtLevel < benchmarkPE, value: `${peAtLevel.toFixed(1)} vs ${benchmarkPE}` });
+
+      if (epsVal > 0 && crashLevels[0].price > 0) {
+        const peAtL1 = crashLevels[0].price / epsVal;
+        fssChecks.push({
+          name: 'PE at L1',
+          passCondition: `< ${benchPE} (${sector} benchmark)`,
+          pass: peAtL1 < benchPE,
+          value: peAtL1.toFixed(1),
+          badge: peAtL1 < benchPE * 0.5 ? 'Deep Value' : null,
+        });
+      } else if (epsVal <= 0 && pe) {
+        fssChecks.push({ name: 'PE Ratio', passCondition: 'EPS > 0', pass: false, value: 'Not profitable', badge: null });
       }
-      if (bvVal) {
+
+      if (bvVal > 0) {
         const pb = currentPrice / bvVal;
-        fssChecks.push({ name: 'PB Ratio', pass: pb < 2.5, value: `PB = ${pb.toFixed(2)}` });
+        fssChecks.push({
+          name: 'P/B Ratio',
+          passCondition: '< 2.5',
+          pass: pb < 2.5,
+          value: pb.toFixed(2),
+          badge: pb < 1.0 ? 'Below Book Value' : null,
+        });
+      } else if (bvVal < 0) {
+        fssChecks.push({ name: 'P/B Ratio', passCondition: '< 2.5', pass: false, value: 'Negative book value', badge: null });
       }
+
       if (rev2 && rev3) {
         const r2 = parseFloat(rev2), r3 = parseFloat(rev3);
-        fssChecks.push({ name: 'Revenue Growth', pass: r3 > r2, value: r3 > r2 ? `+${((r3-r2)/r2*100).toFixed(1)}%` : 'Declining' });
+        const g = ((r3 - r2) / r2 * 100).toFixed(1);
+        fssChecks.push({
+          name: 'Revenue Growth (Y2→Y3)',
+          passCondition: 'Y3 > Y2',
+          pass: r3 > r2,
+          value: r3 > r2 ? `+${g}%` : `${g}% (declining)`,
+          badge: null,
+        });
       }
+
       if (profit2 && profit3) {
         const p2 = parseFloat(profit2), p3 = parseFloat(profit3);
-        fssChecks.push({ name: 'Profit Growth', pass: p3 > p2, value: p3 > p2 ? `+${((p3-p2)/p2*100).toFixed(1)}%` : 'Declining' });
+        const g = ((p3 - p2) / p2 * 100).toFixed(1);
+        fssChecks.push({
+          name: 'Profit Growth (Y2→Y3)',
+          passCondition: 'Y3 > Y2',
+          pass: p3 > p2,
+          value: p3 > p2 ? `+${g}%` : `${g}% (declining)`,
+          badge: null,
+        });
       }
-      if (roceVal) fssChecks.push({ name: 'ROCE', pass: roceVal >= 8, value: `${roceVal}%` });
+
+      if (roceVal) {
+        fssChecks.push({
+          name: 'ROCE',
+          passCondition: '≥ 8%',
+          pass: roceVal >= 8,
+          value: `${roceVal}%`,
+          badge: roceVal >= 25 ? 'Excellent Returns' : null,
+        });
+      }
+
       const fssScore = fssChecks.filter(c => c.pass).length;
-      const fssVerdict = ['💀 VALUE TRAP','🔴 RISKY','⚠️ CAREFUL','⚡ DECENT BUY','✅ GOOD BUY','🟢 STRONG BUY'][fssScore];
+      const fssTotal = fssChecks.length;
+      const hasFundamentals = fssTotal > 0;
+      const fssVerdict = !hasFundamentals ? null :
+        fssScore === 5 ? '🟢 STRONG BUY — fundamentally excellent' :
+        fssScore === 4 ? '✅ GOOD BUY — strong, minor concern' :
+        fssScore === 3 ? '⚡ DECENT BUY — acceptable risk' :
+        fssScore === 2 ? '⚠️ CAREFUL — mixed signals, small buys only' :
+        fssScore === 1 ? '🔴 RISKY — avoid unless high conviction' :
+                         '💀 VALUE TRAP — price low but company is sick';
+
+      // ── Personalised Buy Plan ──
+      let buyPlanTitle = '';
+      let buyPlanLines: string[] = [];
+      const l5price = crashLevels[4].price;
+      const p2n = parseFloat(profit2), p3n = parseFloat(profit3);
+      const profGrowthStr = (profit2 && profit3 && p3n > p2n)
+        ? ` Profits up ${((p3n-p2n)/p2n*100).toFixed(0)}%.` : '';
+
+      if (zone === 'BUY ZONE') {
+        buyPlanTitle = 'BREAKOUT CONFIRMED — BUY NOW';
+        buyPlanLines = [
+          `Price is above AL ₹${Math.round(al).toLocaleString()} — markup phase confirmed.`,
+          `Entry: Buy now at market. Keep SL = MGC ₹${Math.round(mgc).toLocaleString()}.`,
+          `First target: U2 ₹${upsideLevels[1].price.toLocaleString()}.`,
+          `Final target: U5 ₹${upsideLevels[4].price.toLocaleString()} — exit 100% there.`,
+          `Trail SL up as price rises: at U2 move SL to U1, at U3 keep SL at U1, at U4 move SL to U2.`,
+        ];
+      } else if (zone === 'WATCH ZONE') {
+        buyPlanTitle = 'WAIT FOR BREAKOUT ABOVE AL';
+        buyPlanLines = [
+          `Price is between MGC and AL. Above soul but below ascension line.`,
+          `Wait for monthly close above AL ₹${Math.round(al).toLocaleString()}.`,
+          `Then confirm price holds above AL for 3+ consecutive trading days.`,
+          `Only then buy. Target: U2 ₹${upsideLevels[1].price.toLocaleString()} then U5 ₹${upsideLevels[4].price.toLocaleString()}.`,
+          `If price drops below MGC ₹${Math.round(mgc).toLocaleString()} instead — move to crash plan below.`,
+        ];
+      } else if (zone === 'DANGER ZONE') {
+        buyPlanTitle = 'DANGER — WAIT OR BUY SMALL AT CL';
+        buyPlanLines = [
+          `Price is below soul price MGC ₹${Math.round(mgc).toLocaleString()} — institutions in pain.`,
+          `Do not average up. Wait to see if price holds CL ₹${Math.round(cl).toLocaleString()} as support.`,
+          `Small buy only if price bounces strongly from CL with volume surge.`,
+          `First recovery target: MGC ₹${Math.round(mgc).toLocaleString()}, then AL ₹${Math.round(al).toLocaleString()}.`,
+          `Overall SL: monthly close below L5 ₹${l5price.toLocaleString()} — exit everything.`,
+        ];
+      } else {
+        // CRASH ZONE
+        const activeLevels = crashLevels.filter(l => currentPrice <= l.price + vwar * 0.5);
+        buyPlanTitle = 'CRASH ZONE — ACCUMULATE IN PARTS';
+        buyPlanLines = [
+          `Price is in crash territory. Do NOT invest all money at once.`,
+          ...activeLevels.slice(0, 4).map(l =>
+            `At L${l.n} ₹${l.price.toLocaleString()}: invest ${l.alloc}% of budget. Mood: ${l.mood}.`
+          ),
+          `First recovery target: MGC ₹${Math.round(mgc).toLocaleString()}.`,
+          `Bull run only above AL ₹${Math.round(al).toLocaleString()}.`,
+          `Overall SL: monthly close below L5 ₹${l5price.toLocaleString()} — exit everything immediately.`,
+        ];
+      }
+
+      // ── One-Line Verdict ──
+      const fssStr = !hasFundamentals ? '' :
+        fssScore >= 4 ? ' — business is fundamentally strong' :
+        fssScore >= 3 ? ' — fundamentals are decent' :
+        fssScore >= 2 ? ' — mixed fundamentals' :
+        ' — weak fundamentals, trade carefully';
+      let verdict = '';
+      if (zone === 'BUY ZONE') {
+        verdict = `${stockName} is in markup phase at ₹${Math.round(currentPrice).toLocaleString()}${fssStr}${profGrowthStr} Breakout confirmed above AL ₹${Math.round(al).toLocaleString()}. Trail SL to MGC ₹${Math.round(mgc).toLocaleString()}. Final exit at U5 ₹${upsideLevels[4].price.toLocaleString()}.`;
+      } else if (zone === 'WATCH ZONE') {
+        verdict = `${stockName} is above soul price at ₹${Math.round(currentPrice).toLocaleString()}${fssStr}. Wait for confirmed breakout above AL ₹${Math.round(al).toLocaleString()}. Real bull run only above that level.`;
+      } else if (zone === 'DANGER ZONE') {
+        verdict = `${stockName} is below soul price at ₹${Math.round(currentPrice).toLocaleString()}${fssStr}. Risky zone — wait for MGC ₹${Math.round(mgc).toLocaleString()} to hold as support before buying.`;
+      } else {
+        verdict = `${stockName} is in panic zone at ₹${Math.round(currentPrice).toLocaleString()}${fssStr}${profGrowthStr} Accumulate in parts between ₹${Math.round(currentPrice).toLocaleString()} and ₹${l5price.toLocaleString()}. Real bull run only above ₹${Math.round(al).toLocaleString()}.`;
+      }
+
       const stockGctResult = {
-        type: 'gct', stockName, currentPrice: Math.round(currentPrice),
+        type: 'gct', stockName, exchange,
+        currentPrice: Math.round(currentPrice),
         mgc: Math.round(mgc), vwar: Math.round(vwar),
         mcl: Math.round(mcl), al: Math.round(al), cl: Math.round(cl),
-        avgVms: avgVms.toFixed(2), zone, crashLevels,
-        fssChecks, fssScore, fssVerdict,
+        avgVms: parseFloat(avgVms.toFixed(2)), vmsLabel,
+        zone, zoneDesc, zoneCol,
+        crashLevels, upsideLevels,
+        fssChecks, fssScore, fssTotal, fssVerdict, hasFundamentals,
+        buyPlanTitle, buyPlanLines,
+        verdict,
         dataMonths: data.length,
-        firstDate: data[0].date, lastDate: data[data.length-1].date
+        firstDate: data[0].date, lastDate: data[data.length - 1].date,
       };
+
       if (user) saveAnalysis(user.id, stockName.toUpperCase(), 0, 'STOCK_GCT', new Date().toISOString().split('T')[0], stockGctResult).catch(() => {});
       setResult(stockGctResult);
+      setGctTab('overview');
       setStep('result');
     } catch (err: any) {
       setError(err.message || 'Analysis failed!');
@@ -705,8 +877,10 @@ export default function StockAnalysis() {
             {/* Fundamental Data */}
             {analysisType === 'gct' && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
-                <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-1">Step 4 — Fundamental Data (Optional)</h2>
-                <div className="text-xs font-mono text-[#6b6b85] mb-4">Enter from screener.in or moneycontrol.com</div>
+                <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-1">Step 4 — Fundamental Data (Optional but Powerful)</h2>
+                <div className="bg-[#f0c040]/8 border border-[#f0c040]/25 rounded-xl p-3 mb-4 text-xs font-mono text-[#f0c040]">
+                  💡 Analysis runs without fundamentals — but adding them unlocks the FSS score and gives you a full buy/avoid verdict. Get data from screener.in for best results.
+                </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {[
                     { label: 'PE Ratio', val: pe, set: setPe, placeholder: 'e.g. 22.5' },
@@ -747,110 +921,342 @@ export default function StockAnalysis() {
           </div>
         )}
 
-        {/* GCT RESULTS */}
-        {canAccess && step === 'result' && result?.type === 'gct' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-black"><span className="text-[#f0c040]">{result.stockName}</span> — GCT</h2>
-              <button onClick={() => { setStep('input'); setResult(null); setCsvData([]); }}
-                className="px-4 py-2 text-xs font-bold border border-[#1e1e2e] rounded-lg hover:border-[#f0c040] transition-all">← New Analysis</button>
-            </div>
-            <div className="rounded-2xl p-6 text-center"
-              style={{ background: `linear-gradient(135deg, #0a0a0f, ${zoneColor(result.zone)}15)`, border: `1px solid ${zoneColor(result.zone)}40` }}>
-              <div className="text-xs font-mono tracking-widest mb-2" style={{ color: zoneColor(result.zone) }}>⚛ GRAVITATIONAL COST THEORY</div>
-              <div className="text-3xl font-black mb-1">{result.stockName}</div>
-              <div className="text-2xl font-black mb-3" style={{ color: zoneColor(result.zone) }}>₹{result.currentPrice.toLocaleString()}</div>
-              <div className="inline-block px-6 py-2 rounded-full font-black text-sm"
-                style={{ background: `${zoneColor(result.zone)}20`, color: zoneColor(result.zone), border: `1px solid ${zoneColor(result.zone)}40` }}>
-                {result.zone}
+        {/* ── GCT v3.0 RESULTS ── */}
+        {canAccess && step === 'result' && result?.type === 'gct' && (() => {
+          const zc = result.zoneCol || '#f0c040';
+          const tabs = [
+            { id: 'overview', label: '📊 Overview' },
+            { id: 'crash',    label: '💥 Crash Buy' },
+            { id: 'upside',   label: '🚀 Upside' },
+            { id: 'fss',      label: '🔬 FSS' },
+            { id: 'plan',     label: '🎯 My Plan' },
+          ];
+          return (
+            <div className="space-y-4">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-black">
+                    <span style={{ color: zc }}>{result.stockName}</span>
+                    <span className="text-[#6b6b85] text-sm font-mono ml-2">({result.exchange})</span>
+                  </h2>
+                  <div className="text-xs font-mono text-[#6b6b85]">{result.dataMonths} months · {result.firstDate} → {result.lastDate}</div>
+                </div>
+                <button onClick={() => { setStep('input'); setResult(null); setCsvData([]); }}
+                  className="px-4 py-2 text-xs font-bold border border-[#1e1e2e] rounded-lg hover:border-[#f0c040] transition-all">← New</button>
               </div>
-              <div className="text-xs font-mono text-[#6b6b85] mt-2">{result.dataMonths} months · {result.firstDate} to {result.lastDate}</div>
-            </div>
-            <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
-              <div className="text-sm font-black mb-4 text-[#f0c040]">📊 4 Key Technical Levels</div>
-              <div className="space-y-3">
-                {[
-                  { label: '🟢 AL — Ascension Line', price: result.al, desc: 'BUY zone starts here', color: '#39d98a' },
-                  { label: '⚪ MGC — Soul of the Stock', price: result.mgc, desc: 'Gravitational centre', color: '#4d9fff' },
-                  { label: '🔵 MCL — Commitment Line', price: result.mcl, desc: 'Where institutions averaged', color: '#a78bfa' },
-                  { label: '🔴 CL — Collapse Line', price: result.cl, desc: 'Danger zone starts here', color: '#ff4d6d' },
-                ].map((level, i) => {
-                  const prices = [result.al * 999, result.al, result.mgc, result.mcl];
-                  const isCurrent = result.currentPrice >= (i < 3 ? level.price : 0) && result.currentPrice < prices[i];
-                  return (
-                    <div key={i} className="flex items-center justify-between p-3 rounded-xl"
-                      style={{ background: `${level.color}10`, border: `1px solid ${level.color}30` }}>
-                      <div>
-                        <div className="text-xs font-bold" style={{ color: level.color }}>{level.label}</div>
-                        <div className="text-xs font-mono text-[#6b6b85]">{level.desc}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-lg font-black" style={{ color: level.color }}>₹{level.price.toLocaleString()}</div>
-                        {isCurrent && <div className="text-[10px] font-bold text-[#f0c040]">← YOU ARE HERE</div>}
-                      </div>
-                    </div>
-                  );
-                })}
+
+              {/* Zone card */}
+              <div className="rounded-2xl p-5 text-center"
+                style={{ background: `linear-gradient(135deg,#0a0a0f,${zc}18)`, border: `1px solid ${zc}50` }}>
+                <div className="text-xs font-mono tracking-widest mb-1" style={{ color: zc }}>⚛ GCT v3.0 — GRAVITATIONAL COST THEORY</div>
+                <div className="text-4xl font-black mb-1">₹{result.currentPrice.toLocaleString()}</div>
+                <div className="inline-block px-5 py-1.5 rounded-full font-black text-sm mb-2"
+                  style={{ background: `${zc}25`, color: zc, border: `1px solid ${zc}50` }}>{result.zone}</div>
+                <div className="text-sm font-mono" style={{ color: zc }}>{result.zoneDesc}</div>
+                <div className="flex justify-center gap-6 mt-3 text-xs font-mono text-[#6b6b85]">
+                  <span>MGC ₹{result.mgc.toLocaleString()}</span>
+                  <span>VWAR ₹{result.vwar.toLocaleString()}</span>
+                  <span>VMS {result.avgVms} — {result.vmsLabel}</span>
+                </div>
               </div>
-            </div>
-            <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
-              <div className="text-sm font-black mb-4 text-[#f0c040]">💥 Crash Buying Map</div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs font-mono">
-                  <thead><tr className="border-b border-[#1e1e2e]">
-                    {['Level','Price','Market Mood','Allocation'].map(h => (
-                      <th key={h} className="text-left px-3 py-2 text-[#6b6b85] uppercase tracking-widest font-normal">{h}</th>
-                    ))}
-                  </tr></thead>
-                  <tbody>
-                    {result.crashLevels.map((cl: any, i: number) => {
-                      const isCurrent = result.currentPrice <= cl.price && (i === 0 || result.currentPrice > result.crashLevels[i-1].price);
+
+              {/* Tab bar */}
+              <div className="flex gap-1 bg-[#111118] rounded-xl p-1 overflow-x-auto">
+                {tabs.map(t => (
+                  <button key={t.id} onClick={() => setGctTab(t.id)}
+                    className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${gctTab === t.id ? 'bg-[#16161f] text-[#e8e8f0] border border-[#1e1e2e]' : 'text-[#6b6b85]'}`}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* ── OVERVIEW TAB ── */}
+              {gctTab === 'overview' && (
+                <div className="space-y-4">
+                  {/* 4 core levels */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                    <div className="text-sm font-black mb-4 text-[#f0c040]">📐 4 Core Technical Levels</div>
+                    {[
+                      { label: 'AL — Ascension Line', price: result.al,  desc: 'BUY zone starts here. Price above = markup phase.', color: '#39d98a' },
+                      { label: 'MGC — Soul of Stock',  price: result.mgc, desc: 'Gravitational centre. Institutions anchored here.', color: '#4d9fff' },
+                      { label: 'MCL — Commitment Line',price: result.mcl, desc: 'Where long-term committed buyers averaged cost.', color: '#a78bfa' },
+                      { label: 'CL — Collapse Line',   price: result.cl,  desc: 'Danger zone starts here. Below = institutions in pain.', color: '#ff4d6d' },
+                    ].map((lv, i) => {
+                      const above = [Infinity, result.al, result.mgc, result.mcl];
+                      const here  = result.currentPrice < above[i] && result.currentPrice >= lv.price;
                       return (
-                        <tr key={i} className={`border-b border-[#1e1e2e]/50 ${isCurrent ? 'bg-[#f0c040]/10' : ''}`}>
-                          <td className="px-3 py-3 font-bold">{cl.emoji} L{cl.level}</td>
-                          <td className="px-3 py-3 font-black text-[#f0c040]">₹{cl.price.toLocaleString()} {isCurrent && <span className="text-[10px]">← HERE</span>}</td>
-                          <td className="px-3 py-3 text-[#6b6b85]">{cl.label}</td>
-                          <td className="px-3 py-3 text-[#39d98a] font-bold">{cl.allocation}%</td>
-                        </tr>
+                        <div key={i} className="flex items-center justify-between p-3 rounded-xl mb-2"
+                          style={{ background: `${lv.color}0d`, border: `1px solid ${lv.color}30` }}>
+                          <div>
+                            <div className="text-xs font-bold" style={{ color: lv.color }}>{lv.label}</div>
+                            <div className="text-[11px] font-mono text-[#6b6b85]">{lv.desc}</div>
+                          </div>
+                          <div className="text-right shrink-0 ml-4">
+                            <div className="text-lg font-black" style={{ color: lv.color }}>₹{lv.price.toLocaleString()}</div>
+                            {here && <div className="text-[10px] font-black text-[#f0c040]">← YOU ARE HERE</div>}
+                          </div>
+                        </div>
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            {result.fssChecks?.length > 0 && (
-              <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
-                <div className="text-sm font-black mb-4 text-[#f0c040]">🔬 Fundamental Safety Score</div>
-                <div className="space-y-2 mb-4">
-                  {result.fssChecks.map((check: any, i: number) => (
-                    <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-[#16161f]">
-                      <span className="text-xs font-mono">{check.name}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono text-[#6b6b85]">{check.value}</span>
-                        <span>{check.pass ? '✅' : '❌'}</span>
+                  </div>
+                  {/* VMS momentum */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                    <div className="text-sm font-black mb-3 text-[#f0c040]">📈 Volumetric Momentum Skew</div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-3xl font-black" style={{ color: result.avgVms > 0.6 ? '#39d98a' : result.avgVms >= 0.4 ? '#f0c040' : '#ff4d6d' }}>
+                        {result.avgVms}
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold" style={{ color: result.avgVms > 0.6 ? '#39d98a' : result.avgVms >= 0.4 ? '#f0c040' : '#ff4d6d' }}>
+                          {result.vmsLabel}
+                        </div>
+                        <div className="text-xs font-mono text-[#6b6b85]">0 = sellers dominated · 1 = buyers dominated</div>
                       </div>
                     </div>
-                  ))}
+                    <div className="mt-3 h-2 rounded-full bg-[#1e1e2e] overflow-hidden">
+                      <div className="h-2 rounded-full transition-all"
+                        style={{ width: `${result.avgVms * 100}%`, background: result.avgVms > 0.6 ? '#39d98a' : result.avgVms >= 0.4 ? '#f0c040' : '#ff4d6d' }} />
+                    </div>
+                  </div>
                 </div>
-                <div className="text-center p-4 rounded-xl bg-[#16161f]">
-                  <div className="text-xs font-mono text-[#6b6b85] mb-1">FSS SCORE</div>
-                  <div className="text-3xl font-black text-[#f0c040] mb-1">{result.fssScore}/5</div>
-                  <div className="text-sm font-bold">{result.fssVerdict}</div>
+              )}
+
+              {/* ── CRASH BUY TAB ── */}
+              {gctTab === 'crash' && (
+                <div className="space-y-4">
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                    <div className="text-sm font-black mb-1 text-[#ff4d6d]">💥 Crash Buying Map — L1 to L5</div>
+                    <div className="text-xs font-mono text-[#6b6b85] mb-4">Never invest all money at once. Spread across levels.</div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs font-mono">
+                        <thead>
+                          <tr className="border-b border-[#1e1e2e]">
+                            {['Level','Price','Market Mood','Invest'].map(h => (
+                              <th key={h} className="text-left px-3 py-2 text-[#6b6b85] uppercase tracking-widest font-normal">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {result.crashLevels.map((lv: any, i: number) => {
+                            const here = result.currentPrice <= lv.price + result.vwar * 0.5 &&
+                              (i === 0 || result.currentPrice > result.crashLevels[i-1].price - result.vwar * 0.5);
+                            return (
+                              <tr key={i} className={`border-b border-[#1e1e2e]/50 ${here ? 'bg-[#f0c040]/10' : ''}`}>
+                                <td className="px-3 py-3 font-bold">{lv.emoji} L{lv.n}</td>
+                                <td className="px-3 py-3 font-black text-[#f0c040]">
+                                  ₹{lv.price.toLocaleString()}
+                                  {here && <span className="ml-1 text-[9px] bg-[#f0c040] text-black px-1 rounded">HERE</span>}
+                                </td>
+                                <td className="px-3 py-3 text-[#6b6b85]">{lv.mood}</td>
+                                <td className="px-3 py-3 font-bold text-[#39d98a]">{lv.alloc}%</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="mt-4 p-3 rounded-xl bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 text-xs font-mono text-[#ff4d6d]">
+                      ⛔ Overall Stop Loss: If monthly CLOSE goes below L5 ₹{result.crashLevels[4].price.toLocaleString()} → exit everything immediately. No exceptions.
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
-            <div className="bg-gradient-to-r from-[#f0c040]/10 to-transparent border border-[#f0c040]/30 rounded-2xl p-6">
-              <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">⚛ God Particle Verdict</div>
-              <div className="text-sm font-bold leading-relaxed">
-                {result.zone === 'BUY ZONE' ? `${result.stockName}: Above AL ₹${result.al.toLocaleString()}. Safe to accumulate.` :
-                 result.zone === 'CRASH ZONE' ? `${result.stockName}: Crash zone — accumulate between ₹${result.currentPrice.toLocaleString()} and ₹${result.crashLevels[4].price.toLocaleString()}. Target: MGC ₹${result.mgc.toLocaleString()}.` :
-                 result.zone === 'DANGER ZONE' ? `${result.stockName}: Below soul price. Wait for MGC ₹${result.mgc.toLocaleString()} support.` :
-                 `${result.stockName}: Watch for AL breakout above ₹${result.al.toLocaleString()}.`}
-              </div>
-              <div className="mt-3 text-xs font-mono text-[#6b6b85]">Not Financial Advice · God Particle ⚛</div>
+              )}
+
+              {/* ── UPSIDE TAB ── */}
+              {gctTab === 'upside' && (
+                <div className="space-y-4">
+                  {/* Upside map */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                    <div className="text-sm font-black mb-1 text-[#39d98a]">🚀 Upside Breakout Map — U1 to U5</div>
+                    <div className="text-xs font-mono text-[#6b6b85] mb-4">
+                      Buy signal needs TWO confirmations: monthly close above level AND price holds 3+ days.
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs font-mono">
+                        <thead>
+                          <tr className="border-b border-[#1e1e2e]">
+                            {['Level','Price','Signal','Trail SL'].map(h => (
+                              <th key={h} className="text-left px-3 py-2 text-[#6b6b85] uppercase tracking-widest font-normal">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {result.upsideLevels.map((lv: any) => {
+                            const here = result.currentPrice >= lv.price - result.vwar * 0.5 &&
+                              result.currentPrice < lv.price + result.vwar * 0.5;
+                            const color = ['#39d98a','#4d9fff','#f0c040','#ff8c42','#ff4d6d'][lv.n - 1];
+                            return (
+                              <tr key={lv.n} className={`border-b border-[#1e1e2e]/50 ${here ? 'bg-[#39d98a]/10' : ''}`}>
+                                <td className="px-3 py-3 font-bold">{lv.emoji} U{lv.n}</td>
+                                <td className="px-3 py-3 font-black" style={{ color }}>
+                                  ₹{lv.price.toLocaleString()}
+                                  {here && <span className="ml-1 text-[9px] bg-[#39d98a] text-black px-1 rounded">HERE</span>}
+                                </td>
+                                <td className="px-3 py-3" style={{ color }}>{lv.signal}</td>
+                                <td className="px-3 py-3 text-[#6b6b85]">
+                                  {lv.n === 5 ? '🚨 EXIT ALL' : `₹${lv.trailSLPrice.toLocaleString()} (${lv.trailSLLabel})`}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Hold & Exit rules */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="bg-[#39d98a]/10 border border-[#39d98a]/30 rounded-xl p-4">
+                      <div className="text-xs font-black text-[#39d98a] mb-2">✅ HOLD WHEN</div>
+                      <ul className="space-y-1 text-xs font-mono text-[#e8e8f0]">
+                        <li>· Price between AL and U5</li>
+                        <li>· Monthly close above entry level</li>
+                        <li>· Pullback to AL after breakout</li>
+                        <li>· Trend still intact on monthly chart</li>
+                      </ul>
+                    </div>
+                    <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl p-4">
+                      <div className="text-xs font-black text-[#ff4d6d] mb-2">🛑 EXIT — STOP LOSS</div>
+                      <ul className="space-y-1 text-xs font-mono text-[#e8e8f0]">
+                        <li>· 2 consecutive monthly closes below MGC</li>
+                        <li>· Monthly close below AL after breakout</li>
+                        <li>· Monthly close below L5 (crash SL)</li>
+                        <li>· Trailing SL hit (see table above)</li>
+                      </ul>
+                    </div>
+                    <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl p-4">
+                      <div className="text-xs font-black text-[#f0c040] mb-2">🎯 EXIT — TARGET</div>
+                      <ul className="space-y-1 text-xs font-mono text-[#e8e8f0]">
+                        <li>· Price reaches U5 → exit 100%</li>
+                        <li>· ₹{result.upsideLevels[4].price.toLocaleString()} — no exceptions</li>
+                        <li>· Blow-off top = sell everything</li>
+                        <li>· Do not be greedy at U5</li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  {/* Trailing SL ladder */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                    <div className="text-sm font-black mb-1 text-[#f0c040]">🪜 Trailing Stop Loss Ladder</div>
+                    <div className="text-xs font-mono text-[#6b6b85] mb-4">As price rises, move SL up to lock in profit. SL always stays ~2 VWAR bands below current level.</div>
+                    <div className="space-y-2">
+                      {[
+                        { when: `Price reaches U1 — ₹${result.upsideLevels[0].price.toLocaleString()}`, moveSL: `MGC — ₹${result.mgc.toLocaleString()}` },
+                        { when: `Price reaches U2 — ₹${result.upsideLevels[1].price.toLocaleString()}`, moveSL: `U1 / AL — ₹${result.upsideLevels[0].price.toLocaleString()}` },
+                        { when: `Price reaches U3 — ₹${result.upsideLevels[2].price.toLocaleString()}`, moveSL: `U1 / AL — ₹${result.upsideLevels[0].price.toLocaleString()} (keep wide)` },
+                        { when: `Price reaches U4 — ₹${result.upsideLevels[3].price.toLocaleString()}`, moveSL: `U2 — ₹${result.upsideLevels[1].price.toLocaleString()}` },
+                        { when: `Price reaches U5 — ₹${result.upsideLevels[4].price.toLocaleString()}`, moveSL: '🚨 EXIT 100% immediately' },
+                      ].map((row, i) => (
+                        <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-[#16161f] text-xs font-mono">
+                          <span className="text-[#6b6b85]">{row.when}</span>
+                          <span className="font-bold text-[#f0c040]">→ Move SL to {row.moveSL}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── FSS TAB ── */}
+              {gctTab === 'fss' && (
+                <div className="space-y-4">
+                  {!result.hasFundamentals ? (
+                    <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-2xl p-6 text-center">
+                      <div className="text-3xl mb-3">🔬</div>
+                      <div className="text-sm font-black text-[#f0c040] mb-2">No Fundamental Data Added</div>
+                      <div className="text-xs font-mono text-[#6b6b85] mb-4 leading-relaxed">
+                        Go back and add PE, EPS, Book Value, ROCE, Revenue and Profit data<br/>
+                        from screener.in to get a Fundamental Safety Score.<br/>
+                        The GCT technical analysis above is still fully valid without it.
+                      </div>
+                      <button onClick={() => { setStep('input'); setResult(null); }}
+                        className="px-5 py-2 bg-[#f0c040] text-black font-black text-xs rounded-lg">
+                        ← Add Fundamentals
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                      <div className="text-sm font-black mb-4 text-[#f0c040]">🔬 Fundamental Safety Score (FSS)</div>
+                      <div className="space-y-2 mb-5">
+                        {result.fssChecks.map((ck: any, i: number) => (
+                          <div key={i} className={`flex items-center justify-between p-3 rounded-xl border ${ck.pass ? 'bg-[#39d98a]/08 border-[#39d98a]/25' : 'bg-[#ff4d6d]/08 border-[#ff4d6d]/25'}`}>
+                            <div>
+                              <div className="text-xs font-bold text-[#e8e8f0]">{ck.name}</div>
+                              <div className="text-[11px] font-mono text-[#6b6b85]">Pass if {ck.passCondition}</div>
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0 ml-4">
+                              {ck.badge && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#f0c040]/20 text-[#f0c040]">{ck.badge}</span>
+                              )}
+                              <span className="text-sm font-black" style={{ color: ck.pass ? '#39d98a' : '#ff4d6d' }}>
+                                {ck.value}
+                              </span>
+                              <span className="text-base">{ck.pass ? '✅' : '❌'}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="text-center p-5 rounded-xl bg-[#16161f] border border-[#1e1e2e]">
+                        <div className="text-xs font-mono text-[#6b6b85] mb-1 uppercase tracking-widest">FSS Score</div>
+                        <div className="text-4xl font-black text-[#f0c040] mb-2">{result.fssScore} / {result.fssTotal}</div>
+                        <div className="text-sm font-bold">{result.fssVerdict}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── MY PLAN TAB ── */}
+              {gctTab === 'plan' && (
+                <div className="space-y-4">
+                  {/* Personalised buy plan */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Personalised Buy Plan</div>
+                    <div className="text-base font-black mb-4" style={{ color: zc }}>{result.buyPlanTitle}</div>
+                    <div className="space-y-2">
+                      {result.buyPlanLines.map((line: string, i: number) => (
+                        <div key={i} className="flex gap-3 text-xs font-mono text-[#e8e8f0] p-3 rounded-lg bg-[#16161f]">
+                          <span className="text-[#6b6b85] shrink-0">{i + 1}.</span>
+                          <span>{line}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Key levels quick reference */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">Key Levels Quick Reference</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { label: 'U5 — Final Exit',    price: result.upsideLevels[4].price, color: '#ff4d6d' },
+                        { label: 'U2 — First Target',  price: result.upsideLevels[1].price, color: '#39d98a' },
+                        { label: 'AL — Buy Zone',       price: result.al,                    color: '#39d98a' },
+                        { label: 'MGC — Soul',          price: result.mgc,                   color: '#4d9fff' },
+                        { label: 'MCL — Commitment',    price: result.mcl,                   color: '#a78bfa' },
+                        { label: 'CL — Danger',         price: result.cl,                    color: '#ff8c42' },
+                        { label: 'L3 — Panic Buy',      price: result.crashLevels[2].price,  color: '#ff4d6d' },
+                        { label: 'L5 — Hard SL',        price: result.crashLevels[4].price,  color: '#6b6b85' },
+                      ].map((lv, i) => (
+                        <div key={i} className="flex justify-between items-center p-2.5 rounded-lg bg-[#16161f] text-xs font-mono">
+                          <span style={{ color: lv.color }}>{lv.label}</span>
+                          <span className="font-black text-[#e8e8f0]">₹{lv.price.toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* One-line verdict */}
+                  <div className="rounded-2xl p-6" style={{ background: `linear-gradient(135deg,#0a0a0f,${zc}15)`, border: `1px solid ${zc}40` }}>
+                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">⚛ One-Line Verdict</div>
+                    <div className="text-sm font-bold leading-relaxed" style={{ color: '#e8e8f0' }}>{result.verdict}</div>
+                    <div className="mt-3 text-[10px] font-mono text-[#6b6b85]">Not Financial Advice · GCT v3.0 · God Particle ⚛</div>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* OPTIONS RESULTS */}
         {canAccess && step === 'result' && result?.type === 'options' && (
