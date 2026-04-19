@@ -56,7 +56,7 @@ export default function Analysis() {
     setOptType(replay.option_type || 'CE');
     setResult(replay.result);
     setScenarios(generateScenarioMatrix(replay.result, replay.index_name || 'NIFTY50'));
-    setActiveTab('gp');
+    setActiveTab('verdict');
   }, []);
 
   // Load expiries when index changes
@@ -160,7 +160,7 @@ export default function Analysis() {
 
       setResult(computed);
       setScenarios(matrix);
-      setActiveTab('raw');
+      setActiveTab('verdict');
     } catch (err: any) {
       setError(err.message || 'Analysis failed!');
     } finally {
@@ -169,6 +169,7 @@ export default function Analysis() {
   }
 
   const TABS = [
+    { id: 'verdict', label: '⚡ Verdict' },
     { id: 'raw', label: '📊 Raw Data' },
     { id: 'decomp', label: '🔀 Decomp' },
     { id: 'gp', label: '⚛ God Particle' },
@@ -353,6 +354,106 @@ export default function Analysis() {
                 </button>
               ))}
             </div>
+
+            {/* ── VERDICT TAB ── */}
+            {activeTab === 'verdict' && (() => {
+              const conviction = result.conviction ?? 50;
+              const bias       = result.bias ?? 'NEUTRAL';
+              const rec        = result.recommendation ?? 'WAIT';
+              const signals    = result.signals ?? [];
+              const verdictText = result.verdictText ?? '';
+
+              const recColor = rec === 'BUY'  ? '#39d98a'
+                             : rec === 'WAIT' ? '#f0c040'
+                             : '#ff4d6d';
+              const biasColor = conviction >= 58 ? '#39d98a'
+                              : conviction >= 42 ? '#f0c040'
+                              : '#ff4d6d';
+              const barColor  = biasColor;
+
+              return (
+                <div className="space-y-4">
+                  {/* Conviction header */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                      <div>
+                        <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Conviction Score</div>
+                        <div className="text-5xl font-black" style={{ color: barColor }}>{conviction}<span className="text-xl text-[#6b6b85]">/100</span></div>
+                      </div>
+                      <div className="flex flex-col gap-2 items-end">
+                        <div className="px-4 py-1.5 rounded-full text-sm font-black" style={{ background: `${biasColor}20`, color: biasColor, border: `1px solid ${biasColor}40` }}>{bias}</div>
+                        <div className="px-4 py-1.5 rounded-full text-sm font-black" style={{ background: `${recColor}20`, color: recColor, border: `1px solid ${recColor}40` }}>
+                          {rec === 'BUY' ? '📗 BUY' : rec === 'WAIT' ? '⏳ WAIT' : '🚫 AVOID'}
+                        </div>
+                      </div>
+                    </div>
+                    {/* Conviction bar */}
+                    <div className="w-full h-3 bg-[#16161f] rounded-full overflow-hidden mb-1">
+                      <div className="h-full rounded-full transition-all" style={{ width: `${conviction}%`, background: `linear-gradient(90deg, #ff4d6d, #f0c040, #39d98a)` }} />
+                    </div>
+                    <div className="flex justify-between text-[10px] font-mono text-[#6b6b85]">
+                      <span>0 — AVOID</span><span>42 — WAIT</span><span>58 — BUY</span><span>100</span>
+                    </div>
+                  </div>
+
+                  {/* 5-Signal breakdown */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-4">5-Signal Breakdown</div>
+                    <div className="space-y-3">
+                      {signals.map((sig: any, i: number) => {
+                        const pct  = Math.max(0, Math.min(100, ((sig.score + sig.max) / (sig.max * 2)) * 100));
+                        const sc   = sig.score > 0 ? '#39d98a' : sig.score < 0 ? '#ff4d6d' : '#f0c040';
+                        return (
+                          <div key={i}>
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-xs font-bold text-[#e8e8f0]">{sig.name}</span>
+                              <span className="text-xs font-black font-mono" style={{ color: sc }}>
+                                {sig.score > 0 ? '+' : ''}{sig.score} / {sig.max}
+                              </span>
+                            </div>
+                            <div className="w-full h-1.5 bg-[#16161f] rounded-full overflow-hidden mb-1">
+                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: sc }} />
+                            </div>
+                            <div className="text-[10px] font-mono text-[#6b6b85]">{sig.label}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Final verdict text */}
+                  <div className="bg-gradient-to-r from-[#f0c040]/10 to-transparent border border-[#f0c040]/30 rounded-2xl p-5">
+                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">⚡ Final Verdict</div>
+                    <div className="space-y-2">
+                      {verdictText.split('. ').filter(Boolean).map((line: string, i: number) => (
+                        <div key={i} className="text-xs font-mono text-[#e8e8f0] leading-relaxed border-l-2 border-[#f0c040]/40 pl-3">{line}{line.endsWith('.') ? '' : '.'}</div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Key levels quick reference */}
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { label: '⚛ God Particle', val: `₹${result.pcb?.toFixed(1)}`, color: '#f0c040' },
+                      { label: '📊 VWAP', val: `₹${result.vwap?.toFixed(1)}`, color: '#4d9fff' },
+                      { label: '🔵 OI-WAP', val: `₹${result.oiwap?.toFixed(1)}`, color: '#a78bfa' },
+                    ].map((kl, i) => (
+                      <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-3 text-center">
+                        <div className="text-[10px] font-mono text-[#6b6b85] mb-1">{kl.label}</div>
+                        <div className="text-lg font-black" style={{ color: kl.color }}>{kl.val}</div>
+                        <div className="text-[10px] font-mono mt-1" style={{ color: kl.color }}>
+                          {result.lc > parseFloat(kl.val.replace('₹','')) ? '← lc ABOVE' : '← lc BELOW'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="text-center text-[10px] font-mono text-[#6b6b85]">
+                    Not Financial Advice · God Particle ⚛ · Based on {result.data?.length} sessions of data
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Raw Data */}
             {activeTab === 'raw' && (
