@@ -38,6 +38,7 @@ export default function StockAnalysis() {
   const [step, setStep] = useState<'input' | 'result'>('input');
   const [activeTab, setActiveTab] = useState('raw');
   const [gctTab, setGctTab] = useState('overview');
+  const [holdingQty, setHoldingQty] = useState('');
 
   const sectorPE: Record<string, number> = {
     'Energy/Oil': 18, 'Banking': 20, 'IT': 28,
@@ -1229,6 +1230,8 @@ export default function StockAnalysis() {
 
               {/* ── MY PLAN TAB ── */}
               {gctTab === 'plan' && (() => {
+                const qty        = parseInt(holdingQty) || 0;
+                const holdValue  = qty * result.currentPrice;
                 const upsidePct  = Math.round((result.upsideLevels[4].price - result.currentPrice) / result.currentPrice * 100);
                 const downPct    = Math.round((result.currentPrice - result.crashLevels[4].price) / result.currentPrice * 100);
                 const rrRatio    = downPct > 0 ? (upsidePct / downPct).toFixed(1) : '∞';
@@ -1239,187 +1242,172 @@ export default function StockAnalysis() {
                 )));
                 const uScoreColor = uScore >= 70 ? '#39d98a' : uScore >= 45 ? '#f0c040' : '#ff4d6d';
                 const uScoreLabel = uScore >= 70 ? 'Strong Upside' : uScore >= 45 ? 'Moderate Upside' : 'Limited Upside';
+                const fmt = (n: number) => `₹${Math.round(n).toLocaleString()}`;
                 return (
                   <div className="space-y-4">
 
-                    {/* ── Block A: Snapshot ── */}
+                    {/* Qty input for holding context */}
+                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-4">
+                      <div className="text-xs font-black text-[#f0c040] mb-3">Already holding this stock?</div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
+                          <label className="text-[10px] font-mono text-[#6b6b85] uppercase mb-1 block">Shares I Already Hold</label>
+                          <input type="number" value={holdingQty} onChange={e => setHoldingQty(e.target.value)}
+                            placeholder="Leave blank if fresh buyer"
+                            className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                        </div>
+                        {qty > 0 && (
+                          <div className="text-right pt-5">
+                            <div className="text-[10px] font-mono text-[#6b6b85]">CURRENT VALUE</div>
+                            <div className="text-lg font-black text-[#e8e8f0]">{fmt(holdValue)}</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Snapshot */}
                     <div className="rounded-2xl p-5" style={{ background: `linear-gradient(135deg,#0a0a0f,${zc}18)`, border: `1px solid ${zc}50` }}>
-                      <div className="flex items-center justify-between flex-wrap gap-3">
+                      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
                         <div>
-                          <div className="text-xs font-mono text-[#6b6b85] mb-1">CURRENT PRICE</div>
+                          <div className="text-xs font-mono text-[#6b6b85]">CURRENT PRICE</div>
                           <div className="text-4xl font-black">₹{result.currentPrice.toLocaleString()}</div>
-                          <div className="inline-block mt-2 px-3 py-1 rounded-full text-xs font-black" style={{ background: `${zc}25`, color: zc }}>{result.zone}</div>
+                          <div className="inline-block mt-1 px-3 py-1 rounded-full text-xs font-black" style={{ background: `${zc}25`, color: zc }}>{result.zone}</div>
                         </div>
                         <div className="text-right">
-                          <div className="text-xs font-mono text-[#6b6b85] mb-1">UPSIDE SCORE</div>
-                          <div className="text-5xl font-black" style={{ color: uScoreColor }}>{uScore}</div>
-                          <div className="text-xs font-bold mt-1" style={{ color: uScoreColor }}>{uScoreLabel}</div>
+                          <div className="text-xs font-mono text-[#6b6b85]">UPSIDE SCORE</div>
+                          <div className="text-5xl font-black" style={{ color: uScoreColor }}>{uScore}<span className="text-xl">/100</span></div>
+                          <div className="text-xs font-bold" style={{ color: uScoreColor }}>{uScoreLabel}</div>
                         </div>
                       </div>
-                      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                      <div className="grid grid-cols-3 gap-2 text-center">
                         <div className="bg-[#16161f] rounded-xl p-2">
-                          <div className="text-[10px] font-mono text-[#6b6b85]">UPSIDE TO U5</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85]">MAX PROFIT POTENTIAL</div>
                           <div className="text-lg font-black text-[#39d98a]">+{upsidePct}%</div>
-                          <div className="text-[10px] font-mono text-[#6b6b85]">₹{result.upsideLevels[4].price.toLocaleString()}</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85]">if it reaches {fmt(result.upsideLevels[4].price)}</div>
                         </div>
                         <div className="bg-[#16161f] rounded-xl p-2">
-                          <div className="text-[10px] font-mono text-[#6b6b85]">RISK TO L5</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85]">MAX RISK</div>
                           <div className="text-lg font-black text-[#ff4d6d]">-{downPct}%</div>
-                          <div className="text-[10px] font-mono text-[#6b6b85]">₹{result.crashLevels[4].price.toLocaleString()}</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85]">if it crashes to {fmt(result.crashLevels[4].price)}</div>
                         </div>
                         <div className="bg-[#16161f] rounded-xl p-2">
-                          <div className="text-[10px] font-mono text-[#6b6b85]">RISK:REWARD</div>
-                          <div className="text-lg font-black text-[#f0c040]">{rrRatio}:1</div>
-                          <div className="text-[10px] font-mono text-[#6b6b85]">in your favour</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85]">REWARD VS RISK</div>
+                          <div className="text-lg font-black text-[#f0c040]">{rrRatio}x</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85]">potential gain per ₹1 risk</div>
                         </div>
                       </div>
                     </div>
 
-                    {/* ── Block B: Buy if Stock Goes UP ── */}
+                    {/* ── PLAN A: Buying Fresh ── */}
                     <div className="bg-[#111118] border border-[#39d98a]/30 rounded-2xl p-5">
-                      <div className="text-sm font-black text-[#39d98a] mb-1">📈 IF STOCK GOES UP — Breakout Buy Plan</div>
-                      <div className="text-xs font-mono text-[#6b6b85] mb-4">Both conditions must be true before buying on upside</div>
-                      <div className="space-y-2 mb-4">
-                        <div className="flex gap-3 p-3 rounded-xl bg-[#39d98a]/10 text-xs font-mono">
-                          <span className="text-[#39d98a] font-black shrink-0">✅ Cond 1</span>
-                          <span>Monthly CLOSE must be above the level — not intraday, full month close</span>
+                      <div className="text-sm font-black text-[#39d98a] mb-1">📈 PLAN A — Buying Fresh</div>
+                      <div className="text-xs font-mono text-[#6b6b85] mb-4">
+                        {result.zone === 'BUY ZONE'
+                          ? `Stock is in a strong zone. You can buy now.`
+                          : result.zone === 'WATCH ZONE'
+                          ? `Stock is recovering. Wait for it to cross ${fmt(result.al)} before buying.`
+                          : `Stock is falling. Do NOT put all money in now. Buy in small parts as it falls.`}
+                      </div>
+
+                      {/* Upside breakout entry */}
+                      <div className="mb-4 p-4 rounded-xl bg-[#39d98a]/08 border border-[#39d98a]/20">
+                        <div className="text-xs font-black text-[#39d98a] mb-2">IF STOCK GOES UP — Buy when it crosses {fmt(result.al)}</div>
+                        <div className="text-xs font-mono text-[#e8e8f0] leading-relaxed">
+                          Wait for the stock to close above {fmt(result.al)} for at least 3 days.
+                          Then put in <span className="font-black text-[#f0c040]">100% of your planned capital</span> for this stock.
+                          Keep a stop loss at {fmt(result.mgc)} — if it falls below that after you buy, sell everything.
                         </div>
-                        <div className="flex gap-3 p-3 rounded-xl bg-[#39d98a]/10 text-xs font-mono">
-                          <span className="text-[#39d98a] font-black shrink-0">✅ Cond 2</span>
-                          <span>Price must hold above that level for 3+ consecutive trading days after</span>
+                        <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs font-mono">
+                          <div className="bg-[#16161f] rounded-lg p-2">
+                            <div className="text-[#6b6b85]">Buy at</div>
+                            <div className="font-black text-[#39d98a]">{fmt(result.al)}+</div>
+                          </div>
+                          <div className="bg-[#16161f] rounded-lg p-2">
+                            <div className="text-[#6b6b85]">First Target</div>
+                            <div className="font-black text-[#f0c040]">{fmt(result.upsideLevels[1].price)}</div>
+                          </div>
+                          <div className="bg-[#16161f] rounded-lg p-2">
+                            <div className="text-[#6b6b85]">Final Exit</div>
+                            <div className="font-black text-[#ff4d6d]">{fmt(result.upsideLevels[4].price)}</div>
+                          </div>
                         </div>
                       </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-xs font-mono">
-                          <thead>
-                            <tr className="border-b border-[#1e1e2e]">
-                              {['Level','Price','Action','Capital %','Stop Loss'].map(h => (
-                                <th key={h} className="text-left px-2 py-2 text-[#6b6b85] font-normal">{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {[
-                              { lv: result.upsideLevels[0], action: 'BUY full size', alloc: '100%', sl: `₹${result.mgc.toLocaleString()} (MGC)` },
-                              { lv: result.upsideLevels[1], action: 'Add small', alloc: '20%',  sl: `₹${result.upsideLevels[0].price.toLocaleString()} (U1)` },
-                              { lv: result.upsideLevels[2], action: 'HOLD only', alloc: '—',    sl: `₹${result.upsideLevels[0].price.toLocaleString()} (U1)` },
-                              { lv: result.upsideLevels[3], action: 'HOLD, alert', alloc: '—',  sl: `₹${result.upsideLevels[1].price.toLocaleString()} (U2)` },
-                              { lv: result.upsideLevels[4], action: '🚨 EXIT 100%', alloc: 'SELL', sl: 'No SL — just exit' },
-                            ].map(({ lv, action, alloc, sl }) => {
-                              const color = ['#39d98a','#4d9fff','#f0c040','#ff8c42','#ff4d6d'][lv.n - 1];
-                              const here = result.currentPrice >= lv.price - result.vwar * 0.5 && result.currentPrice < lv.price + result.vwar * 0.5;
-                              return (
-                                <tr key={lv.n} className={`border-b border-[#1e1e2e]/50 ${here ? 'bg-[#39d98a]/10' : ''}`}>
-                                  <td className="px-2 py-2.5 font-bold" style={{ color }}>{lv.emoji} U{lv.n}</td>
-                                  <td className="px-2 py-2.5 font-black" style={{ color }}>₹{lv.price.toLocaleString()}</td>
-                                  <td className="px-2 py-2.5" style={{ color }}>{action}</td>
-                                  <td className="px-2 py-2.5 text-[#f0c040] font-bold">{alloc}</td>
-                                  <td className="px-2 py-2.5 text-[#6b6b85]">{sl}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+
+                      {/* Crash accumulation */}
+                      <div className="p-4 rounded-xl bg-[#ff4d6d]/08 border border-[#ff4d6d]/20">
+                        <div className="text-xs font-black text-[#ff4d6d] mb-2">IF STOCK KEEPS FALLING — Buy in parts at these levels</div>
+                        <div className="text-xs font-mono text-[#6b6b85] mb-3">Never put all money in at once. Split your capital like this as it falls:</div>
+                        <div className="space-y-2">
+                          {result.crashLevels.map((lv: any) => {
+                            const here = result.currentPrice <= lv.price + result.vwar * 0.5 &&
+                              (lv.n === 1 || result.currentPrice > result.crashLevels[lv.n-2].price - result.vwar * 0.5);
+                            return (
+                              <div key={lv.n} className={`flex items-center justify-between p-3 rounded-xl text-xs font-mono ${here ? 'bg-[#f0c040]/15 border border-[#f0c040]/40' : 'bg-[#16161f]'}`}>
+                                <div>
+                                  <span className="font-black text-[#f0c040]">{fmt(lv.price)}</span>
+                                  {here && <span className="ml-2 text-[9px] bg-[#f0c040] text-black px-1.5 py-0.5 rounded font-black">NEAR HERE NOW</span>}
+                                  <div className="text-[#6b6b85] mt-0.5">{lv.mood}</div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="font-black text-[#39d98a]">Invest {lv.alloc}% of capital</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="mt-3 p-3 rounded-xl bg-[#ff4d6d]/15 border border-[#ff4d6d]/30 text-xs font-mono text-[#ff4d6d] font-bold">
+                          ⛔ STOP LOSS: If stock closes a full month below {fmt(result.crashLevels[4].price)} → Sell everything immediately. No waiting.
+                        </div>
                       </div>
                     </div>
 
-                    {/* ── Block C: Buy if Stock Crashes ── */}
-                    <div className="bg-[#111118] border border-[#ff4d6d]/30 rounded-2xl p-5">
-                      <div className="text-sm font-black text-[#ff4d6d] mb-1">💥 IF STOCK CRASHES — Accumulation Plan</div>
-                      <div className="text-xs font-mono text-[#6b6b85] mb-4">Never invest all at once. Spread across levels as price falls.</div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-xs font-mono">
-                          <thead>
-                            <tr className="border-b border-[#1e1e2e]">
-                              {['Level','Price','Market Mood','Invest','SL'].map(h => (
-                                <th key={h} className="text-left px-2 py-2 text-[#6b6b85] font-normal">{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {result.crashLevels.map((lv: any) => {
-                              const here = result.currentPrice <= lv.price + result.vwar * 0.5 &&
-                                (lv.n === 1 || result.currentPrice > result.crashLevels[lv.n - 2].price - result.vwar * 0.5);
-                              return (
-                                <tr key={lv.n} className={`border-b border-[#1e1e2e]/50 ${here ? 'bg-[#f0c040]/10' : ''}`}>
-                                  <td className="px-2 py-2.5 font-bold">{lv.emoji} L{lv.n}</td>
-                                  <td className="px-2 py-2.5 font-black text-[#f0c040]">
-                                    ₹{lv.price.toLocaleString()}
-                                    {here && <span className="ml-1 text-[9px] bg-[#f0c040] text-black px-1 rounded">NOW</span>}
-                                  </td>
-                                  <td className="px-2 py-2.5 text-[#6b6b85]">{lv.mood}</td>
-                                  <td className="px-2 py-2.5 font-black text-[#39d98a]">{lv.alloc}%</td>
-                                  <td className="px-2 py-2.5 text-[#6b6b85]">Below L5</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                      <div className="mt-3 p-3 rounded-xl bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 text-xs font-mono text-[#ff4d6d]">
-                        ⛔ Hard Stop Loss: Monthly CLOSE below L5 ₹{result.crashLevels[4].price.toLocaleString()} → EXIT EVERYTHING immediately
-                      </div>
-                    </div>
-
-                    {/* ── Block D: Already Bought? ── */}
+                    {/* ── PLAN B: Already Holding ── */}
                     <div className="bg-[#111118] border border-[#a78bfa]/30 rounded-2xl p-5">
-                      <div className="text-sm font-black text-[#a78bfa] mb-4">🤝 ALREADY BOUGHT? — Hold & Exit Rules</div>
-                      <div className="space-y-2 mb-4">
-                        <div className="text-xs font-black text-[#39d98a] mb-1">STAY IN (HOLD) when:</div>
-                        {[
-                          `Price is between AL ₹${result.al.toLocaleString()} and U5 ₹${result.upsideLevels[4].price.toLocaleString()}`,
-                          `Monthly close stays above your entry price`,
-                          `Price pulls back to AL ₹${result.al.toLocaleString()} — that's normal, AL is now support`,
-                        ].map((line, i) => (
-                          <div key={i} className="flex gap-2 p-2.5 rounded-lg bg-[#39d98a]/08 text-xs font-mono">
-                            <span className="text-[#39d98a] shrink-0">✅</span><span>{line}</span>
-                          </div>
-                        ))}
+                      <div className="text-sm font-black text-[#a78bfa] mb-1">
+                        🤝 PLAN B — Already Holding
+                        {qty > 0 ? ` (${qty} shares · current value ${fmt(holdValue)})` : ''}
                       </div>
-                      <div className="space-y-2 mb-4">
-                        <div className="text-xs font-black text-[#ff4d6d] mb-1">EXIT — STOP LOSS when:</div>
-                        {[
-                          `Two consecutive monthly closes below MGC ₹${result.mgc.toLocaleString()} — trend is broken`,
-                          `Monthly close drops below AL ₹${result.al.toLocaleString()} after a confirmed breakout`,
-                          `Monthly close below L5 ₹${result.crashLevels[4].price.toLocaleString()} — hard stop, exit all`,
-                        ].map((line, i) => (
-                          <div key={i} className="flex gap-2 p-2.5 rounded-lg bg-[#ff4d6d]/08 text-xs font-mono">
-                            <span className="text-[#ff4d6d] shrink-0">🛑</span><span>{line}</span>
+                      <div className="space-y-3 mt-3">
+                        <div className="p-4 rounded-xl bg-[#39d98a]/08 border border-[#39d98a]/20">
+                          <div className="text-xs font-black text-[#39d98a] mb-2">✅ KEEP HOLDING if</div>
+                          <div className="space-y-1.5 text-xs font-mono text-[#e8e8f0]">
+                            <div>· Stock stays above {fmt(result.al)} — you are in profit zone, relax</div>
+                            <div>· Stock dips to {fmt(result.al)} but recovers — normal pullback, do not panic sell</div>
+                            <div>· Stock is between {fmt(result.al)} and {fmt(result.upsideLevels[4].price)} — stay in, target not reached yet</div>
                           </div>
-                        ))}
-                      </div>
-                      <div className="space-y-2">
-                        <div className="text-xs font-black text-[#f0c040] mb-1">EXIT — TARGET when:</div>
-                        <div className="flex gap-2 p-2.5 rounded-lg bg-[#f0c040]/08 text-xs font-mono">
-                          <span className="text-[#f0c040] shrink-0">🎯</span>
-                          <span>Price hits U5 ₹{result.upsideLevels[4].price.toLocaleString()} → sell 100% immediately. No exceptions. That is the blow-off top.</span>
+                        </div>
+                        <div className="p-4 rounded-xl bg-[#ff4d6d]/08 border border-[#ff4d6d]/20">
+                          <div className="text-xs font-black text-[#ff4d6d] mb-2">🛑 SELL (Stop Loss) if</div>
+                          <div className="space-y-1.5 text-xs font-mono text-[#e8e8f0]">
+                            <div>· Stock closes 2 months in a row below {fmt(result.mgc)} — trend has reversed, get out</div>
+                            <div>· Stock falls below {fmt(result.al)} after you bought on a breakout — trade has failed, exit</div>
+                            <div>· Stock closes below {fmt(result.crashLevels[4].price)} — emergency exit, sell all shares</div>
+                          </div>
+                        </div>
+                        <div className="p-4 rounded-xl bg-[#f0c040]/08 border border-[#f0c040]/20">
+                          <div className="text-xs font-black text-[#f0c040] mb-2">🎯 SELL (Profit Target)</div>
+                          <div className="space-y-1.5 text-xs font-mono text-[#e8e8f0]">
+                            <div>· At {fmt(result.upsideLevels[1].price)} → sell 30% of your shares and lock that profit</div>
+                            <div>· At {fmt(result.upsideLevels[3].price)} → sell another 40%. Keep 30% for the final run</div>
+                            <div>· At {fmt(result.upsideLevels[4].price)} → <span className="font-black text-[#f0c040]">SELL the remaining 30% immediately.</span> Do not be greedy.</div>
+                            {qty > 0 && <div className="mt-2 font-black text-[#39d98a]">At final target {fmt(result.upsideLevels[4].price)}, your {qty} shares would be worth {fmt(qty * result.upsideLevels[4].price)}</div>}
+                          </div>
+                        </div>
+                        <div className="p-4 rounded-xl bg-[#16161f] border border-[#1e1e2e]">
+                          <div className="text-xs font-black text-[#f0c040] mb-2">🪜 AS STOCK RISES — Move your stop loss up</div>
+                          <div className="text-xs font-mono text-[#6b6b85] mb-2">This protects your profit. If it falls back, you still exit with a gain.</div>
+                          <div className="space-y-1.5 text-xs font-mono">
+                            <div className="flex justify-between"><span className="text-[#6b6b85]">When price reaches {fmt(result.upsideLevels[0].price)}</span><span className="font-bold text-[#f0c040]">→ set SL at {fmt(result.mgc)}</span></div>
+                            <div className="flex justify-between"><span className="text-[#6b6b85]">When price reaches {fmt(result.upsideLevels[1].price)}</span><span className="font-bold text-[#f0c040]">→ set SL at {fmt(result.upsideLevels[0].price)}</span></div>
+                            <div className="flex justify-between"><span className="text-[#6b6b85]">When price reaches {fmt(result.upsideLevels[3].price)}</span><span className="font-bold text-[#f0c040]">→ set SL at {fmt(result.upsideLevels[1].price)}</span></div>
+                          </div>
                         </div>
                       </div>
                     </div>
 
-                    {/* ── Block E: Trailing SL ── */}
-                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
-                      <div className="text-sm font-black text-[#f0c040] mb-1">🪜 TRAILING STOP LOSS — Lock In Profit As You Rise</div>
-                      <div className="text-xs font-mono text-[#6b6b85] mb-3">As price moves up, move your SL up to protect gains</div>
-                      <div className="space-y-2">
-                        {[
-                          { when: `Price reaches U1 ₹${result.upsideLevels[0].price.toLocaleString()}`, sl: `Move SL to MGC ₹${result.mgc.toLocaleString()}` },
-                          { when: `Price reaches U2 ₹${result.upsideLevels[1].price.toLocaleString()}`, sl: `Move SL to U1 ₹${result.upsideLevels[0].price.toLocaleString()}` },
-                          { when: `Price reaches U3 ₹${result.upsideLevels[2].price.toLocaleString()}`, sl: `Keep SL at U1 ₹${result.upsideLevels[0].price.toLocaleString()} (give breathing room)` },
-                          { when: `Price reaches U4 ₹${result.upsideLevels[3].price.toLocaleString()}`, sl: `Move SL to U2 ₹${result.upsideLevels[1].price.toLocaleString()}` },
-                          { when: `Price reaches U5 ₹${result.upsideLevels[4].price.toLocaleString()}`, sl: `🚨 EXIT 100% — target reached` },
-                        ].map((row, i) => (
-                          <div key={i} className="flex items-center justify-between p-2.5 rounded-lg bg-[#16161f] text-xs font-mono gap-2">
-                            <span className="text-[#6b6b85]">{row.when}</span>
-                            <span className="font-bold text-[#f0c040] shrink-0">→ {row.sl}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* ── Block F: One-line verdict ── */}
+                    {/* Verdict */}
                     <div className="rounded-2xl p-5" style={{ background: `linear-gradient(135deg,#0a0a0f,${zc}15)`, border: `1px solid ${zc}40` }}>
-                      <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">⚛ Verdict</div>
+                      <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">⚛ Bottom Line</div>
                       <div className="text-sm font-bold leading-relaxed">{result.verdict}</div>
                       <div className="mt-3 text-[10px] font-mono text-[#6b6b85]">Not Financial Advice · GCT v3.0 · God Particle ⚛</div>
                     </div>
