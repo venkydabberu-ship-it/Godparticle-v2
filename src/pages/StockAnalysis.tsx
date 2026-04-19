@@ -412,8 +412,9 @@ export default function StockAnalysis() {
       const mgc = workingData.reduce((s, d, i) => s + tp[i] * d.volume, 0) / totalVol;
 
       // ── Step 3: VWAR — Volume Weighted Average Range ──
+      // Capped 1%–7% of MGC so crash levels never go negative and upside stays realistic
       let vwar = workingData.reduce((s, d, i) => s + range[i] * d.volume, 0) / totalVol;
-      if (vwar < mgc * 0.01) vwar = mgc * 0.01; // minimum 1% of MGC
+      vwar = Math.min(Math.max(vwar, mgc * 0.01), mgc * 0.07);
 
       // ── Step 4: MCL — Monthly Commitment Line ──
       const mcl = workingData.reduce((s, d) => s + d.close * d.volume, 0) / totalVol;
