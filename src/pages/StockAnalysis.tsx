@@ -109,11 +109,16 @@ export default function StockAnalysis() {
         body: { type: 'stock_price', symbol: stockName.toUpperCase(), exchange }
       });
 
-      if (fnError) throw new Error(fnError.message);
+      if (fnError) throw new Error(fnError.message.includes('non-2xx')
+        ? `Edge function error — if using BSE, run: supabase functions deploy smooth-endpoint`
+        : fnError.message);
       if (!data?.success) throw new Error(data?.error || 'Fetch failed');
 
       const records: any[] = data.data?.data || [];
-      if (!records.length) throw new Error(`No data for ${stockName}. Check symbol and exchange.`);
+      if (!records.length) throw new Error(
+        `No data for "${stockName}" on ${exchange}. ` +
+        `Check the exact symbol (e.g. SBIN not SBI, BAJFINANCE not BAJAJ-FINANCE).`
+      );
 
       const toSave = records
         .map((r: any) => ({
@@ -302,7 +307,7 @@ export default function StockAnalysis() {
     const monthlyData = Object.entries(monthly)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([, v]) => v)
-      .filter((r: any) => r.high > 0 && r.volume > 0)
+      .filter((r: any) => r.high > 0)   // volume can be 0 (Yahoo monthly bars) — don't filter on it
       .slice(-14); // use up to 14 months
     if (monthlyData.length < 6) {
       setError('Not enough data! Need at least 6 months.');
@@ -378,24 +383,28 @@ export default function StockAnalysis() {
       const data = [...csvData].sort((a, b) => a.date.localeCompare(b.date));
 
       // ── Step 1: Per-month calculations ──
-      const totalVol = data.reduce((s, d) => s + d.volume, 0);
-      if (totalVol === 0) throw new Error('Volume data is zero — check data source.');
-      const tp    = data.map(d => (d.high + d.low + d.close) / 3);
-      const range = data.map(d => d.high - d.low);
-      const vmsArr = data.map(d => {
+      // Yahoo Finance monthly bars often return 0 volume for Indian stocks — fall back to equal weights
+      const rawVol = data.reduce((s, d) => s + d.volume, 0);
+      const workingData = rawVol === 0
+        ? data.map(d => ({ ...d, volume: 1 }))
+        : data;
+      const totalVol = workingData.reduce((s, d) => s + d.volume, 0);
+      const tp    = workingData.map(d => (d.high + d.low + d.close) / 3);
+      const range = workingData.map(d => d.high - d.low);
+      const vmsArr = workingData.map(d => {
         const r = d.high - d.low;
         return r === 0 ? 0.5 : Math.max(0, Math.min(1, (d.close - d.low) / r));
       });
 
       // ── Step 2: MGC — Monthly Gravitational Core ──
-      const mgc = data.reduce((s, d, i) => s + tp[i] * d.volume, 0) / totalVol;
+      const mgc = workingData.reduce((s, d, i) => s + tp[i] * d.volume, 0) / totalVol;
 
       // ── Step 3: VWAR — Volume Weighted Average Range ──
-      let vwar = data.reduce((s, d, i) => s + range[i] * d.volume, 0) / totalVol;
+      let vwar = workingData.reduce((s, d, i) => s + range[i] * d.volume, 0) / totalVol;
       if (vwar < mgc * 0.01) vwar = mgc * 0.01; // minimum 1% of MGC
 
       // ── Step 4: MCL — Monthly Commitment Line ──
-      const mcl = data.reduce((s, d) => s + d.close * d.volume, 0) / totalVol;
+      const mcl = workingData.reduce((s, d) => s + d.close * d.volume, 0) / totalVol;
 
       // ── Step 5: Core levels ──
       const al = mgc + vwar;
