@@ -318,118 +318,112 @@ export function getDTE(expiry: string): number {
 }
 
 // ── SCENARIO MATRIX GENERATOR ──
+//
+// Invariant guaranteed for every non-avoided row:
+//   sl < openEst < entryLow < entryHigh < target1 < target2
+//
+// Logic:
+//   openEst  = where the option will likely open given the index gap
+//   entryLow/High = breakout buy zone, always ABOVE openEst
+//                   (wait 15 min, enter only after option shows strength)
+//   target1/2 = profit exits above the buy zone
+//   sl        = hard stop, always below openEst
+//
 export function generateScenarioMatrix(
   result: any,
   indexName: string
 ): any[] {
-  const lc = result.lc;
-  const pcb = result.pcb;
-  const dte = result.dte;
+  const lc   = result.lc;
+  const pcb  = result.pcb;
+  const dte  = result.dte;
   const isCE = result.optType === 'CE';
 
-  // Theta discount
-  const td = dte <= 0 ? 0.5 : dte <= 1 ? 0.6 : dte <= 2 ? 0.75 : dte <= 4 ? 0.9 : 1.0;
+  // Theta discount: fewer days → targets pulled closer
+  const td = dte <= 0 ? 0.50
+           : dte <= 1 ? 0.65
+           : dte <= 2 ? 0.78
+           : dte <= 4 ? 0.92
+           : 1.00;
 
-  const gapStep = getGapStep(indexName);
-  const maxGap = getMaxGap(indexName);
+  const gapStep    = getGapStep(indexName); // 50 for Nifty family, 100 for Sensex/Bankex
+  const maxGap     = getMaxGap(indexName);  // 500 for Nifty family, 1500 for Sensex/Bankex
+  const avoidLimit = maxGap * 0.40;         // 200 for Nifty, 600 for Sensex
 
-  // Generate gap levels: -maxGap to +maxGap in gapStep increments
   const gaps: number[] = [];
-  for (let g = maxGap; g >= -maxGap; g -= gapStep) {
-    gaps.push(g);
-  }
+  for (let g = maxGap; g >= -maxGap; g -= gapStep) gaps.push(g);
 
   return gaps.map(gap => {
-    let ceOpenEst: number;
-    let entryZoneLow: number;
-    let entryZoneHigh: number;
-    let target1: number;
-    let target2: number;
-    let sl: number;
-    let avoid = false;
-    let label = gap === 0 ? 'Flat Open ⭐'
-      : gap > 0 ? `Gap Up ${gap} pts`
-      : `Gap Down ${Math.abs(gap)} pts`;
+    const absGap    = Math.abs(gap);
+    const label     = gap === 0 ? 'Flat Open ⭐'
+                    : gap > 0   ? `Gap Up ${gap} pts`
+                    : `Gap Down ${absGap} pts`;
 
-    if (isCE) {
-      if (gap > 0) {
-        // CE rises on gap up
-        const pct = 1 + (gap / 500) * 0.8;
-        ceOpenEst = Math.round(lc * pct);
-        entryZoneLow = Math.round(ceOpenEst * 0.92);
-        entryZoneHigh = Math.round(ceOpenEst * 1.05);
-        target1 = Math.round(Math.max(pcb, ceOpenEst * 1.2) * td);
-        target2 = Math.round(ceOpenEst * 1.5 * td);
-        sl = Math.round(entryZoneLow * 0.75);
-      } else if (gap === 0) {
-        ceOpenEst = lc;
-        entryZoneLow = Math.round(lc * 0.9);
-        entryZoneHigh = Math.round(lc * 1.05);
-        target1 = Math.round(pcb * td);
-        target2 = Math.round(lc * 1.4 * td);
-        sl = Math.round(entryZoneLow * 0.75);
-      } else {
-        // CE falls on gap down
-        const pct = 1 - (Math.abs(gap) / 500) * 0.6;
-        ceOpenEst = Math.round(lc * Math.max(pct, 0.15));
-        if (Math.abs(gap) >= 200) {
-          avoid = true;
-          entryZoneLow = 0; entryZoneHigh = 0;
-          target1 = 0; target2 = 0; sl = 0;
-        } else {
-          entryZoneLow = Math.round(ceOpenEst * 0.9);
-          entryZoneHigh = Math.round(ceOpenEst * 1.08);
-          target1 = Math.round(Math.min(pcb, lc) * td);
-          target2 = Math.round(lc * td);
-          sl = Math.round(entryZoneLow * 0.72);
-        }
-      }
+    const isFav     = isCE ? (gap > 0) : (gap < 0);
+    const isNeutral = gap === 0;
+    const isAdv     = isCE ? (gap < 0) : (gap > 0);
+    const avoid     = isAdv && absGap >= avoidLimit;
+
+    // ── Open Estimate ──
+    // Option price moves proportionally with the underlying gap.
+    // Scale factor is relative to maxGap so Nifty and Sensex are proportional.
+    let openEst: number;
+    if (isFav) {
+      // Favorable: option opens higher (CE on gap-up, PE on gap-down)
+      openEst = Math.round(lc * (1 + (absGap / maxGap) * 0.85));
+    } else if (isNeutral) {
+      openEst = Math.round(lc);
     } else {
-      // PE
-      if (gap < 0) {
-        const pct = 1 + (Math.abs(gap) / 500) * 0.8;
-        ceOpenEst = Math.round(lc * pct);
-        entryZoneLow = Math.round(ceOpenEst * 0.92);
-        entryZoneHigh = Math.round(ceOpenEst * 1.05);
-        target1 = Math.round(Math.max(pcb, ceOpenEst * 1.2) * td);
-        target2 = Math.round(ceOpenEst * 1.5 * td);
-        sl = Math.round(entryZoneLow * 0.75);
-      } else if (gap === 0) {
-        ceOpenEst = lc;
-        entryZoneLow = Math.round(lc * 0.9);
-        entryZoneHigh = Math.round(lc * 1.05);
-        target1 = Math.round(pcb * td);
-        target2 = Math.round(lc * 1.4 * td);
-        sl = Math.round(entryZoneLow * 0.75);
-      } else {
-        const pct = 1 - (gap / 500) * 0.6;
-        ceOpenEst = Math.round(lc * Math.max(pct, 0.15));
-        if (gap >= 200) {
-          avoid = true;
-          entryZoneLow = 0; entryZoneHigh = 0;
-          target1 = 0; target2 = 0; sl = 0;
-        } else {
-          entryZoneLow = Math.round(ceOpenEst * 0.9);
-          entryZoneHigh = Math.round(ceOpenEst * 1.08);
-          target1 = Math.round(Math.min(pcb, lc) * td);
-          target2 = Math.round(lc * td);
-          sl = Math.round(entryZoneLow * 0.72);
-        }
-      }
+      // Adverse: option opens lower, floored at 10% of last close
+      openEst = Math.round(lc * Math.max(1 - (absGap / maxGap) * 0.70, 0.10));
+    }
+    openEst = Math.max(openEst, 1);
+
+    if (avoid) {
+      return {
+        gap, label, openEst,
+        entryLow: 0, entryHigh: 0, target1: 0, target2: 0, sl: 0,
+        avoid: true, isFlat: false, isBest: false,
+      };
     }
 
+    // ── Buy Zone — STRICTLY above openEst ──
+    // Wait for option to confirm strength after open; enter only above open.
+    const entryLow  = Math.max(Math.round(openEst * 1.06), openEst + 1);
+    const entryHigh = Math.max(Math.round(openEst * 1.17), entryLow  + 1);
+
+    // ── Targets — STRICTLY above entryHigh ──
+    let target1: number;
+    let target2: number;
+
+    if (isFav) {
+      // Strong move in our direction; PCB or 28% above entryHigh (higher wins)
+      target1 = Math.round(Math.max(pcb, entryHigh * 1.28) * td);
+      target2 = Math.round(entryHigh * 1.65 * td);
+    } else if (isNeutral) {
+      // Flat open; PCB is the natural first target
+      target1 = Math.round(Math.max(pcb, entryHigh * 1.20) * td);
+      target2 = Math.round(entryHigh * 1.50 * td);
+    } else {
+      // Adverse but not avoided; smaller recovery targets
+      target1 = Math.round(entryHigh * 1.20 * td);
+      target2 = Math.round(entryHigh * 1.40 * td);
+    }
+    // Hard-clamp to maintain strict ordering
+    target1 = Math.max(target1, entryHigh + 1);
+    target2 = Math.max(target2, target1  + 1);
+
+    // ── Stop Loss — STRICTLY below openEst ──
+    const sl = Math.max(Math.round(openEst * 0.72), 1);
+
+    const isBest = gap === 0
+      || (isCE  && gap > 0 && gap <= gapStep * 2)
+      || (!isCE && gap < 0 && gap >= -(gapStep * 2));
+
     return {
-      gap,
-      label,
-      openEst: ceOpenEst,
-      entryLow: entryZoneLow,
-      entryHigh: entryZoneHigh,
-      target1,
-      target2,
-      sl,
-      avoid,
-      isFlat: gap === 0,
-      isBest: gap === 0 || (isCE && gap > 0 && gap <= 100) || (!isCE && gap < 0 && gap >= -100),
+      gap, label, openEst,
+      entryLow, entryHigh,
+      target1, target2, sl,
+      avoid: false, isFlat: gap === 0, isBest,
     };
   });
 }
