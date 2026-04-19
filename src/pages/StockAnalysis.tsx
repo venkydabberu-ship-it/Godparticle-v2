@@ -88,17 +88,22 @@ export default function StockAnalysis() {
     setError('');
 
     try {
-      // Check existing monthly data (14 records max from Yahoo)
+      // Fetch all stored records (could be daily or monthly candles)
       const { data: existing } = await supabase
         .from('stock_price_data')
         .select('*')
         .eq('stock_name', stockName.toUpperCase())
         .order('trade_date', { ascending: false })
-        .limit(20);
+        .limit(500);
 
-      if (existing && existing.length >= 12) {
-        setFetchMsg(`✅ Found ${existing.length} months in database!`);
-        processMonthlyData(existing);
+      // Count unique YYYY-MM months — records may be daily, so count months not rows
+      const uniqueMonths = new Set(
+        (existing || []).map((r: any) => (r.trade_date || '').substring(0, 7))
+      ).size;
+
+      if (uniqueMonths >= 6) {
+        setFetchMsg(`✅ Found ${uniqueMonths} months in database!`);
+        processMonthlyData(existing!);
         return;
       }
 
@@ -284,31 +289,37 @@ export default function StockAnalysis() {
   }
 
   // ── PROCESS MONTHLY DATA ──
+  // Works with both daily records and Yahoo monthly candles.
+  // Aggregates all records for a month into one proper monthly candle.
   function processMonthlyData(rawData: any[]) {
     const monthly: Record<string, any> = {};
     rawData.forEach((row: any) => {
       const date = row.trade_date;
       if (!date) return;
-      const d = new Date(date);
-      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-      // Yahoo Finance monthly candles: one record per month — just store it
-      if (!monthly[key] || new Date(date) > new Date(monthly[key].date)) {
-        monthly[key] = {
-          date,
-          open:   parseFloat(row.open  || 0),
-          high:   parseFloat(row.high  || 0),
-          low:    parseFloat(row.low   || 0),
-          close:  parseFloat(row.close || 0),
-          volume: parseFloat(row.volume || 0),
-        };
+      const key = date.substring(0, 7); // YYYY-MM
+      const high   = parseFloat(row.high   || 0);
+      const low    = parseFloat(row.low    || 0);
+      const close  = parseFloat(row.close  || 0);
+      const open   = parseFloat(row.open   || 0);
+      const volume = parseFloat(row.volume || 0);
+      if (close <= 0) return;
+      if (!monthly[key]) {
+        monthly[key] = { firstDate: date, lastDate: date, open, high, low, close, volume };
+      } else {
+        // Proper monthly aggregation across daily records
+        if (date < monthly[key].firstDate) { monthly[key].firstDate = date; monthly[key].open = open; }
+        if (date > monthly[key].lastDate)  { monthly[key].lastDate  = date; monthly[key].close = close; }
+        if (high > monthly[key].high) monthly[key].high = high;
+        if (low  > 0 && low < monthly[key].low) monthly[key].low = low;
+        monthly[key].volume += volume;
       }
     });
-    // Sort oldest → newest (required for GCT sequential calculations)
+    // Sort oldest → newest, use last 14 months
     const monthlyData = Object.entries(monthly)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([, v]) => v)
-      .filter((r: any) => r.high > 0)   // volume can be 0 (Yahoo monthly bars) — don't filter on it
-      .slice(-14); // use up to 14 months
+      .map(([key, v]: [string, any]) => ({ date: v.lastDate || key + '-01', ...v }))
+      .filter((r: any) => r.high > 0 && r.close > 0)
+      .slice(-14);
     if (monthlyData.length < 6) {
       setError('Not enough data! Need at least 6 months.');
       return;
