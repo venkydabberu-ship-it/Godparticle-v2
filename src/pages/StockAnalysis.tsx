@@ -11,6 +11,7 @@ export default function StockAnalysis() {
 
   const [analysisType, setAnalysisType] = useState<'gct' | 'options'>('gct');
   const [stockName, setStockName] = useState('');
+  const [exchange, setExchange] = useState<'NSE' | 'BSE'>('NSE');
   const [sector, setSector] = useState('Default');
   const [csvData, setCsvData] = useState<any[]>([]);
   const [dataSource, setDataSource] = useState<'upload' | 'autofetch'>('upload');
@@ -67,7 +68,7 @@ export default function StockAnalysis() {
     }
   }, []);
 
-  // ── AUTO FETCH STOCK PRICE — uses Edge Function ──
+  // ── AUTO FETCH STOCK PRICE — uses smooth-endpoint (Yahoo Finance) ──
   async function handleAutoFetchPrice() {
     if (!stockName.trim()) { setError('Enter stock name first!'); return; }
     if (!user || !profile) return;
@@ -86,47 +87,55 @@ export default function StockAnalysis() {
     setError('');
 
     try {
-      // Check existing data first
+      // Check existing monthly data (14 records max from Yahoo)
       const { data: existing } = await supabase
         .from('stock_price_data')
         .select('*')
         .eq('stock_name', stockName.toUpperCase())
         .order('trade_date', { ascending: false })
-        .limit(365);
+        .limit(20);
 
-      if (existing && existing.length >= 60) {
-        setFetchMsg(`✅ Found ${existing.length} days in database!`);
+      if (existing && existing.length >= 12) {
+        setFetchMsg(`✅ Found ${existing.length} months in database!`);
         processMonthlyData(existing);
         return;
       }
 
-      setFetchMsg('⏳ Fetching from NSE via server...');
+      setFetchMsg(`⏳ Fetching 14 months from ${exchange} via server...`);
 
-      // Use Supabase Edge Function
-      const { data, error: fnError } = await supabase.functions.invoke('fetch-nse-data', {
-        body: { type: 'stock_price', symbol: stockName.toUpperCase() }
+      // Use smooth-endpoint directly (routes stock_price to Yahoo Finance)
+      const { data, error: fnError } = await supabase.functions.invoke('smooth-endpoint', {
+        body: { type: 'stock_price', symbol: stockName.toUpperCase(), exchange }
       });
 
       if (fnError) throw new Error(fnError.message);
       if (!data?.success) throw new Error(data?.error || 'Fetch failed');
 
-      const records = data.data?.data || [];
-      if (!records.length) throw new Error(`No data for ${stockName}. Check symbol.`);
+      const records: any[] = data.data?.data || [];
+      if (!records.length) throw new Error(`No data for ${stockName}. Check symbol and exchange.`);
 
-      const toSave = records.map((r: any) => ({
-        stock_name: stockName.toUpperCase(),
-        trade_date: r.CH_TIMESTAMP,
-        open: parseFloat(r.CH_OPENING_PRICE || 0),
-        high: parseFloat(r.CH_TRADE_HIGH_PRICE || 0),
-        low: parseFloat(r.CH_TRADE_LOW_PRICE || 0),
-        close: parseFloat(r.CH_CLOSING_PRICE || 0),
-        volume: parseFloat(r.CH_TOT_TRADED_QTY || 0),
-      }));
+      const toSave = records
+        .map((r: any) => ({
+          stock_name: stockName.toUpperCase(),
+          trade_date: r.CH_TIMESTAMP,
+          open:   parseFloat(r.CH_OPENING_PRICE  || 0),
+          high:   parseFloat(r.CH_TRADE_HIGH_PRICE || 0),
+          low:    parseFloat(r.CH_TRADE_LOW_PRICE  || 0),
+          close:  parseFloat(r.CH_CLOSING_PRICE    || 0),
+          volume: parseFloat(r.CH_TOT_TRADED_QTY   || 0),
+        }))
+        .filter(r => r.close > 0);
 
-      await supabase.from('stock_price_data')
+      if (!toSave.length) throw new Error('No valid price records in response.');
+
+      // Save to data bank immediately
+      const { error: saveErr } = await supabase
+        .from('stock_price_data')
         .upsert(toSave, { onConflict: 'stock_name,trade_date' });
 
-      setFetchMsg(`✅ Fetched ${records.length} days from NSE!`);
+      if (saveErr) console.warn('Data bank save warning:', saveErr.message);
+
+      setFetchMsg(`✅ Saved ${toSave.length} months for ${stockName.toUpperCase()} (${exchange})!`);
       processMonthlyData(toSave);
 
     } catch (err: any) {
@@ -177,31 +186,35 @@ export default function StockAnalysis() {
 
       setOptFetchMsg('⏳ Fetching stock option chain via server...');
 
-      // Use Supabase Edge Function
-      const { data, error: fnError } = await supabase.functions.invoke('fetch-nse-data', {
+      // Use smooth-endpoint directly (routes stock_chain to Upstox v2)
+      const { data, error: fnError } = await supabase.functions.invoke('smooth-endpoint', {
         body: { type: 'stock_chain', symbol: stockName.toUpperCase() }
       });
 
       if (fnError) throw new Error(fnError.message);
       if (!data?.success) throw new Error(data?.error || 'Fetch failed');
 
-      const records = data.data?.records?.data || [];
-      if (!records.length) throw new Error(`No options data for ${stockName}`);
+      // smooth-endpoint returns { allExpiries: [{ expiry, strikes, spotPrice }], tradeDate }
+      const allExpiries: any[] = data.data?.allExpiries || [];
+      if (!allExpiries.length) throw new Error(`No options data for ${stockName}`);
 
-      // Parse strikes
+      // Find the requested expiry or fall back to first available
+      const selectedChain = allExpiries.find((e: any) => e.expiry === optExpiry) || allExpiries[0];
+      if (!selectedChain) throw new Error(`Expiry ${optExpiry} not found for ${stockName}`);
+
+      // Upstox v2 strikes already in correct format; normalise field names for DB
+      const rawStrikes: Record<string, any> = selectedChain.strikes || {};
       const strikes: Record<string, any> = {};
-      records.forEach((r: any) => {
-        const strike = r.strikePrice;
-        if (!strike) return;
-        strikes[strike] = {
-          ce_ltp: r.CE?.lastPrice || 0,
-          ce_oi: r.CE?.openInterest || 0,
-          ce_chng_oi: r.CE?.changeinOpenInterest || 0,
-          ce_vol: r.CE?.totalTradedVolume || 0,
-          pe_ltp: r.PE?.lastPrice || 0,
-          pe_oi: r.PE?.openInterest || 0,
-          pe_chng_oi: r.PE?.changeinOpenInterest || 0,
-          pe_vol: r.PE?.totalTradedVolume || 0,
+      Object.entries(rawStrikes).forEach(([k, v]: [string, any]) => {
+        strikes[k] = {
+          ce_ltp:    v.ce_ltp  || 0,
+          ce_oi:     v.ce_oi   || 0,
+          ce_chng_oi: v.ce_coi || 0,   // smooth-endpoint stores as ce_coi
+          ce_vol:    v.ce_vol  || 0,
+          pe_ltp:    v.pe_ltp  || 0,
+          pe_oi:     v.pe_oi   || 0,
+          pe_chng_oi: v.pe_coi || 0,   // smooth-endpoint stores as pe_coi
+          pe_vol:    v.pe_vol  || 0,
         };
       });
 
@@ -527,11 +540,21 @@ export default function StockAnalysis() {
               <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">Step 2 — Stock Details</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">NSE Symbol</label>
-                  <input type="text" value={stockName}
-                    onChange={e => setStockName(e.target.value.toUpperCase())}
-                    placeholder="e.g. RELIANCE, SBI, TCS"
-                    className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                  <label className="block text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">Exchange & Symbol</label>
+                  <div className="flex gap-2">
+                    <div className="flex rounded-lg overflow-hidden border border-[#1e1e2e] shrink-0">
+                      {(['NSE', 'BSE'] as const).map(ex => (
+                        <button key={ex} onClick={() => setExchange(ex)}
+                          className={`px-3 py-2.5 text-xs font-black transition-all ${exchange === ex ? 'bg-[#f0c040] text-black' : 'bg-[#16161f] text-[#6b6b85] hover:text-[#e8e8f0]'}`}>
+                          {ex}
+                        </button>
+                      ))}
+                    </div>
+                    <input type="text" value={stockName}
+                      onChange={e => setStockName(e.target.value.toUpperCase())}
+                      placeholder="e.g. RELIANCE, SBI, TCS"
+                      className="flex-1 bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                  </div>
                 </div>
                 {analysisType === 'gct' && (
                   <div>

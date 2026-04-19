@@ -60,8 +60,9 @@ async function getChain(instrKey, expiry, token, base) {
   return { expiry: expiry, strikes: strikes, spotPrice: spot };
 }
 
-async function fetchYahooPrice(symbol) {
-  var yahooSym = symbol.replace(/&/g, '-') + '.NS';
+async function fetchYahooPrice(symbol, exchange) {
+  var suffix = (exchange === 'BSE') ? '.BO' : '.NS';
+  var yahooSym = symbol.replace(/&/g, '-') + suffix;
   var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + yahooSym + '?range=14mo&interval=1mo';
   var res = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
@@ -117,7 +118,7 @@ Deno.serve(async function(req) {
     // ── STOCK PRICE: Yahoo Finance (fast, no auth needed) ──
     if (type === 'stock_price') {
       if (!symbol) return respond({ success: false, error: 'Missing symbol' }, 400);
-      var priceData = await fetchYahooPrice(symbol);
+      var priceData = await fetchYahooPrice(symbol, body.exchange || 'NSE');
       return respond({ success: true, data: priceData });
     }
 
