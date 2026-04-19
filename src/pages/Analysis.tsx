@@ -168,14 +168,16 @@ export default function Analysis() {
     }
   }
 
+  const isAdmin = profile?.role === 'admin';
+
   const TABS = [
     { id: 'verdict', label: '⚡ Verdict' },
     { id: 'raw', label: '📊 Raw Data' },
-    { id: 'decomp', label: '🔀 Decomp' },
+    ...(isAdmin ? [{ id: 'decomp', label: '🔀 Decomp' }] : []),
     { id: 'gp', label: '⚛ God Particle' },
     { id: 'story', label: '📖 Story' },
     { id: 'matrix', label: '🎯 Matrix' },
-    { id: 'ig', label: '📸 Instagram' },
+    ...(isAdmin ? [{ id: 'ig', label: '📸 Instagram' }] : []),
   ];
 
   return (
