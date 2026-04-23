@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { INDEX_CONFIG, calculateMaxPain, SnapshotType } from './z2h';
 
 // Backoff delays in ms: 3s, 8s, 20s, 45s, 90s
 const BACKOFF = [3000, 8000, 20000, 45000, 90000];
@@ -79,17 +80,30 @@ async function saveZ2HSnapshot(
   snapshotType: string,
   spotPrice: number,
   maxPain: number,
-  vix: number
+  vix: number,
+  strikeData?: Record<string, any>
 ) {
   try {
-    await supabase.from('z2h_snapshots').insert({
+    const payload: any = {
       index_name: indexName,
       expiry_date: expiry,
       snapshot_type: snapshotType,
       spot_price: spotPrice,
       max_pain: maxPain,
-      vix
-    });
+      vix,
+    };
+    if (strikeData) payload.strike_data = strikeData;
+
+    const { data: existing } = await supabase
+      .from('z2h_snapshots').select('id')
+      .eq('index_name', indexName).eq('expiry_date', expiry)
+      .eq('snapshot_type', snapshotType).limit(1);
+
+    if (existing && existing.length > 0) {
+      await supabase.from('z2h_snapshots').update(payload).eq('id', existing[0].id);
+    } else {
+      await supabase.from('z2h_snapshots').insert(payload);
+    }
   } catch {}
 }
 
@@ -162,9 +176,9 @@ async function processIndex(
         dayBefore.setDate(expiryDate.getDate() - 1);
 
         if (expiryDate.toDateString() === todayDate.toDateString()) {
-          await saveZ2HSnapshot(indexName, item.expiry, 'EXPIRY_EOD', item.spotPrice || 0, maxPain, 0);
+          await saveZ2HSnapshot(indexName, item.expiry, 'EXPIRY_EOD', item.spotPrice || 0, maxPain, 0, item.strikes);
         } else if (dayBefore.toDateString() === todayDate.toDateString()) {
-          await saveZ2HSnapshot(indexName, item.expiry, 'DAY_BEFORE', item.spotPrice || 0, maxPain, 0);
+          await saveZ2HSnapshot(indexName, item.expiry, 'DAY_BEFORE', item.spotPrice || 0, maxPain, 0, item.strikes);
         }
       }
     }
@@ -728,9 +742,62 @@ export async function autoFetchStockOptions(
   return strikes;
 }
 
+// ── Z2H CUSTOMER SNAPSHOT FETCH ──
+// Called by customers on expiry day. Fetches live option chain and saves as z2h_snapshot.
+export async function fetchAndSaveZ2HSnapshot(
+  indexKey: string,
+  expiry: string,
+  snapshotType: SnapshotType,
+  fetchedBy: string
+): Promise<{ spot: number; maxPain: number; vix: number; strikesCount: number }> {
+  const cfg = INDEX_CONFIG[indexKey];
+  if (!cfg) throw new Error(`Unknown index: ${indexKey}`);
 
+  const raw = await callEdge(cfg.edgeType);
+  if (!raw || !Array.isArray(raw)) throw new Error('Exchange returned no data');
 
+  // Find the matching expiry in the returned array
+  const item: any = raw.find((d: any) => d.expiry === expiry) ?? raw[0];
+  if (!item) throw new Error(`Expiry ${expiry} not found in exchange data`);
 
+  const strikes: Record<string, any> = item.strikes ?? {};
+  const spot: number = item.spotPrice ?? 0;
+  const vix: number = item.vix ?? 0;
+
+  if (Object.keys(strikes).length === 0) throw new Error('No strikes data from exchange');
+
+  const maxPain = calculateMaxPain(strikes);
+
+  const payload = {
+    index_name: indexKey,
+    expiry_date: expiry,
+    snapshot_type: snapshotType,
+    spot_price: spot,
+    max_pain: maxPain,
+    vix,
+    strike_data: strikes,
+    fetched_by: fetchedBy,
+    fetched_at: new Date().toISOString(),
+  };
+
+  // Upsert: overwrite if same (index, expiry, type) already exists for today
+  const { data: existing } = await supabase
+    .from('z2h_snapshots')
+    .select('id')
+    .eq('index_name', indexKey)
+    .eq('expiry_date', expiry)
+    .eq('snapshot_type', snapshotType)
+    .limit(1);
+
+  if (existing && existing.length > 0) {
+    await supabase.from('z2h_snapshots').update(payload).eq('id', existing[0].id);
+  } else {
+    const { error } = await supabase.from('z2h_snapshots').insert(payload);
+    if (error) throw new Error(error.message);
+  }
+
+  return { spot, maxPain, vix, strikesCount: Object.keys(strikes).length };
+}
 
 
 
