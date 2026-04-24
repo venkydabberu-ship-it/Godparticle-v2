@@ -34,9 +34,11 @@ Deno.serve(async (req) => {
   try {
     const rawBody = await req.text();
 
-    // Verify Cashfree webhook signature
-    const sig = req.headers.get('x-webhook-signature') || req.headers.get('x-cashfree-signature') || '';
+    // Verify Cashfree webhook signature (2025-01-01 format: HMAC-SHA256(timestamp + rawBody))
+    const sig       = req.headers.get('x-webhook-signature') || '';
+    const timestamp = req.headers.get('x-webhook-timestamp') || '';
     if (CF_SECRET && sig) {
+      const message = timestamp + rawBody;
       const key = await crypto.subtle.importKey(
         'raw',
         new TextEncoder().encode(CF_SECRET),
@@ -44,7 +46,7 @@ Deno.serve(async (req) => {
         false,
         ['sign'],
       );
-      const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(rawBody));
+      const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
       const expected = btoa(String.fromCharCode(...new Uint8Array(mac)));
       if (expected !== sig) {
         console.error('Webhook signature mismatch');
