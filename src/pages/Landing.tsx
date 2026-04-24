@@ -175,7 +175,7 @@ export default function Landing() {
               name: 'Zero To Hero',
               tagline: 'Expiry Day Intelligence',
               desc: 'Fully automated signal engine that runs on expiry days. 5 forces align to identify explosive OTM options before they move. Zero human intervention.',
-              badge: 'Premium+',
+              badge: 'Basic+',
               color: '#39d98a'
             },
             {
@@ -303,48 +303,38 @@ export default function Landing() {
           </h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 max-w-5xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto">
           {[
             {
               name: 'Free',
               price: '₹0',
               period: 'forever',
-              credits: '50 credits',
+              credits: '50 one-time credits',
               color: '#6b6b85',
-              features: ['God Particle Analysis', 'Nifty 50 only', '50 one-time credits'],
+              features: ['God Particle Analysis', 'Nifty 50 only', '50 signup credits', 'Zero to Hero — locked'],
               cta: 'Start Free',
               highlight: false
             },
             {
               name: 'Basic',
-              price: '₹100',
+              price: '₹99',
               period: '/month',
-              credits: '50 credits/month',
+              credits: '100 credits/month',
               color: '#f0c040',
-              features: ['God Particle Analysis', 'Nifty 50 + Sensex', '50 credits monthly'],
+              features: ['God Particle — 2 cr each', 'Zero to Hero — morning FREE', 'Z2H analysis — 10 cr each', 'All 7 indexes', 'Credits never expire', 'Top-up anytime'],
               cta: 'Get Basic',
               highlight: false
             },
             {
               name: 'Premium',
-              price: '₹300',
+              price: '₹299',
               period: '/month',
-              credits: '200 credits/month',
+              credits: 'Unlimited — no credits',
               color: '#39d98a',
-              features: ['God Particle Analysis', 'Zero To Hero signals', 'Stock Intelligence', 'All indices + stocks', '200 credits monthly'],
+              features: ['Everything unlimited', 'Zero To Hero FREE always', 'Stock Intelligence FREE', 'All indexes + all stocks', 'Admin pre-loads your data', 'Priority support'],
               cta: 'Get Premium',
               highlight: true
             },
-            {
-              name: 'Pro',
-              price: '₹2500',
-              period: '/month',
-              credits: '3000 credits/month',
-              color: '#4d9fff',
-              features: ['Everything in Premium', 'Auto stock data fetch', 'Priority support', 'Research PDF access', '3000 credits monthly'],
-              cta: 'Get Pro',
-              highlight: false
-            }
           ].map((plan, i) => (
             <div key={i} className={`bg-[#111118] rounded-2xl p-6 flex flex-col relative ${plan.highlight ? 'border-2' : 'border border-[#1e1e2e]'}`}
               style={{ borderColor: plan.highlight ? plan.color : undefined }}>
