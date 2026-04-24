@@ -9,107 +9,136 @@ export default function Pricing() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Handle return from Cashfree UPI redirect (order_id appears in URL)
+  // Handle return from Cashfree subscription flow (?sub_id=xxx)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const subId  = params.get('sub_id');
     const orderId = params.get('order_id');
-    if (!orderId) return;
 
-    const savedPlan = sessionStorage.getItem('cf_plan');
-    const savedCredits = sessionStorage.getItem('cf_credits');
-    setLoading(savedPlan || 'credits');
-
-    const body: any = { action: 'verify_payment', order_id: orderId };
-    if (savedPlan) body.plan = savedPlan;
-    if (savedCredits) body.credits = parseInt(savedCredits);
-
-    supabase.functions.invoke('activate-plan', { body }).then(({ data, error: fnErr }) => {
-      sessionStorage.removeItem('cf_plan');
-      sessionStorage.removeItem('cf_credits');
+    if (subId) {
+      setLoading('verifying');
       window.history.replaceState({}, '', window.location.pathname);
-      if (fnErr || !data?.success) {
-        setError('Payment received but activation failed. Order ID: ' + orderId + '. Contact support.');
-      } else {
-        setSuccess(savedPlan ? savedPlan + ' plan activated! Welcome to God Particle.' : savedCredits + ' credits added to your account!');
-        refreshProfile();
-      }
-      setLoading('');
-    });
+      supabase.functions
+        .invoke('activate-plan', { body: { action: 'verify_subscription', subscription_id: subId } })
+        .then(({ data, error: fnErr }) => {
+          if (fnErr || !data?.success) {
+            setError('Subscription pending. If you completed UPI setup, it activates within minutes. Sub ID: ' + subId);
+          } else {
+            setSuccess('Subscription activated! Welcome to God Particle ' + (profile?.subscription_plan ?? '') + '.');
+            refreshProfile();
+          }
+          setLoading('');
+        });
+      return;
+    }
+
+    if (orderId) {
+      const savedCredits = sessionStorage.getItem('cf_credits');
+      setLoading('credits');
+      window.history.replaceState({}, '', window.location.pathname);
+      supabase.functions
+        .invoke('activate-plan', { body: { action: 'verify_payment', order_id: orderId, credits: savedCredits ? parseInt(savedCredits) : 0 } })
+        .then(({ data, error: fnErr }) => {
+          sessionStorage.removeItem('cf_credits');
+          if (fnErr || !data?.success) {
+            setError('Payment received but activation failed. Order ID: ' + orderId + '. Contact support.');
+          } else {
+            setSuccess((savedCredits ?? '?') + ' credits added to your account!');
+            refreshProfile();
+          }
+          setLoading('');
+        });
+    }
   }, []);
 
-  async function openCashfree(
-    amountRupees: number,
-    label: string,
-    body: { plan?: string; credits?: number }
-  ) {
-    // Step 1 — create order server-side, get payment_session_id
-    const returnUrl = window.location.origin + '/pricing?order_id={order_id}';
-    const { data: orderData, error: orderErr } = await supabase.functions.invoke('activate-plan', {
-      body: {
-        action: 'create_order',
-        amount: amountRupees,
-        email: profile?.username ?? '',
-        phone: (profile as any)?.phone ?? '9999999999',
-        return_url: returnUrl,
-        ...body,
-      },
-    });
-    if (orderErr || !orderData?.payment_session_id) {
-      throw new Error(orderErr?.message || orderData?.error || 'Could not create payment order');
-    }
-
-    // Save plan/credits so redirect flow can verify after UPI redirect
-    if (body.plan) sessionStorage.setItem('cf_plan', body.plan);
-    if (body.credits) sessionStorage.setItem('cf_credits', String(body.credits));
-
-    // Step 2 — open Cashfree checkout modal
-    const cashfree = (window as any).Cashfree({ mode: 'production' });
-    const result = await cashfree.checkout({
-      paymentSessionId: orderData.payment_session_id,
-      redirectTarget: '_modal',
-    });
-
-    // If redirected (UPI apps), page will reload and useEffect handles verification
-    if (result?.redirect) return;
-
-    if (result?.error) {
-      sessionStorage.removeItem('cf_plan');
-      sessionStorage.removeItem('cf_credits');
-      throw new Error(result.error.message || 'Payment was cancelled');
-    }
-
-    // Step 3 — verify payment with backend
-    const { data: verifyData, error: verifyErr } = await supabase.functions.invoke('activate-plan', {
-      body: { action: 'verify_payment', order_id: orderData.order_id, ...body },
-    });
-    sessionStorage.removeItem('cf_plan');
-    sessionStorage.removeItem('cf_credits');
-    if (verifyErr || !verifyData?.success) {
-      throw new Error('Payment received but activation failed. Order ID: ' + orderData.order_id);
-    }
-    return true;
-  }
-
-  async function handlePayment(plan: string, amount: number, credits: number) {
+  // ── Subscribe to a plan (UPI AutoPay mandate) ──
+  async function handleSubscribe(plan: string) {
     setLoading(plan);
     setError('');
     setSuccess('');
     try {
-      await openCashfree(amount, plan, { plan });
-      setSuccess(plan + ' plan activated! Welcome to God Particle ' + plan + '.');
-      await refreshProfile();
+      const returnUrl = window.location.origin + '/pricing';
+      const { data, error: fnErr } = await supabase.functions.invoke('activate-plan', {
+        body: {
+          action:     'create_subscription',
+          plan,
+          email:      profile?.username ?? '',
+          phone:      (profile as any)?.phone ?? '9999999999',
+          return_url: returnUrl,
+        },
+      });
+      if (fnErr || !data?.subscribe_url) {
+        throw new Error(fnErr?.message || data?.error || 'Could not create subscription');
+      }
+      // Redirect to Cashfree UPI mandate page
+      window.location.href = data.subscribe_url;
     } catch (err: any) {
-      setError(err.message || 'Payment failed. Please try again.');
+      setError(err.message || 'Subscription failed. Please try again.');
+      setLoading('');
+    }
+  }
+
+  // ── Cancel subscription ──
+  async function handleCancel() {
+    if (!confirm('Cancel your subscription? You will lose access at end of current period.')) return;
+    setLoading('cancel');
+    setError('');
+    try {
+      const { data, error: fnErr } = await supabase.functions.invoke('activate-plan', {
+        body: { action: 'cancel_subscription' },
+      });
+      if (fnErr || !data?.success) throw new Error(fnErr?.message || data?.error || 'Cancel failed');
+      setSuccess('Subscription cancelled. Access continues until period end.');
+      refreshProfile();
+    } catch (err: any) {
+      setError(err.message || 'Cancel failed. Please try again.');
     }
     setLoading('');
   }
 
+  // ── Buy extra credits (one-time) ──
   async function handleBuyCredits(credits: number, price: number) {
     setLoading('credits');
     setError('');
     setSuccess('');
     try {
-      await openCashfree(price, 'credits', { credits });
+      const returnUrl = window.location.origin + '/pricing?order_id={order_id}';
+      const { data: orderData, error: orderErr } = await supabase.functions.invoke('activate-plan', {
+        body: {
+          action:     'create_order',
+          amount:     price,
+          email:      profile?.username ?? '',
+          phone:      (profile as any)?.phone ?? '9999999999',
+          return_url: returnUrl,
+        },
+      });
+      if (orderErr || !orderData?.payment_session_id) {
+        throw new Error(orderErr?.message || orderData?.error || 'Could not create payment order');
+      }
+
+      sessionStorage.setItem('cf_credits', String(credits));
+
+      const cashfree = (window as any).Cashfree({ mode: 'production' });
+      const result = await cashfree.checkout({
+        paymentSessionId: orderData.payment_session_id,
+        redirectTarget:   '_modal',
+      });
+
+      if (result?.redirect) return; // UPI redirect → page reloads → useEffect handles verification
+
+      if (result?.error) {
+        sessionStorage.removeItem('cf_credits');
+        throw new Error(result.error.message || 'Payment was cancelled');
+      }
+
+      // Inline verification (non-redirect flow)
+      const { data: verifyData, error: verifyErr } = await supabase.functions.invoke('activate-plan', {
+        body: { action: 'verify_payment', order_id: orderData.order_id, credits },
+      });
+      sessionStorage.removeItem('cf_credits');
+      if (verifyErr || !verifyData?.success) {
+        throw new Error('Payment received but activation failed. Order ID: ' + orderData.order_id);
+      }
       setSuccess(credits + ' credits added to your account!');
       await refreshProfile();
     } catch (err: any) {
@@ -117,6 +146,8 @@ export default function Pricing() {
     }
     setLoading('');
   }
+
+  const isSubscribed = ['ACTIVE', 'INITIALIZED', 'ON_HOLD'].includes((profile as any)?.subscription_status ?? '');
 
   const plans = [
     {
@@ -135,9 +166,8 @@ export default function Pricing() {
         'Stock Intelligence — locked 🔒',
       ],
       current: profile?.role === 'free',
-      action: null,
-      amount: 0,
       planKey: 'free',
+      amount: 0,
     },
     {
       name: 'Basic',
@@ -147,7 +177,7 @@ export default function Pricing() {
       color: '#f0c040',
       badge: 'POPULAR',
       features: [
-        '100 credits every month',
+        '100 credits every month (auto-renewed)',
         'God Particle — 2 credits each',
         'All 7 indexes + Sensex',
         'Zero to Hero — morning FREE',
@@ -156,9 +186,8 @@ export default function Pricing() {
         'Top-up anytime',
       ],
       current: profile?.role === 'basic',
-      action: () => handlePayment('Basic', 99, 0),
+      planKey: 'Basic',
       amount: 99,
-      planKey: 'basic',
     },
     {
       name: 'Premium',
@@ -178,9 +207,8 @@ export default function Pricing() {
         'Early access to new features',
       ],
       current: profile?.role === 'premium' || profile?.role === 'pro',
-      action: () => handlePayment('Premium', 299, 0),
+      planKey: 'Premium',
       amount: 299,
-      planKey: 'premium',
     },
   ];
 
@@ -218,6 +246,12 @@ export default function Pricing() {
           </p>
         </div>
 
+        {loading === 'verifying' && (
+          <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl px-4 py-3 text-sm font-mono text-[#f0c040] mb-6 text-center">
+            ⏳ Verifying subscription…
+          </div>
+        )}
+
         {error && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm font-mono text-red-400 mb-6 text-center">
             {error}
@@ -227,6 +261,30 @@ export default function Pricing() {
         {success && (
           <div className="bg-[#39d98a]/10 border border-[#39d98a]/30 rounded-xl px-4 py-3 text-sm font-mono text-[#39d98a] mb-6 text-center">
             {success}
+          </div>
+        )}
+
+        {/* Active subscription banner */}
+        {isSubscribed && (
+          <div className="bg-[#39d98a]/10 border border-[#39d98a]/30 rounded-2xl px-5 py-4 mb-8 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <div className="text-sm font-bold text-[#39d98a]">
+                ✓ Active Subscription — {(profile as any)?.subscription_plan} Plan
+              </div>
+              <div className="text-xs font-mono text-[#6b6b85] mt-0.5">
+                Status: {(profile as any)?.subscription_status}
+                {(profile as any)?.subscription_next_billing
+                  ? '  ·  Next billing: ' + new Date((profile as any).subscription_next_billing).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+                  : ''}
+              </div>
+            </div>
+            <button
+              onClick={handleCancel}
+              disabled={loading === 'cancel'}
+              className="text-xs font-mono text-red-400 border border-red-500/30 rounded-lg px-3 py-1.5 hover:bg-red-500/10 transition-all disabled:opacity-40"
+            >
+              {loading === 'cancel' ? '⏳ Cancelling…' : 'Cancel Subscription'}
+            </button>
           </div>
         )}
 
@@ -241,7 +299,6 @@ export default function Pricing() {
                   : 'border-[#1e1e2e]'
               }`}
             >
-              {/* Badge */}
               {plan.badge && (
                 <div
                   className="absolute -top-3 left-1/2 transform -translate-x-1/2 text-xs font-black px-3 py-1 rounded-full text-black"
@@ -251,17 +308,11 @@ export default function Pricing() {
                 </div>
               )}
 
-              {/* Plan name */}
-              <div className="font-black text-xl mb-1" style={{ color: plan.color }}>
-                {plan.name}
-              </div>
+              <div className="font-black text-xl mb-1" style={{ color: plan.color }}>{plan.name}</div>
               <div className="text-3xl font-black mb-1">{plan.price}</div>
               <div className="text-xs font-mono text-[#6b6b85] mb-2">{plan.period}</div>
-              <div className="text-xs font-mono mb-6" style={{ color: plan.color }}>
-                {plan.credits}
-              </div>
+              <div className="text-xs font-mono mb-6" style={{ color: plan.color }}>{plan.credits}</div>
 
-              {/* Features */}
               <ul className="space-y-2 mb-8 flex-1">
                 {plan.features.map((f, j) => (
                   <li key={j} className="text-xs font-mono text-[#6b6b85] flex items-start gap-2">
@@ -271,21 +322,26 @@ export default function Pricing() {
                 ))}
               </ul>
 
-              {/* Action button */}
               {plan.current ? (
                 <div className="w-full py-2.5 text-center text-xs font-bold border border-[#1e1e2e] rounded-xl text-[#6b6b85]">
                   ✓ Current Plan
                 </div>
-              ) : plan.action ? (
+              ) : plan.planKey !== 'free' ? (
                 <button
-                  onClick={plan.action}
+                  onClick={() => handleSubscribe(plan.planKey)}
                   disabled={loading === plan.planKey}
                   className="w-full py-2.5 text-xs font-black rounded-xl transition-all disabled:opacity-40 hover:opacity-90"
                   style={{ background: plan.color, color: '#000' }}
                 >
-                  {loading === plan.planKey ? '⏳ Processing...' : `Subscribe — ${plan.price}/mo`}
+                  {loading === plan.planKey ? '⏳ Processing…' : `Subscribe — ${plan.price}/mo`}
                 </button>
               ) : null}
+
+              {plan.planKey !== 'free' && (
+                <div className="mt-2 text-[10px] font-mono text-[#6b6b85] text-center">
+                  Auto-deducted monthly via UPI AutoPay
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -299,21 +355,21 @@ export default function Pricing() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
               {
-                action: '⚛ God Particle Analysis',
-                free: '2 credits',
-                basic: '2 credits',
+                action:  '⚛ God Particle Analysis',
+                free:    '2 credits',
+                basic:   '2 credits',
                 premium: '✅ FREE (unlimited)',
               },
               {
-                action: '🚀 Z2H Morning Snapshot',
-                free: '❌ Not available',
-                basic: '✅ FREE always',
+                action:  '🚀 Z2H Morning Snapshot',
+                free:    '❌ Not available',
+                basic:   '✅ FREE always',
                 premium: '✅ FREE always',
               },
               {
-                action: '📊 Z2H Analysis Snapshot',
-                free: '❌ Not available',
-                basic: '10 credits',
+                action:  '📊 Z2H Analysis Snapshot',
+                free:    '❌ Not available',
+                basic:   '10 credits',
                 premium: '✅ FREE (unlimited)',
               },
             ].map((item, i) => (
@@ -321,8 +377,8 @@ export default function Pricing() {
                 <div className="text-sm font-bold mb-3 text-[#f0c040]">{item.action}</div>
                 <div className="space-y-2">
                   {[
-                    { plan: 'Free', value: item.free },
-                    { plan: 'Basic', value: item.basic },
+                    { plan: 'Free',    value: item.free    },
+                    { plan: 'Basic',   value: item.basic   },
                     { plan: 'Premium', value: item.premium },
                   ].map((row, j) => (
                     <div key={j} className="flex items-center justify-between text-xs font-mono">
