@@ -28,8 +28,8 @@ async function verifySignature(secret, timestamp, body, sig) {
   return btoa(String.fromCharCode(...new Uint8Array(mac))) === sig;
 }
 
-async function patchProfile(supabaseUrl, serviceKey, profileId, data) {
-  const url = supabaseUrl + '/rest/v1/profiles?id=eq.' + profileId;
+async function patchRow(supabaseUrl, serviceKey, rowId, data) {
+  const url = supabaseUrl + '/rest/v1/profiles?id=eq.' + rowId;
   await fetch(url, {
     method: 'PATCH',
     headers: {
@@ -42,13 +42,14 @@ async function patchProfile(supabaseUrl, serviceKey, profileId, data) {
   });
 }
 
-async function findProfileBySubId(supabaseUrl, serviceKey, subId, fields) {
+async function findBySub(supabaseUrl, serviceKey, subId, fields) {
   const url = supabaseUrl + '/rest/v1/profiles?subscription_id=eq.' + encodeURIComponent(subId) + '&select=' + fields;
   const res = await fetch(url, {
     headers: { 'Authorization': 'Bearer ' + serviceKey, 'apikey': serviceKey },
   });
   const rows = await res.json();
-  return rows && rows[0];
+  if (!rows || !rows[0]) return null;
+  return rows[0];
 }
 
 Deno.serve(async (req) => {
@@ -59,9 +60,8 @@ Deno.serve(async (req) => {
   const CF_SECRET    = Deno.env.get('CASHFREE_SECRET_KEY');
 
   const respond = (body, status) => {
-    const s = status || 200;
     return new Response(JSON.stringify(body), {
-      status: s,
+      status: status || 200,
       headers: { ...CORS, 'Content-Type': 'application/json' },
     });
   };
@@ -77,45 +77,45 @@ Deno.serve(async (req) => {
     }
 
     const event     = JSON.parse(rawBody);
-    const eventType = event.type;
-    const eventData = event.data || {};
-    const sub       = eventData.subscription || {};
+    const eventType = event['type'];
+    const sub       = (event['data'] && event['data']['subscription']) || {};
 
     if (eventType === 'SUBSCRIPTION_PAYMENT_SUCCESS') {
-      const subId  = sub.subscription_id;
-      const planId = sub.plan_id;
+      const subId  = sub['subscription_id'];
+      const planId = sub['plan_id'];
 
       if (!subId) return respond({ received: true });
 
-      const profile = await findProfileBySubId(SUPABASE_URL, SERVICE_KEY, subId, 'id,credits');
-      if (!profile) return respond({ received: true });
+      const row = await findBySub(SUPABASE_URL, SERVICE_KEY, subId, 'id,credits');
+      if (!row) return respond({ received: true });
 
-      const profileId  = profile.id;
+      const rowId      = row['id'];
+      const rowCredits = row['credits'] || 0;
       const role       = PLAN_ROLE[planId]    || 'basic';
-      const newCredits = PLAN_CREDITS[planId] || 0;
+      const addCredits = PLAN_CREDITS[planId] || 0;
 
       const patch = { role: role, subscription_status: 'ACTIVE' };
-      if (sub.next_payment_time) patch.subscription_next_billing = sub.next_payment_time;
-      if (newCredits > 0) patch.credits = (profile.credits || 0) + newCredits;
+      if (sub['next_payment_time']) patch['subscription_next_billing'] = sub['next_payment_time'];
+      if (addCredits > 0) patch['credits'] = rowCredits + addCredits;
 
-      await patchProfile(SUPABASE_URL, SERVICE_KEY, profileId, patch);
+      await patchRow(SUPABASE_URL, SERVICE_KEY, rowId, patch);
       return respond({ received: true });
     }
 
     if (eventType === 'SUBSCRIPTION_STATUS_CHANGE') {
-      const subId  = sub.subscription_id;
-      const status = sub.subscription_status;
+      const subId  = sub['subscription_id'];
+      const status = sub['subscription_status'];
 
       if (!subId || !status) return respond({ received: true });
 
-      const profile = await findProfileBySubId(SUPABASE_URL, SERVICE_KEY, subId, 'id');
-      if (!profile) return respond({ received: true });
+      const row = await findBySub(SUPABASE_URL, SERVICE_KEY, subId, 'id');
+      if (!row) return respond({ received: true });
 
-      const profileId = profile.id;
+      const rowId = row['id'];
       const patch = { subscription_status: status };
-      if (status === 'CANCELLED' || status === 'EXPIRED') patch.role = 'free';
+      if (status === 'CANCELLED' || status === 'EXPIRED') patch['role'] = 'free';
 
-      await patchProfile(SUPABASE_URL, SERVICE_KEY, profileId, patch);
+      await patchRow(SUPABASE_URL, SERVICE_KEY, rowId, patch);
       return respond({ received: true });
     }
 
