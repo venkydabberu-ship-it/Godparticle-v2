@@ -148,20 +148,24 @@ Deno.serve(async function(req) {
           throw new Error('Amount mismatch for credits');
         }
 
-        await fetch(SUPABASE_URL + '/rest/v1/rpc/add_credits', {
-          method: 'POST',
+        // Fetch current credits then add
+        var profileRes = await fetch(SUPABASE_URL + '/rest/v1/profiles?id=eq.' + userId + '&select=credits', {
+          headers: { 'Authorization': 'Bearer ' + SERVICE_KEY, 'apikey': SERVICE_KEY },
+        });
+        var profileData = await profileRes.json();
+        var currentCredits = profileData?.[0]?.credits ?? 0;
+
+        var creditUpdateRes = await fetch(SUPABASE_URL + '/rest/v1/profiles?id=eq.' + userId, {
+          method: 'PATCH',
           headers: {
             'Authorization': 'Bearer ' + SERVICE_KEY,
             'apikey':         SERVICE_KEY,
             'Content-Type':   'application/json',
+            'Prefer':         'return=minimal',
           },
-          body: JSON.stringify({
-            p_user_id:    userId,
-            p_credits:    creditNum,
-            p_type:       'purchase',
-            p_description: 'Purchased ' + creditNum + ' credits via Cashfree',
-          }),
+          body: JSON.stringify({ credits: currentCredits + creditNum }),
         });
+        if (!creditUpdateRes.ok) throw new Error('Credit update failed');
 
       } else {
         throw new Error('Must provide plan or credits');
