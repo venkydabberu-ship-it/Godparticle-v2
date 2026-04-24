@@ -47,28 +47,32 @@ export default function ZeroToHero() {
       const next = dates[0];
       setExpiry(next);
       const [y, m] = next.split('-').map(Number);
-      setCalYear(y); setCalMonth(m - 1);
+      setCalYear(y);
+      setCalMonth(m - 1);
     }
-    setResult(null); setSnapshots([]);
+    setResult(null);
+    setSnapshots([]);
   }, [index]);
 
   useEffect(() => {
     if (!expiry) return;
-    setResult(null); setError('');
+    setResult(null);
+    setError('');
     if (isExpiryDay(index, expiry)) loadSnapshots();
     else setSnapshots([]);
   }, [expiry, index]);
 
   async function loadSnapshots() {
     const { data } = await supabase
-      .from('z2h_snapshots').select('*')
-      .eq('index_name', index).eq('expiry_date', expiry)
+      .from('z2h_snapshots')
+      .select('*')
+      .eq('index_name', index)
+      .eq('expiry_date', expiry)
       .order('snapshot_type');
     setSnapshots(data || []);
   }
 
-  const getSnap = (type: SnapshotType) =>
-    snapshots.find(s => s.snapshot_type === type) ?? null;
+  const getSnap = (type: SnapshotType) => snapshots.find(s => s.snapshot_type === type) ?? null;
   const snap930 = getSnap('EXPIRY_930');
   const snap1115 = getSnap('EXPIRY_1115');
   const snapDayBefore = getSnap('DAY_BEFORE');
@@ -78,27 +82,31 @@ export default function ZeroToHero() {
     const lastDate = new Date(calYear, calMonth + 1, 0).getDate();
     const cells: (string | null)[] = Array(firstDow).fill(null);
     for (let d = 1; d <= lastDate; d++)
-      cells.push(`${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
+      cells.push(`${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
     return cells;
   }
 
   function prevMonth() {
-    if (calMonth === 0) { setCalYear(y => y-1); setCalMonth(11); }
-    else setCalMonth(m => m-1);
+    if (calMonth === 0) { setCalYear(y => y - 1); setCalMonth(11); }
+    else setCalMonth(m => m - 1);
   }
   function nextMonth() {
-    if (calMonth === 11) { setCalYear(y => y+1); setCalMonth(0); }
-    else setCalMonth(m => m+1);
+    if (calMonth === 11) { setCalYear(y => y + 1); setCalMonth(0); }
+    else setCalMonth(m => m + 1);
   }
 
   async function fetchMorning() {
     if (!user) return;
-    setError(''); setFetchingMorning(true);
+    setError('');
+    setFetchingMorning(true);
     try {
-      await fetchAndSaveZ2HSnapshot(index, expiry, 'EXPIRY_930', <user.id>);
+      await fetchAndSaveZ2HSnapshot(index, expiry, 'EXPIRY_930', user.id);
       await loadSnapshots();
-    } catch (e: any) { setError('Morning fetch failed: ' + e.message); }
-    finally { setFetchingMorning(false); }
+    } catch (e: any) {
+      setError('Morning fetch failed: ' + e.message);
+    } finally {
+      setFetchingMorning(false);
+    }
   }
 
   async function fetchAnalysis() {
@@ -106,21 +114,25 @@ export default function ZeroToHero() {
     setError('');
     if (isBasic) {
       if (credits < 5) { setError('Need 5 credits for analysis snapshot!'); return; }
-      const { error: ce } = await supabase.rpc('use_credits', { p_user_id: <user.id>, p_credits: 5 });
+      const { error: ce } = await supabase.rpc('use_credits', { p_user_id: user.id, p_credits: 5 });
       if (ce) { setError('Credit deduction failed!'); return; }
       await refreshProfile();
     }
     setFetchingAnalysis(true);
     try {
-      await fetchAndSaveZ2HSnapshot(index, expiry, 'EXPIRY_1115', <user.id>);
+      await fetchAndSaveZ2HSnapshot(index, expiry, 'EXPIRY_1115', user.id);
       await loadSnapshots();
-    } catch (e: any) { setError('Analysis fetch failed: ' + e.message); }
-    finally { setFetchingAnalysis(false); }
+    } catch (e: any) {
+      setError('Analysis fetch failed: ' + e.message);
+    } finally {
+      setFetchingAnalysis(false);
+    }
   }
 
   async function runAnalysis() {
     if (!snap930 || !snap1115) return;
-    setAnalyzing(true); setError('');
+    setAnalyzing(true);
+    setError('');
     try {
       const r = computeZ2H(
         snapDayBefore as Z2HSnapshot | null,
@@ -129,14 +141,17 @@ export default function ZeroToHero() {
         index
       );
       setResult(r);
-    } catch (e: any) { setError('Analysis error: ' + e.message); }
-    finally { setAnalyzing(false); }
+    } catch (e: any) {
+      setError('Analysis error: ' + e.message);
+    } finally {
+      setAnalyzing(false);
+    }
   }
+
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-[#e8e8f0]">
       <div className="fixed inset-0 bg-[linear-gradient(rgba(240,192,64,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(240,192,64,0.03)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none" />
 
-      {/* Navbar */}
       <nav className="relative z-10 flex items-center justify-between px-6 py-4 border-b border-[#1e1e2e]">
         <Link to="/dashboard" className="flex items-center gap-3">
           <div className="w-9 h-9 bg-[#f0c040] rounded-xl flex items-center justify-center text-lg">⚛</div>
@@ -152,7 +167,6 @@ export default function ZeroToHero() {
 
       <div className="relative z-10 max-w-4xl mx-auto px-6 py-8">
 
-        {/* Header */}
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">
             <div className="text-2xl">🚀</div>
@@ -162,7 +176,6 @@ export default function ZeroToHero() {
           <p className="text-xs font-mono text-[#6b6b85]">Identifies deeply OTM options on expiry day with 3x–10x potential.</p>
         </div>
 
-        {/* Free lock */}
         {!canAccess && (
           <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-2xl p-6 mb-6 text-center">
             <div className="text-3xl mb-3">🔒</div>
@@ -172,11 +185,10 @@ export default function ZeroToHero() {
           </div>
         )}
 
-        {/* Basic notice */}
         {isBasic && (
           <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-2xl p-4 mb-6">
             <div className="text-xs font-mono text-[#f0c040]">
-              ⚡ Basic Plan · Morning snapshot is FREE · Analysis snapshot costs 5 credits · You have {credits} credits ·
+              ⚡ Basic Plan · Morning snapshot FREE · Analysis snapshot 5 credits · You have {credits} credits ·
               <Link to="/pricing" className="underline ml-1">Upgrade for unlimited access →</Link>
             </div>
           </div>
@@ -208,23 +220,17 @@ export default function ZeroToHero() {
             {/* STEP 2 — Calendar */}
             <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6 mb-4">
               <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-4">Step 2 · Select Expiry Date</div>
-
               <div className="bg-[#16161f] border border-[#1e1e2e] rounded-xl p-4">
-                {/* Month nav */}
                 <div className="flex items-center justify-between mb-4">
                   <button onClick={prevMonth} className="w-8 h-8 rounded-lg bg-[#1e1e2e] hover:bg-[#2e2e3e] flex items-center justify-center text-[#6b6b85] hover:text-white transition-all text-lg">‹</button>
                   <span className="text-sm font-bold">{MONTHS[calMonth]} {calYear}</span>
                   <button onClick={nextMonth} className="w-8 h-8 rounded-lg bg-[#1e1e2e] hover:bg-[#2e2e3e] flex items-center justify-center text-[#6b6b85] hover:text-white transition-all text-lg">›</button>
                 </div>
-
-                {/* Day headers */}
                 <div className="grid grid-cols-7 gap-1 mb-1">
                   {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
                     <div key={d} className="text-center text-[10px] font-mono text-[#6b6b85] py-1">{d}</div>
                   ))}
                 </div>
-
-                {/* Date cells */}
                 <div className="grid grid-cols-7 gap-1">
                   {buildCalCells().map((dateStr, i) => {
                     if (!dateStr) return <div key={`e-${i}`} />;
@@ -252,20 +258,16 @@ export default function ZeroToHero() {
                   })}
                 </div>
               </div>
-
-              {/* Legend */}
               <div className="flex flex-wrap items-center gap-4 mt-3 text-[10px] font-mono text-[#6b6b85]">
                 <div className="flex items-center gap-1.5">
                   <div className="w-3 h-3 rounded" style={{ background: cfg.color }} />
-                  <span>Expiry Day — click to select</span>
+                  <span>Expiry Day</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <div className="w-1 h-1 rounded-full bg-[#f0c040]" />
                   <span>Today</span>
                 </div>
               </div>
-
-              {/* Expiry validation banner */}
               {expiry && (
                 <div className={`mt-3 rounded-xl px-4 py-3 text-xs font-mono border ${
                   selectedIsExpiry
@@ -279,18 +281,15 @@ export default function ZeroToHero() {
                 </div>
               )}
             </div>
+
             {/* STEP 3 — Snapshots */}
             {selectedIsExpiry && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6 mb-4">
                 <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-4">Step 3 · Capture Market Snapshots</div>
-
                 {error && (
                   <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#ff4d6d] mb-4">{error}</div>
                 )}
-
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-
-                  {/* Morning Snapshot — FREE */}
                   <div className={`rounded-xl p-4 border ${snap930 ? 'border-[#39d98a]/30 bg-[#39d98a]/5' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
                     <div className="flex items-center justify-between mb-2">
                       <div>
@@ -319,7 +318,6 @@ export default function ZeroToHero() {
                     )}
                   </div>
 
-                  {/* Analysis Snapshot — paid for basic */}
                   <div className={`rounded-xl p-4 border ${snap1115 ? 'border-[#f0c040]/30 bg-[#f0c040]/5' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
                     <div className="flex items-center justify-between mb-2">
                       <div>
@@ -327,9 +325,7 @@ export default function ZeroToHero() {
                         <div className="text-[10px] font-mono text-[#6b6b85]">Ideal: 11:15 AM · fetch anytime</div>
                       </div>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                        isPremiumPlus
-                          ? 'bg-[#f0c040]/10 text-[#f0c040] border-[#f0c040]/20'
-                          : 'bg-[#ff8c42]/10 text-[#ff8c42] border-[#ff8c42]/20'
+                        isPremiumPlus ? 'bg-[#f0c040]/10 text-[#f0c040] border-[#f0c040]/20' : 'bg-[#ff8c42]/10 text-[#ff8c42] border-[#ff8c42]/20'
                       }`}>{isPremiumPlus ? 'FREE' : '5 Credits'}</span>
                     </div>
                     {snap1115 ? (
@@ -356,7 +352,6 @@ export default function ZeroToHero() {
                   </div>
                 </div>
 
-                {/* Admin — all 5 snapshots */}
                 {isAdmin && (
                   <div className="mt-2">
                     <div className="text-[10px] font-mono text-[#f0c040] font-bold mb-2 uppercase tracking-widest">Admin · All Snapshots</div>
@@ -392,6 +387,7 @@ export default function ZeroToHero() {
                 </button>
               </div>
             )}
+
             {/* RESULT */}
             {result && (
               <div>
@@ -400,57 +396,39 @@ export default function ZeroToHero() {
                     <div className="text-4xl mb-4">🚫</div>
                     <div className="text-xl font-black mb-2 text-[#ff4d6d]">NO TRADE TODAY</div>
                     <div className="text-sm font-mono text-[#6b6b85] mb-4">{result.reason}</div>
-                    <div className="text-xs font-mono text-[#6b6b85]">
-                      Forces aligned: {result.forces?.count ?? 0}/5 · Direction: {result.direction}
-                    </div>
-                    <div className="mt-4 text-xs font-mono text-[#f0c040]">
-                      ⭐ Patience is the edge. Wait for next expiry with 4+ forces.
-                    </div>
+                    <div className="text-xs font-mono text-[#6b6b85]">Forces aligned: {result.forces?.count ?? 0}/5 · Direction: {result.direction}</div>
+                    <div className="mt-4 text-xs font-mono text-[#f0c040]">⭐ Patience is the edge. Wait for next expiry with 4+ forces.</div>
                   </div>
                 ) : (
-                  <div>
+                  <>
                     {(() => {
                       const isBull = result.direction === 'BULLISH';
                       const col = isBull ? '#39d98a' : '#ff4d6d';
                       const entryLTP = result.entryLTPRef ?? 0;
-                      const sl = Math.round(entryLTP * result.stopLossPct);
-                      const t1 = Math.round(entryLTP * result.target1x);
-                      const t2 = Math.round(entryLTP * result.target2x);
-                      const hero = Math.round(entryLTP * result.heroX);
+                      const sl = Math.round(entryLTP * (result.stopLossPct ?? 0.5));
+                      const t1 = Math.round(entryLTP * (result.target1x ?? 3));
+                      const t2 = Math.round(entryLTP * (result.target2x ?? 5));
+                      const hero = Math.round(entryLTP * (result.heroX ?? 10));
                       return (
                         <div className="relative rounded-2xl overflow-hidden p-8 mb-6"
                           style={{
-                            background: isBull
-                              ? 'linear-gradient(135deg,#0a0a0f 0%,#0a1a0a 50%,#0a0a0f 100%)'
-                              : 'linear-gradient(135deg,#0a0a0f 0%,#1a0a0a 50%,#0a0a0f 100%)',
+                            background: isBull ? 'linear-gradient(135deg,#0a0a0f 0%,#0a1a0a 50%,#0a0a0f 100%)' : 'linear-gradient(135deg,#0a0a0f 0%,#1a0a0a 50%,#0a0a0f 100%)',
                             border: `1px solid ${col}4d`,
                             boxShadow: `0 0 60px ${col}14`
                           }}>
-
-                          {/* Watermark */}
                           <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
                             <div className="text-[180px] font-black opacity-[0.03]" style={{ color: col }}>🚀</div>
                           </div>
-
                           <div className="relative z-10">
-                            {/* Header */}
                             <div className="text-center mb-8">
-                              <div className="text-xs font-mono tracking-[3px] mb-2" style={{ color: col }}>
-                                🚀 ZERO TO HERO SIGNAL
-                              </div>
-                              <div className="text-3xl font-black mb-1" style={{ color: col }}>
-                                {result.selectedStrike} {result.optionType}
-                              </div>
-                              <div className="text-sm font-mono text-[#6b6b85]">
-                                {index} · Expiry: {expiry}
-                              </div>
+                              <div className="text-xs font-mono tracking-[3px] mb-2" style={{ color: col }}>🚀 ZERO TO HERO SIGNAL</div>
+                              <div className="text-3xl font-black mb-1" style={{ color: col }}>{result.selectedStrike} {result.optionType}</div>
+                              <div className="text-sm font-mono text-[#6b6b85]">{index} · Expiry: {expiry}</div>
                               <div className="mt-2 inline-block px-4 py-1 rounded-full text-xs font-bold"
                                 style={{ background: `${col}1a`, color: col, border: `1px solid ${col}4d` }}>
                                 {isBull ? '📈 BULLISH' : '📉 BEARISH'} · {result.forces?.count ?? 0}/5 Forces
                               </div>
                             </div>
-
-                            {/* Entry Info */}
                             <div className="grid grid-cols-2 gap-4 mb-6">
                               <div className="bg-black/20 rounded-xl p-4 text-center">
                                 <div className="text-xs font-mono text-[#6b6b85] mb-1 uppercase tracking-widest">⏰ Entry Time</div>
@@ -459,14 +437,10 @@ export default function ZeroToHero() {
                               </div>
                               <div className="bg-black/20 rounded-xl p-4 text-center">
                                 <div className="text-xs font-mono text-[#6b6b85] mb-1 uppercase tracking-widest">💰 Entry Zone</div>
-                                <div className="text-2xl font-black" style={{ color: col }}>
-                                  {entryLTP > 0 ? `₹${entryLTP}` : 'At Market'}
-                                </div>
+                                <div className="text-2xl font-black" style={{ color: col }}>{entryLTP > 0 ? `₹${entryLTP}` : 'At Market'}</div>
                                 <div className="text-xs font-mono text-[#6b6b85] mt-1">LTP ref at 11:15 AM</div>
                               </div>
                             </div>
-
-                            {/* Targets Table */}
                             <div className="rounded-xl overflow-hidden mb-6" style={{ border: `1px solid ${col}33` }}>
                               <table className="w-full font-mono text-sm">
                                 <thead>
@@ -478,10 +452,10 @@ export default function ZeroToHero() {
                                 </thead>
                                 <tbody>
                                   {[
-                                    { level: '🛑 Stop Loss',   price: sl,   ret: '-50%',  action: 'EXIT ALL',       color: '#ff4d6d' },
-                                    { level: '🎯 Target 1',    price: t1,   ret: '3x',    action: 'Exit 50%',       color: '#f0c040' },
-                                    { level: '🎯 Target 2',    price: t2,   ret: '5x',    action: 'Exit 30%',       color: '#39d98a' },
-                                    { level: '💎 Hero Target', price: hero, ret: '10x',   action: 'Let 20% ride',   color: '#4d9fff' },
+                                    { level: '🛑 Stop Loss',   price: sl,   ret: '-50%', action: 'EXIT ALL',     color: '#ff4d6d' },
+                                    { level: '🎯 Target 1',    price: t1,   ret: '3x',   action: 'Exit 50%',     color: '#f0c040' },
+                                    { level: '🎯 Target 2',    price: t2,   ret: '5x',   action: 'Exit 30%',     color: '#39d98a' },
+                                    { level: '💎 Hero Target', price: hero, ret: '10x',  action: 'Let 20% ride', color: '#4d9fff' },
                                   ].map((row, i) => (
                                     <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                                       <td className="px-4 py-3 font-bold text-xs" style={{ color: row.color }}>{row.level}</td>
@@ -493,8 +467,6 @@ export default function ZeroToHero() {
                                 </tbody>
                               </table>
                             </div>
-
-                            {/* Skip Conditions */}
                             {result.skipConditions?.length > 0 && (
                               <div className="bg-black/20 rounded-xl p-4 mb-6">
                                 <div className="text-xs font-mono text-[#ff4d6d] font-bold mb-2 uppercase tracking-widest">⚠️ Skip Trade If</div>
@@ -503,47 +475,38 @@ export default function ZeroToHero() {
                                 ))}
                               </div>
                             )}
-
-                            {/* 5-Force Breakdown — premium/pro/admin */}
                             {isPremiumPlus && result.forces && (
                               <div className="bg-black/20 rounded-xl p-4 mb-6">
                                 <div className="text-xs font-mono text-[#f0c040] font-bold mb-3 uppercase tracking-widest">🔬 5-Force Analysis</div>
                                 <div className="grid grid-cols-1 gap-2">
                                   {[
-                                    { label: 'Force 1 — Direction (200pt move)',  ok: result.forces.direction },
-                                    { label: 'Force 2 — OI Accumulation',         ok: result.forces.oi       },
-                                    { label: 'Force 3 — PCB / God Particle',      ok: result.forces.pcb      },
-                                    { label: 'Force 4 — Max Pain Gravity',        ok: result.forces.maxPain  },
-                                    { label: 'Force 5 — VIX + Gamma Window',     ok: result.forces.vix      },
+                                    { label: 'Force 1 — Direction (200pt move)', ok: result.forces.direction },
+                                    { label: 'Force 2 — OI Accumulation',        ok: result.forces.oi       },
+                                    { label: 'Force 3 — PCB / God Particle',     ok: result.forces.pcb      },
+                                    { label: 'Force 4 — Max Pain Gravity',       ok: result.forces.maxPain  },
+                                    { label: 'Force 5 — VIX + Gamma Window',    ok: result.forces.vix      },
                                   ].map((f, i) => (
                                     <div key={i} className="flex items-center justify-between text-xs font-mono">
                                       <span className="text-[#6b6b85]">{f.label}</span>
-                                      <span className={f.ok ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}>
-                                        {f.ok ? '✅ CONFIRMED' : '❌ NOT MET'}
-                                      </span>
+                                      <span className={f.ok ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}>{f.ok ? '✅ CONFIRMED' : '❌ NOT MET'}</span>
                                     </div>
                                   ))}
                                 </div>
                                 <div className="mt-3 pt-3 border-t border-[#1e1e2e] flex items-center justify-between">
                                   <span className="text-xs font-mono text-[#6b6b85]">Forces Aligned</span>
-                                  <span className={`text-sm font-black ${
-                                    result.forces.count >= 4 ? 'text-[#39d98a]' :
-                                    result.forces.count >= 3 ? 'text-[#f0c040]' : 'text-[#ff4d6d]'
-                                  }`}>{result.forces.count}/5</span>
+                                  <span className={`text-sm font-black ${result.forces.count >= 4 ? 'text-[#39d98a]' : result.forces.count >= 3 ? 'text-[#f0c040]' : 'text-[#ff4d6d]'}`}>
+                                    {result.forces.count}/5
+                                  </span>
                                 </div>
                               </div>
                             )}
-
-                            {/* Market Context — admin */}
                             {isAdmin && (
                               <div className="bg-black/20 rounded-xl p-4 mb-6">
                                 <div className="text-xs font-mono text-[#f0c040] font-bold mb-3 uppercase tracking-widest">📊 Market Context</div>
                                 <div className="grid grid-cols-3 gap-4 text-xs font-mono">
                                   <div>
                                     <div className="text-[#6b6b85] mb-1">Spot Move</div>
-                                    <div className={`font-bold ${result.spotMove < 0 ? 'text-[#ff4d6d]' : 'text-[#39d98a]'}`}>
-                                      {result.spotMove > 0 ? '+' : ''}{Math.round(result.spotMove)} pts
-                                    </div>
+                                    <div className={`font-bold ${result.spotMove < 0 ? 'text-[#ff4d6d]' : 'text-[#39d98a]'}`}>{result.spotMove > 0 ? '+' : ''}{Math.round(result.spotMove)} pts</div>
                                   </div>
                                   <div>
                                     <div className="text-[#6b6b85] mb-1">Max Pain</div>
@@ -551,32 +514,23 @@ export default function ZeroToHero() {
                                   </div>
                                   <div>
                                     <div className="text-[#6b6b85] mb-1">VIX</div>
-                                    <div className={`font-bold ${result.vix1115 >= 18 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>
-                                      {result.vix1115}
-                                    </div>
+                                    <div className={`font-bold ${result.vix1115 >= 18 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>{result.vix1115}</div>
                                   </div>
                                 </div>
                               </div>
                             )}
-
-                            {/* Footer */}
                             <div className="text-center space-y-2">
-                              <div className="text-xs font-mono text-[#6b6b85]">
-                                ⭐ Entry only between 1:15 PM – 2:00 PM · Not Financial Advice
-                              </div>
-                              <div className="text-xs font-black tracking-widest" style={{ color: col }}>
-                                DEVELOPED BY GOD PARTICLE ⚛
-                              </div>
+                              <div className="text-xs font-mono text-[#6b6b85]">⭐ Entry only between 1:15 PM – 2:00 PM · Not Financial Advice</div>
+                              <div className="text-xs font-black tracking-widest" style={{ color: col }}>DEVELOPED BY GOD PARTICLE ⚛</div>
                             </div>
                           </div>
                         </div>
                       );
                     })()}
-                  </div>
+                  </>
                 )}
               </div>
             )}
-
           </>
         )}
       </div>
