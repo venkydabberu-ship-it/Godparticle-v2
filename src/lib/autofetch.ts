@@ -107,23 +107,6 @@ async function saveZ2HSnapshot(
   } catch {}
 }
 
-// ── CALCULATE MAX PAIN ──
-function calculateMaxPain(strikes: Record<string, any>): number {
-  const strikeList = Object.keys(strikes).map(Number).sort((a, b) => a - b);
-  let minPain = Infinity;
-  let maxPainStrike = strikeList[0] || 0;
-  strikeList.forEach(testStrike => {
-    let totalPain = 0;
-    strikeList.forEach(s => {
-      const sd = strikes[s];
-      if (testStrike > s) totalPain += (testStrike - s) * (sd.ce_oi || 0);
-      if (testStrike < s) totalPain += (s - testStrike) * (sd.pe_oi || 0);
-    });
-    if (totalPain < minPain) { minPain = totalPain; maxPainStrike = testStrike; }
-  });
-  return maxPainStrike;
-}
-
 // ── PROCESS ONE INDEX ──
 async function processIndex(
   indexKey: string,
