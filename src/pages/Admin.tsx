@@ -571,10 +571,9 @@ export default function Admin() {
                 { label: 'Free Users', value: stats.freeUsers, color: '#6b6b85' },
                 { label: 'Basic Users', value: stats.basicUsers, color: '#f0c040' },
                 { label: 'Premium Users', value: stats.premiumUsers, color: '#39d98a' },
-                { label: 'Pro Users', value: stats.proUsers, color: '#4d9fff' },
                 { label: 'Total Analyses', value: stats.totalAnalyses, color: '#ff4d6d' },
                 { label: 'Pending Queries', value: stats.pendingQueries, color: '#f0c040' },
-                { label: 'Revenue Est.', value: `Rs.${((stats.basicUsers ?? 0) * 100 + (stats.premiumUsers ?? 0) * 300 + (stats.proUsers ?? 0) * 2500).toLocaleString()}`, color: '#39d98a' },
+                { label: 'Revenue Est.', value: `₹${((stats.basicUsers ?? 0) * 99 + (stats.premiumUsers ?? 0) * 299).toLocaleString()}`, color: '#39d98a' },
               ].map((s, i) => (
                 <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4">
                   <div className="text-xs font-mono text-[#6b6b85] mb-1">{s.label}</div>
@@ -621,7 +620,6 @@ export default function Admin() {
                     <option value="free">Free</option>
                     <option value="basic">Basic</option>
                     <option value="premium">Premium</option>
-                    <option value="pro">Pro</option>
                     <option value="admin">Admin</option>
                   </select>
                   <button onClick={handleChangeRole}
@@ -657,7 +655,6 @@ export default function Admin() {
                           <option value="free">Free</option>
                           <option value="basic">Basic</option>
                           <option value="premium">Premium</option>
-                          <option value="pro">Pro</option>
                           <option value="admin">Admin</option>
                         </select>
                       </td>
