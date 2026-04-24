@@ -127,12 +127,6 @@ export default function ZeroToHero() {
     } finally {
       setFetchingAnalysis(false);
     }
-    setFetchingAnalysis(true);
-    try {
-      await fetchAndSaveZ2HSnapshot(index, expiry, 'EXPIRY_1115', <user.id>);
-      await loadSnapshots();
-    } catch (e: any) { setError('Analysis fetch failed: ' + e.message); }
-    finally { setFetchingAnalysis(false); }
   }
 
   async function runAnalysis() {
