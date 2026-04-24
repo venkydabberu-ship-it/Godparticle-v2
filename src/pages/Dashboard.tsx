@@ -165,6 +165,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
             { label: 'Credits', value: ['premium','admin','pro'].includes(role) ? '∞' : profile?.credits ?? 0, color: '#f0c040' },
+
             { label: 'Plan', value: role.toUpperCase(), color: '#f0c040' },
             { label: 'Analyses Done', value: analyses.length, color: '#4d9fff' },
             { label: 'Cost Per Analysis', value: '2 credits', color: '#39d98a' }
@@ -177,13 +178,32 @@ export default function Dashboard() {
         </div>
 
         {/* Low credits warning */}
-        {!['premium','admin','pro'].includes(role) && (profile?.credits ?? 0) < 10 && (
+        {!['premium','admin','pro'].includes(role) && (profile?.credits ?? 0) < 20 && (
           <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl px-4 py-3 flex items-center justify-between">
             <div className="text-xs font-mono text-[#ff4d6d]">
               ⚠️ Low credits! You have {profile?.credits} credits left ({Math.floor((profile?.credits ?? 0) / 2)} analyses remaining)
             </div>
             <Link to="/pricing" className="bg-[#f0c040] text-black text-xs font-black px-3 py-1.5 rounded-lg">
               Buy Credits
+            </Link>
+          </div>
+        )}
+
+        {/* FOMO banner — free users on expiry day */}
+        {isExpiryDay && role === 'free' && (
+          <div className="bg-gradient-to-r from-[#39d98a]/10 to-[#f0c040]/10 border border-[#39d98a]/30 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div>
+              <div className="text-sm font-black text-[#39d98a] mb-1 flex items-center gap-2">
+                <span className="w-2 h-2 bg-[#39d98a] rounded-full animate-pulse inline-block" />
+                ⏰ TODAY IS {expiryIndex.toUpperCase()} EXPIRY DAY!
+              </div>
+              <div className="text-xs font-mono text-[#6b6b85]">
+                Zero to Hero signal is LIVE right now. Thousands of traders are using it. Don't miss it.
+              </div>
+            </div>
+            <Link to="/pricing"
+              className="shrink-0 bg-[#39d98a] text-black font-black text-xs px-5 py-2.5 rounded-xl hover:opacity-90 transition-all whitespace-nowrap">
+              Upgrade for ₹99 →
             </Link>
           </div>
         )}
@@ -208,7 +228,7 @@ export default function Dashboard() {
                 }
               </div>
             </div>
-            {['premium','pro','admin'].includes(role) ? (
+            {['basic','premium','pro','admin'].includes(role) ? (
               <Link to="/zero-to-hero"
                 className="bg-[#39d98a] text-black text-xs font-black px-4 py-2 rounded-lg hover:opacity-90 transition-all">
                 View Signal →
@@ -216,13 +236,13 @@ export default function Dashboard() {
             ) : (
               <Link to="/pricing"
                 className="border border-[#39d98a]/30 text-[#39d98a] text-xs font-bold px-4 py-2 rounded-lg hover:bg-[#39d98a]/10 transition-all">
-                Upgrade to Unlock 🔒
+                Upgrade ₹99 🔒
               </Link>
             )}
           </div>
 
           {/* Signal preview */}
-          {isExpiryDay && z2hSignal && ['premium','pro','admin'].includes(role) && (
+          {isExpiryDay && z2hSignal && ['basic','premium','pro','admin'].includes(role) && (
             <div className="bg-[#0a0a0f] rounded-xl p-4 border border-[#39d98a]/20">
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
@@ -242,7 +262,7 @@ export default function Dashboard() {
           )}
 
           {/* Locked preview */}
-          {isExpiryDay && !['premium','pro','admin'].includes(role) && (
+          {isExpiryDay && role === 'free' && (
             <div className="bg-[#0a0a0f] rounded-xl p-4 border border-[#1e1e2e] relative overflow-hidden">
               <div className="absolute inset-0 backdrop-blur-sm bg-[#0a0a0f]/80 flex items-center justify-center z-10">
                 <div className="text-center">
@@ -289,7 +309,7 @@ export default function Dashboard() {
             className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#39d98a] transition-all">
             <div className="text-2xl mb-2">💳</div>
             <div className="font-black text-sm text-[#39d98a] mb-1">Upgrade Plan</div>
-            <div className="text-xs font-mono text-[#6b6b85]">Basic ₹100/month · Premium ₹300/month</div>
+            <div className="text-xs font-mono text-[#6b6b85]">Basic ₹99/month · Premium ₹299/month</div>
           </Link>
         </div>
 

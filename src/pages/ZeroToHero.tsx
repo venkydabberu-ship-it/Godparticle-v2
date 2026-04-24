@@ -113,8 +113,8 @@ export default function ZeroToHero() {
     if (!user) return;
     setError('');
     if (isBasic) {
-      if (credits < 5) { setError('Need 5 credits for analysis snapshot!'); return; }
-      const { error: ce } = await supabase.rpc('use_credits', { p_user_id: user.id, p_credits: 5 });
+      if (credits < 10) { setError('Need 10 credits for analysis snapshot!'); return; }
+      const { error: ce } = await supabase.rpc('use_credits', { p_user_id: user.id, p_credits: 10 });
       if (ce) { setError('Credit deduction failed!'); return; }
       await refreshProfile();
     }
@@ -188,7 +188,7 @@ export default function ZeroToHero() {
         {isBasic && (
           <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-2xl p-4 mb-6">
             <div className="text-xs font-mono text-[#f0c040]">
-              ⚡ Basic Plan · Morning snapshot FREE · Analysis snapshot 5 credits · You have {credits} credits ·
+              ⚡ Basic Plan · Morning snapshot FREE · Analysis snapshot 10 credits · You have {credits} credits ·
               <Link to="/pricing" className="underline ml-1">Upgrade for unlimited access →</Link>
             </div>
           </div>
@@ -345,7 +345,7 @@ export default function ZeroToHero() {
                         </div>
                         <button onClick={fetchAnalysis} disabled={fetchingAnalysis || !snap930}
                           className="w-full py-2 rounded-lg text-xs font-black bg-[#f0c040]/20 text-[#f0c040] border border-[#f0c040]/30 hover:bg-[#f0c040]/30 disabled:opacity-40 transition-all">
-                          {fetchingAnalysis ? '⏳ Fetching...' : `📊 Fetch Analysis Data${isBasic ? ' — 5 Credits' : ' (Free)'}`}
+                          {fetchingAnalysis ? '⏳ Fetching...' : `📊 Fetch Analysis Data${isBasic ? ' — 10 Credits' : ' (Free)'}`}
                         </button>
                       </>
                     )}

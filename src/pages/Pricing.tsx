@@ -123,94 +123,65 @@ export default function Pricing() {
       name: 'Free',
       price: '₹0',
       period: 'forever',
-      credits: '50 credits (signup only)',
+      credits: '50 credits on signup',
       color: '#6b6b85',
       badge: null,
       features: [
-        '50 free credits on signup',
-        '25 analyses total',
-        'Nifty 50 analysis only',
-        'Daily timeframe only',
-        'God Particle framework',
+        '50 one-time credits on signup',
+        'God Particle analysis (2 cr each)',
+        'Nifty 50 only',
         'Scenario matrix',
-        'Instagram captions'
+        'Zero to Hero — locked 🔒',
+        'Stock Intelligence — locked 🔒',
       ],
       current: profile?.role === 'free',
       action: null,
       amount: 0,
       planKey: 'free',
-      monthlyCredits: 0
     },
     {
       name: 'Basic',
-      price: '₹100',
+      price: '₹99',
       period: 'per month',
-      credits: '50 credits/month',
+      credits: '100 credits / month',
       color: '#f0c040',
       badge: 'POPULAR',
       features: [
-        '50 credits every month',
-        '25 analyses per month',
-        'Nifty 50 + Sensex',
-        'Use our Nifty 50 data',
-        'Daily timeframe',
-        'God Particle framework',
-        'Full scenario matrix',
-        'Instagram captions'
+        '100 credits every month',
+        'God Particle — 2 credits each',
+        'All 7 indexes + Sensex',
+        'Zero to Hero — morning FREE',
+        'Zero to Hero — analysis 10 cr',
+        'Credits carry forward forever',
+        'Top-up anytime',
       ],
       current: profile?.role === 'basic',
-      action: () => handlePayment('Basic', 100, 50),
-      amount: 100,
+      action: () => handlePayment('Basic', 99, 100),
+      amount: 99,
       planKey: 'basic',
-      monthlyCredits: 50
     },
     {
       name: 'Premium',
-      price: '₹300',
+      price: '₹299',
       period: 'per month',
-      credits: '200 credits/month',
+      credits: 'Unlimited — no credits needed',
       color: '#39d98a',
       badge: 'BEST VALUE',
       features: [
-        '200 credits every month',
-        '100 analyses per month',
-        'All indices + your own stocks',
-        'Upload your own CSV data',
-        'Buy data from bank (5 credits)',
-        'Daily + Weekly + Monthly',
-        'BankNifty, FinNifty, MidCap',
-        'Priority support'
+        'Everything unlimited — no limits',
+        'Zero to Hero — FREE always',
+        'God Particle — FREE always',
+        'Stock Intelligence — FREE',
+        'All 7 indexes + all stocks',
+        'Admin pre-loads data for you',
+        'Priority support',
+        'Early access to new features',
       ],
-      current: profile?.role === 'premium',
-      action: () => handlePayment('Premium', 300, 200),
-      amount: 300,
+      current: profile?.role === 'premium' || profile?.role === 'pro',
+      action: () => handlePayment('Premium', 299, 0),
+      amount: 299,
       planKey: 'premium',
-      monthlyCredits: 200
     },
-    {
-      name: 'Pro',
-      price: '₹2500',
-      period: 'per month',
-      credits: '3000 credits/month',
-      color: '#4d9fff',
-      badge: 'PRO',
-      features: [
-        '3000 credits every month',
-        'Unlimited analyses',
-        'All indices + all stocks',
-        'Upload any data',
-        'Data bank access FREE',
-        'Daily + Weekly + Monthly + Yearly',
-        'We provide data if available',
-        'Dedicated support',
-        'Early access to new features'
-      ],
-      current: profile?.role === 'pro',
-      action: () => handlePayment('Pro', 2500, 3000),
-      amount: 2500,
-      planKey: 'pro',
-      monthlyCredits: 3000
-    }
   ];
 
   return (
@@ -227,7 +198,7 @@ export default function Pricing() {
           <div className="text-xs font-mono text-[#6b6b85]">
             Plan: <span className="text-[#f0c040] font-bold uppercase">{profile?.role}</span>
             &nbsp;·&nbsp;
-            Credits: <span className="text-[#f0c040] font-bold">{profile?.role === 'pro' ? '∞' : profile?.credits ?? 0}</span>
+            Credits: <span className="text-[#f0c040] font-bold">{['premium','pro','admin'].includes(profile?.role ?? '') ? '∞' : profile?.credits ?? 0}</span>
           </div>
           <Link to="/dashboard" className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040]">
             ← Dashboard
@@ -260,15 +231,13 @@ export default function Pricing() {
         )}
 
         {/* Plans Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
           {plans.map((plan, i) => (
             <div
               key={i}
               className={`bg-[#111118] border rounded-2xl p-6 flex flex-col relative ${
                 plan.name === 'Premium'
                   ? 'border-[#39d98a] shadow-[0_0_30px_rgba(57,217,138,0.1)]'
-                  : plan.name === 'Pro'
-                  ? 'border-[#4d9fff] shadow-[0_0_30px_rgba(77,159,255,0.1)]'
                   : 'border-[#1e1e2e]'
               }`}
             >
@@ -321,7 +290,7 @@ export default function Pricing() {
           ))}
         </div>
 
-        {/* Credit costs info */}
+        {/* Credit usage guide */}
         <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6 mb-8">
           <h2 className="text-base font-black mb-6 flex items-center gap-2">
             <span className="w-1 h-4 bg-[#f0c040] rounded block" />
@@ -330,26 +299,23 @@ export default function Pricing() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
               {
-                action: '⚛ Analyse a Strike',
+                action: '⚛ God Particle Analysis',
                 free: '2 credits',
                 basic: '2 credits',
-                premium: '2 credits',
-                pro: '2 credits'
+                premium: '✅ FREE (unlimited)',
               },
               {
-                action: '📊 Buy Data from Bank',
+                action: '🚀 Z2H Morning Snapshot',
                 free: '❌ Not available',
-                basic: '❌ Not available',
-                premium: '5 credits',
-                pro: '0 credits (FREE)'
+                basic: '✅ FREE always',
+                premium: '✅ FREE always',
               },
               {
-                action: '📤 Upload Own Data',
+                action: '📊 Z2H Analysis Snapshot',
                 free: '❌ Not available',
-                basic: '❌ Not available',
-                premium: '✅ Free',
-                pro: '✅ Free'
-              }
+                basic: '10 credits',
+                premium: '✅ FREE (unlimited)',
+              },
             ].map((item, i) => (
               <div key={i} className="bg-[#16161f] rounded-xl p-4">
                 <div className="text-sm font-bold mb-3 text-[#f0c040]">{item.action}</div>
@@ -358,7 +324,6 @@ export default function Pricing() {
                     { plan: 'Free', value: item.free },
                     { plan: 'Basic', value: item.basic },
                     { plan: 'Premium', value: item.premium },
-                    { plan: 'Pro', value: item.pro }
                   ].map((row, j) => (
                     <div key={j} className="flex items-center justify-between text-xs font-mono">
                       <span className="text-[#6b6b85]">{row.plan}</span>
@@ -373,39 +338,43 @@ export default function Pricing() {
           </div>
         </div>
 
-        {/* Buy Extra Credits */}
+        {/* Buy Extra Credits — Basic users only */}
         <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
           <h2 className="text-base font-black mb-2 flex items-center gap-2">
             <span className="w-1 h-4 bg-[#f0c040] rounded block" />
             Buy Extra Credits
           </h2>
           <p className="text-xs font-mono text-[#6b6b85] mb-6">
-            ₹2 per credit · Minimum 25 credits · Never expire
+            For Basic plan users · Credits never expire · Use across all analyses
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
-              { credits: 25, price: 50, popular: false },
-              { credits: 50, price: 100, popular: true },
-              { credits: 100, price: 200, popular: false },
-              { credits: 250, price: 500, popular: false }
+              { credits: 60,  price: 49,  bonus: '+10 free',  popular: false },
+              { credits: 140, price: 99,  bonus: '+40 free',  popular: true  },
+              { credits: 320, price: 199, bonus: '+120 free', popular: false },
             ].map((pack, i) => (
               <button
                 key={i}
                 onClick={() => handleBuyCredits(pack.credits)}
                 disabled={loading === 'credits'}
-                className={`relative bg-[#16161f] border rounded-xl p-4 hover:border-[#f0c040] transition-all text-left disabled:opacity-40 ${pack.popular ? 'border-[#f0c040]' : 'border-[#1e1e2e]'}`}
+                className={`relative bg-[#16161f] border rounded-xl p-5 hover:border-[#f0c040] transition-all text-left disabled:opacity-40 ${pack.popular ? 'border-[#f0c040]' : 'border-[#1e1e2e]'}`}
               >
                 {pack.popular && (
                   <div className="absolute -top-2 left-1/2 transform -translate-x-1/2 text-[10px] font-black bg-[#f0c040] text-black px-2 py-0.5 rounded-full">
-                    POPULAR
+                    BEST VALUE
                   </div>
                 )}
-                <div className="text-xl font-black text-[#f0c040] mb-1">{pack.credits}</div>
-                <div className="text-xs font-mono text-[#6b6b85]">credits</div>
-                <div className="text-base font-black mt-3">₹{pack.price}</div>
-                <div className="text-[10px] font-mono text-[#6b6b85]">₹2/credit</div>
+                <div className="text-2xl font-black text-[#f0c040] mb-0.5">{pack.credits} credits</div>
+                <div className="text-xs font-mono text-[#39d98a] mb-3">{pack.bonus}</div>
+                <div className="text-xl font-black">₹{pack.price}</div>
+                <div className="text-[10px] font-mono text-[#6b6b85] mt-1">
+                  = {Math.floor(pack.credits / 10)} Z2H analyses or {Math.floor(pack.credits / 2)} God Particle analyses
+                </div>
               </button>
             ))}
+          </div>
+          <div className="mt-4 text-[10px] font-mono text-[#6b6b85] text-center">
+            💡 Upgrade to Premium (₹299/mo) for unlimited access — no credits needed ever
           </div>
         </div>
 
