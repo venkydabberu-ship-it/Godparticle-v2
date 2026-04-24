@@ -104,12 +104,12 @@ export default function Pricing() {
     setLoading('');
   }
 
-  async function handleBuyCredits(credits: number) {
+  async function handleBuyCredits(credits: number, price: number) {
     setLoading('credits');
     setError('');
     setSuccess('');
     try {
-      await openCashfree(credits * 2, 'credits', { credits });
+      await openCashfree(price, 'credits', { credits });
       setSuccess(credits + ' credits added to your account!');
       await refreshProfile();
     } catch (err: any) {
@@ -156,7 +156,7 @@ export default function Pricing() {
         'Top-up anytime',
       ],
       current: profile?.role === 'basic',
-      action: () => handlePayment('Basic', 99, 100),
+      action: () => handlePayment('Basic', 99, 0),
       amount: 99,
       planKey: 'basic',
     },
@@ -355,7 +355,7 @@ export default function Pricing() {
             ].map((pack, i) => (
               <button
                 key={i}
-                onClick={() => handleBuyCredits(pack.credits)}
+                onClick={() => handleBuyCredits(pack.credits, pack.price)}
                 disabled={loading === 'credits'}
                 className={`relative bg-[#16161f] border rounded-xl p-5 hover:border-[#f0c040] transition-all text-left disabled:opacity-40 ${pack.popular ? 'border-[#f0c040]' : 'border-[#1e1e2e]'}`}
               >

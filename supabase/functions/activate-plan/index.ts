@@ -8,16 +8,15 @@ const CORS = {
 
 // Amounts in rupees (Cashfree uses rupees, not paise)
 const PLANS = {
-  'Basic':   { role: 'basic',   credits: 50,   amount: 100   },
-  'Premium': { role: 'premium', credits: 200,  amount: 300   },
-  'Pro':     { role: 'pro',     credits: 3000, amount: 2500  },
+  'Basic':   { role: 'basic',   credits: 100, amount: 99  },
+  'Premium': { role: 'premium', credits: 0,   amount: 299 }, // 0 = unlimited (shown as ∞)
 };
 
+// credits → expected amount in rupees
 const CREDIT_PACKS = {
-  25:  50,
-  50:  100,
-  100: 200,
-  250: 500,
+  60:  49,
+  140: 99,
+  320: 199,
 };
 
 const CF_BASE = 'https://api.cashfree.com/pg';
@@ -123,6 +122,12 @@ Deno.serve(async function(req) {
           throw new Error('Amount mismatch. Expected ₹' + planConfig.amount + ', got ₹' + paidAmount);
         }
 
+        // For Premium: just update role (unlimited, no credit number)
+        // For Basic: set role + credits
+        var profileUpdate = planConfig.credits > 0
+          ? { role: planConfig.role, credits: planConfig.credits }
+          : { role: planConfig.role };
+
         var updateRes = await fetch(SUPABASE_URL + '/rest/v1/profiles?id=eq.' + userId, {
           method: 'PATCH',
           headers: {
@@ -131,7 +136,7 @@ Deno.serve(async function(req) {
             'Content-Type':   'application/json',
             'Prefer':         'return=minimal',
           },
-          body: JSON.stringify({ role: planConfig.role, credits: planConfig.credits }),
+          body: JSON.stringify(profileUpdate),
         });
         if (!updateRes.ok) throw new Error('Profile update failed');
 
