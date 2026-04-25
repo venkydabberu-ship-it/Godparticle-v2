@@ -17,6 +17,7 @@ export interface Profile {
   phone: string | null;
   role: UserRole;
   credits: number;
+  credits_reset_at: string | null;
   created_at: string;
   is_active: boolean;
 }

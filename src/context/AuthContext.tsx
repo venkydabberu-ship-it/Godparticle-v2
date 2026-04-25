@@ -38,6 +38,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function fetchProfile(userId: string) {
     try {
+      // For premium users, refresh monthly credits before loading profile
+      // Fire-and-forget — don't block profile load on this
+      supabase.rpc('refresh_monthly_credits', { p_user_id: userId }).catch(() => {});
+
       const result = await Promise.race([
         getProfile(userId),
         new Promise<null>(r => setTimeout(() => r(null), 5000))
