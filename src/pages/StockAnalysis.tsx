@@ -9,7 +9,7 @@ export default function StockAnalysis() {
   const role = profile?.role ?? 'free';
   const isAdmin = role === 'admin';
 
-  const [analysisType, setAnalysisType] = useState<'gct' | 'options'>('gct');
+  const [analysisType, setAnalysisType] = useState<'gct' | 'options' | 'intraday'>('gct');
   const [stockName, setStockName] = useState('');
   const [exchange, setExchange] = useState<'NSE' | 'BSE'>('NSE');
   const [sector, setSector] = useState('Default');
@@ -40,6 +40,10 @@ export default function StockAnalysis() {
   const [gctTab, setGctTab] = useState('overview');
   const [planBGap, setPlanBGap] = useState(0);
   const [holdingQty, setHoldingQty] = useState('');
+  const [prevHigh, setPrevHigh] = useState('');
+  const [prevLow, setPrevLow] = useState('');
+  const [prevClose, setPrevClose] = useState('');
+  const [todayOpen, setTodayOpen] = useState('');
 
   const sectorPE: Record<string, number> = {
     'Energy/Oil': 18, 'Banking': 20, 'IT': 28,
@@ -686,6 +690,72 @@ export default function StockAnalysis() {
     }
   }
 
+  // ── RUN INTRADAY PIVOT ANALYSIS ──
+  function runIntraday() {
+    const H = parseFloat(prevHigh);
+    const L = parseFloat(prevLow);
+    const C = parseFloat(prevClose);
+    if (!H || !L || !C || isNaN(H) || isNaN(L) || isNaN(C)) {
+      setError('Enter yesterday\'s High, Low and Close.');
+      return;
+    }
+    if (H <= L) { setError('High must be greater than Low.'); return; }
+    if (C < L || C > H) { setError('Close must be between High and Low.'); return; }
+
+    const P  = (H + L + C) / 3;
+    const HL = H - L;
+    const R1 = 2 * P - L;
+    const R2 = P + HL;
+    const R3 = H + 2 * (P - L);
+    const S1 = 2 * P - H;
+    const S2 = P - HL;
+    const S3 = L - 2 * (H - P);
+
+    // Camarilla levels — tighter intraday zones
+    const camH4 = C + HL * 1.1 / 2;
+    const camH3 = C + HL * 1.1 / 4;
+    const camL3 = C - HL * 1.1 / 4;
+    const camL4 = C - HL * 1.1 / 2;
+
+    const open = todayOpen ? parseFloat(todayOpen) : null;
+    let bias: 'bullish' | 'bearish' | 'neutral' = 'neutral';
+    let biasDesc = '';
+    if (open !== null && !isNaN(open)) {
+      const threshold = HL * 0.015;
+      if (open > P + threshold) {
+        bias = 'bullish';
+        biasDesc = `Opened above Pivot ₹${P.toFixed(1)}. Buyers in control. Watch R1 ₹${R1.toFixed(1)} → R2 ₹${R2.toFixed(1)} as targets.`;
+      } else if (open < P - threshold) {
+        bias = 'bearish';
+        biasDesc = `Opened below Pivot ₹${P.toFixed(1)}. Sellers in control. Watch S1 ₹${S1.toFixed(1)} → S2 ₹${S2.toFixed(1)} as targets.`;
+      } else {
+        biasDesc = `Opened at Pivot ₹${P.toFixed(1)}. Direction unclear — wait for breakout above R1 ₹${R1.toFixed(1)} or breakdown below S1 ₹${S1.toFixed(1)}.`;
+      }
+    } else {
+      biasDesc = `No open price entered. Watch: long above R1 ₹${R1.toFixed(1)}, short below S1 ₹${S1.toFixed(1)}.`;
+    }
+
+    // Plan B confirmation levels
+    const confAbove = Math.round(R1 + (R2 - R1) * 0.3); // 30% above R1 toward R2 — momentum
+    const confBelow = Math.round(S1 - (S1 - S2) * 0.3); // 30% below S1 toward S2 — selling intensifies
+
+    const r = (n: number) => Math.round(n * 10) / 10;
+    setResult({
+      type: 'intraday',
+      stockName,
+      prevH: H, prevL: L, prevC: C, open,
+      pivot: r(P), hl: r(HL),
+      r1: r(R1), r2: r(R2), r3: r(R3),
+      s1: r(S1), s2: r(S2), s3: r(S3),
+      camH4: r(camH4), camH3: r(camH3),
+      camL3: r(camL3), camL4: r(camL4),
+      bias, biasDesc,
+      confAbove, confBelow,
+    });
+    setGctTab('overview');
+    setStep('result');
+  }
+
   const zoneColor = (zone: string) => {
     if (zone === 'BUY ZONE') return '#39d98a';
     if (zone === 'WATCH ZONE') return '#f0c040';
@@ -732,7 +802,7 @@ export default function StockAnalysis() {
             {/* Analysis Type */}
             <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
               <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">Step 1 — Analysis Type</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <button onClick={() => setAnalysisType('gct')}
                   className={`p-4 rounded-xl text-left transition-all border ${analysisType === 'gct' ? 'border-[#f0c040] bg-[#f0c040]/10' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
                   <div className="text-lg mb-1">📊</div>
@@ -749,6 +819,13 @@ export default function StockAnalysis() {
                   </div>
                   <div className="text-xs font-mono text-[#6b6b85]">Full God Particle analysis on stock option strikes</div>
                   <div className="text-[10px] font-mono mt-2 text-[#6b6b85]">Pro/Admin only · Auto fetch FREE</div>
+                </button>
+                <button onClick={() => setAnalysisType('intraday')}
+                  className={`p-4 rounded-xl text-left transition-all border ${analysisType === 'intraday' ? 'border-[#ff8c42] bg-[#ff8c42]/10' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
+                  <div className="text-lg mb-1">⚡</div>
+                  <div className="font-black text-sm mb-1" style={{color: analysisType === 'intraday' ? '#ff8c42' : '#e8e8f0'}}>Intraday — Pivot Points</div>
+                  <div className="text-xs font-mono text-[#6b6b85]">Pivot, R1–R3, S1–S3 + Camarilla for day trading</div>
+                  <div className="text-[10px] font-mono mt-2 text-[#6b6b85]">Enter yesterday H/L/C → instant levels</div>
                 </button>
               </div>
               {analysisType === 'options' && !['pro','admin'].includes(role) && (
@@ -926,6 +1003,31 @@ export default function StockAnalysis() {
               </div>
             )}
 
+            {/* Intraday Input */}
+            {analysisType === 'intraday' && (
+              <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
+                <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-1">Step 3 — Yesterday's Price Data</h2>
+                <div className="bg-[#ff8c42]/8 border border-[#ff8c42]/25 rounded-xl p-3 mb-4 text-xs font-mono text-[#ff8c42]">
+                  ⚡ Use yesterday's NSE closing High, Low, Close. Adding today's open gives you a bias direction.
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {[
+                    { label: 'Yesterday High', val: prevHigh, set: setPrevHigh, placeholder: 'e.g. 2540' },
+                    { label: 'Yesterday Low',  val: prevLow,  set: setPrevLow,  placeholder: 'e.g. 2480' },
+                    { label: 'Yesterday Close',val: prevClose,set: setPrevClose,placeholder: 'e.g. 2510' },
+                    { label: "Today's Open (optional)", val: todayOpen, set: setTodayOpen, placeholder: 'e.g. 2525' },
+                  ].map((f, i) => (
+                    <div key={i}>
+                      <label className="block text-xs font-mono text-[#6b6b85] mb-1">{f.label}</label>
+                      <input type="number" value={f.val} onChange={e => f.set(e.target.value)}
+                        placeholder={f.placeholder}
+                        className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#ff8c42]" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Fundamental Data */}
             {analysisType === 'gct' && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
@@ -964,10 +1066,15 @@ export default function StockAnalysis() {
                 className="w-full bg-[#f0c040] text-black font-black py-3 rounded-xl text-sm hover:bg-[#ffd060] transition-all disabled:opacity-40">
                 {loading ? '⏳ Analysing...' : csvData.length < 6 ? '📊 Run GCT Analysis (get data first)' : `📊 Run GCT + FSS Analysis — ${stockName}`}
               </button>
-            ) : (
+            ) : analysisType === 'options' ? (
               <button onClick={runOptionsAnalysis} disabled={loading || optCsvData.length < 2 || !stockName || !optStrike}
                 className="w-full bg-[#4d9fff] text-black font-black py-3 rounded-xl text-sm hover:opacity-90 transition-all disabled:opacity-40">
                 {loading ? '⏳ Analysing...' : optCsvData.length < 2 ? '⚛ Run God Particle Analysis (fetch options data first)' : `⚛ Run God Particle Analysis — ${stockName} ${optStrike} ${optType}`}
+              </button>
+            ) : (
+              <button onClick={runIntraday} disabled={!prevHigh || !prevLow || !prevClose}
+                className="w-full bg-[#ff8c42] text-black font-black py-3 rounded-xl text-sm hover:opacity-90 transition-all disabled:opacity-40">
+                {`⚡ Calculate Pivot Levels${stockName ? ' — ' + stockName : ''}`}
               </button>
             )}
           </div>
@@ -1576,6 +1683,353 @@ export default function StockAnalysis() {
                             <div>Buy small parts only at L1 {fmt(l1)} and L2 {fmt(l2)}.</div>
                             <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded px-2 py-1.5 text-[#ff4d6d]">
                               Recovery: Watch for price to reclaim L1 {fmt(l1)} first, then MGC {fmt(mgc)}. No FOMO buying until both levels hold.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+            </div>
+          );
+        })()}
+
+        {/* ── INTRADAY PIVOT RESULTS ── */}
+        {canAccess && step === 'result' && result?.type === 'intraday' && (() => {
+          const r = result;
+          const biasColor = r.bias === 'bullish' ? '#39d98a' : r.bias === 'bearish' ? '#ff4d6d' : '#f0c040';
+          const intradayTabs = [
+            { id: 'overview', label: '📐 Pivot Levels' },
+            { id: 'plan',     label: '🎯 Trade Plan' },
+            { id: 'planb',    label: '🔀 Plan B' },
+          ];
+          // Price ladder helpers
+          const allLevels = [r.s3, r.s2, r.s1, r.pivot, r.r1, r.r2, r.r3];
+          const minP = r.s3 - (r.r3 - r.s3) * 0.05;
+          const maxP = r.r3 + (r.r3 - r.s3) * 0.05;
+          const pRange = maxP - minP || 1;
+          const bp = (p: number) => `${Math.min(100, Math.max(0, ((p - minP) / pRange) * 100)).toFixed(1)}%`;
+          const hp = (from: number, to: number) => `${Math.max(1, ((to - from) / pRange) * 100).toFixed(1)}%`;
+          const fmt = (n: number) => '₹' + n.toLocaleString();
+          return (
+            <div className="space-y-4">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-black">
+                    <span style={{ color: biasColor }}>{r.stockName || 'Intraday'}</span>
+                    <span className="ml-2 text-xs font-mono text-[#6b6b85]">Pivot Analysis</span>
+                  </h2>
+                  <div className="text-xs font-mono text-[#6b6b85]">Yesterday: H {fmt(r.prevH)} · L {fmt(r.prevL)} · C {fmt(r.prevC)}{r.open ? ` · Open ${fmt(r.open)}` : ''}</div>
+                </div>
+                <button onClick={() => { setStep('input'); setResult(null); }}
+                  className="px-4 py-2 text-xs font-bold border border-[#1e1e2e] rounded-lg hover:border-[#f0c040] transition-all">← New</button>
+              </div>
+
+              {/* Bias banner */}
+              <div className="rounded-2xl p-4 text-center" style={{ background: `linear-gradient(135deg,#0a0a0f,${biasColor}18)`, border: `1px solid ${biasColor}50` }}>
+                <div className="text-xs font-mono tracking-widest mb-1" style={{ color: biasColor }}>
+                  {r.bias === 'bullish' ? '▲ BULLISH BIAS' : r.bias === 'bearish' ? '▼ BEARISH BIAS' : '◆ NEUTRAL — WAIT FOR DIRECTION'}
+                </div>
+                <div className="text-3xl font-black mb-1" style={{ color: biasColor }}>{fmt(r.pivot)}</div>
+                <div className="text-[10px] font-mono text-[#6b6b85]">PIVOT</div>
+                <div className="mt-2 text-xs font-mono text-[#e8e8f0] max-w-sm mx-auto">{r.biasDesc}</div>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex gap-1 bg-[#111118] rounded-xl p-1 overflow-x-auto">
+                {intradayTabs.map(t => (
+                  <button key={t.id} onClick={() => setGctTab(t.id)}
+                    className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${gctTab === t.id ? 'bg-[#16161f] text-[#e8e8f0] border border-[#1e1e2e]' : 'text-[#6b6b85]'}`}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* ── PIVOT LEVELS TAB ── */}
+              {gctTab === 'overview' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    {/* Table */}
+                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-hidden">
+                      <table className="w-full text-xs font-mono">
+                        <thead><tr className="border-b border-[#1e1e2e]">
+                          <th className="text-left px-4 py-3 text-[#6b6b85] font-normal uppercase tracking-widest">Level</th>
+                          <th className="text-left px-4 py-3 text-[#6b6b85] font-normal uppercase tracking-widest">Price</th>
+                          <th className="text-left px-4 py-3 text-[#6b6b85] font-normal uppercase tracking-widest">Meaning</th>
+                        </tr></thead>
+                        <tbody>
+                          {[
+                            { lbl: 'R3', price: r.r3, color: '#ff4d6d',  desc: 'Extreme resistance — reversal zone' },
+                            { lbl: 'R2', price: r.r2, color: '#ff8c42',  desc: 'Strong resistance — extended target' },
+                            { lbl: 'R1', price: r.r1, color: '#f0c040',  desc: 'First resistance — intraday target' },
+                            { lbl: 'P',  price: r.pivot, color: '#e8e8f0', desc: 'Pivot — key support/resistance' },
+                            { lbl: 'S1', price: r.s1, color: '#f0c040',  desc: 'First support — intraday target' },
+                            { lbl: 'S2', price: r.s2, color: '#ff8c42',  desc: 'Strong support — extended target' },
+                            { lbl: 'S3', price: r.s3, color: '#ff4d6d',  desc: 'Extreme support — reversal zone' },
+                          ].map(lv => {
+                            const isHere = r.open && Math.abs(r.open - lv.price) < r.hl * 0.03;
+                            return (
+                              <tr key={lv.lbl} className={`border-b border-[#1e1e2e]/50 ${isHere ? 'bg-[#f0c040]/10' : ''}`}>
+                                <td className="px-4 py-2.5 font-black" style={{ color: lv.color }}>{lv.lbl}</td>
+                                <td className="px-4 py-2.5 font-black" style={{ color: lv.color }}>{fmt(lv.price)}</td>
+                                <td className="px-4 py-2.5 text-[#6b6b85]">{lv.desc}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Camarilla table */}
+                    <div className="space-y-3">
+                      <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-hidden">
+                        <div className="px-4 py-3 border-b border-[#1e1e2e] text-xs font-black text-[#a78bfa]">🎯 Camarilla Levels (Tighter Zones)</div>
+                        <table className="w-full text-xs font-mono">
+                          <tbody>
+                            {[
+                              { lbl: 'H4', price: r.camH4, color: '#ff4d6d', desc: 'Short at H4 · SL above H4' },
+                              { lbl: 'H3', price: r.camH3, color: '#ff8c42', desc: 'Sell with tight SL' },
+                              { lbl: 'L3', price: r.camL3, color: '#39d98a', desc: 'Buy with tight SL' },
+                              { lbl: 'L4', price: r.camL4, color: '#4d9fff', desc: 'Strong buy at L4 · SL below L4' },
+                            ].map(lv => (
+                              <tr key={lv.lbl} className="border-b border-[#1e1e2e]/50">
+                                <td className="px-4 py-2.5 font-black w-10" style={{ color: lv.color }}>{lv.lbl}</td>
+                                <td className="px-4 py-2.5 font-black" style={{ color: lv.color }}>{fmt(lv.price)}</td>
+                                <td className="px-4 py-2.5 text-[#6b6b85]">{lv.desc}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-xs font-mono space-y-2">
+                        <div className="font-black text-[#f0c040] mb-2">📏 Yesterday's Range</div>
+                        <div className="flex justify-between"><span className="text-[#6b6b85]">High</span><span className="font-bold">{fmt(r.prevH)}</span></div>
+                        <div className="flex justify-between"><span className="text-[#6b6b85]">Low</span><span className="font-bold">{fmt(r.prevL)}</span></div>
+                        <div className="flex justify-between"><span className="text-[#6b6b85]">Close</span><span className="font-bold">{fmt(r.prevC)}</span></div>
+                        <div className="flex justify-between border-t border-[#1e1e2e] pt-2"><span className="text-[#6b6b85]">Range (H-L)</span><span className="font-black text-[#f0c040]">{fmt(r.hl)}</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── TRADE PLAN TAB ── */}
+              {gctTab === 'plan' && (
+                <div className="space-y-4">
+                  {r.bias === 'bullish' && (
+                    <div className="bg-[#39d98a]/10 border border-[#39d98a]/30 rounded-2xl p-5">
+                      <div className="text-sm font-black text-[#39d98a] mb-3">▲ LONG PLAN — Bullish Bias</div>
+                      <div className="space-y-3">
+                        <div className="bg-[#39d98a]/10 border border-[#39d98a]/20 rounded-xl p-4">
+                          <div className="text-xs font-black text-[#39d98a] mb-2">✅ ENTRY — Two setups</div>
+                          <div className="space-y-2 text-xs font-mono text-[#e8e8f0]">
+                            <div className="p-2 rounded-lg bg-[#16161f]">
+                              <span className="font-black text-[#39d98a]">Setup A (opening pullback):</span> If price pulls back to Pivot {fmt(r.pivot)} and holds for 5 min → buy. SL below {fmt(r.s1)}.
+                            </div>
+                            <div className="p-2 rounded-lg bg-[#16161f]">
+                              <span className="font-black text-[#f0c040]">Setup B (R1 breakout):</span> If price breaks above R1 {fmt(r.r1)} with volume → buy. SL below Pivot {fmt(r.pivot)}.
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-center text-xs font-mono">
+                          <div className="bg-[#16161f] rounded-xl p-3">
+                            <div className="text-[#6b6b85] mb-1">TARGET 1</div>
+                            <div className="font-black text-[#39d98a]">{fmt(r.r1)}</div>
+                            <div className="text-[#6b6b85] text-[10px]">R1 — Exit 50%</div>
+                          </div>
+                          <div className="bg-[#16161f] rounded-xl p-3">
+                            <div className="text-[#6b6b85] mb-1">TARGET 2</div>
+                            <div className="font-black text-[#f0c040]">{fmt(r.r2)}</div>
+                            <div className="text-[#6b6b85] text-[10px]">R2 — Exit 40%</div>
+                          </div>
+                          <div className="bg-[#16161f] rounded-xl p-3">
+                            <div className="text-[#6b6b85] mb-1">STOP LOSS</div>
+                            <div className="font-black text-[#ff4d6d]">{fmt(r.s1)}</div>
+                            <div className="text-[#6b6b85] text-[10px]">S1 — Exit all</div>
+                          </div>
+                        </div>
+                        <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl p-3 text-xs font-mono text-[#f0c040]">
+                          🎯 Trailing SL: Once R1 hits, move SL to Pivot {fmt(r.pivot)}. Once R2 hits, move SL to R1 {fmt(r.r1)}.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {r.bias === 'bearish' && (
+                    <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-2xl p-5">
+                      <div className="text-sm font-black text-[#ff4d6d] mb-3">▼ SHORT PLAN — Bearish Bias</div>
+                      <div className="space-y-3">
+                        <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/20 rounded-xl p-4">
+                          <div className="text-xs font-black text-[#ff4d6d] mb-2">✅ ENTRY — Two setups</div>
+                          <div className="space-y-2 text-xs font-mono text-[#e8e8f0]">
+                            <div className="p-2 rounded-lg bg-[#16161f]">
+                              <span className="font-black text-[#ff4d6d]">Setup A (opening bounce):</span> If price rallies to Pivot {fmt(r.pivot)} and rejects for 5 min → short. SL above {fmt(r.r1)}.
+                            </div>
+                            <div className="p-2 rounded-lg bg-[#16161f]">
+                              <span className="font-black text-[#f0c040]">Setup B (S1 breakdown):</span> If price breaks below S1 {fmt(r.s1)} with volume → short. SL above Pivot {fmt(r.pivot)}.
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-center text-xs font-mono">
+                          <div className="bg-[#16161f] rounded-xl p-3">
+                            <div className="text-[#6b6b85] mb-1">TARGET 1</div>
+                            <div className="font-black text-[#ff4d6d]">{fmt(r.s1)}</div>
+                            <div className="text-[#6b6b85] text-[10px]">S1 — Cover 50%</div>
+                          </div>
+                          <div className="bg-[#16161f] rounded-xl p-3">
+                            <div className="text-[#6b6b85] mb-1">TARGET 2</div>
+                            <div className="font-black text-[#f0c040]">{fmt(r.s2)}</div>
+                            <div className="text-[#6b6b85] text-[10px]">S2 — Cover 40%</div>
+                          </div>
+                          <div className="bg-[#16161f] rounded-xl p-3">
+                            <div className="text-[#6b6b85] mb-1">STOP LOSS</div>
+                            <div className="font-black text-[#39d98a]">{fmt(r.r1)}</div>
+                            <div className="text-[#6b6b85] text-[10px]">R1 — Cover all</div>
+                          </div>
+                        </div>
+                        <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl p-3 text-xs font-mono text-[#f0c040]">
+                          🎯 Trailing SL: Once S1 hits, move SL to Pivot {fmt(r.pivot)}. Once S2 hits, move SL to S1 {fmt(r.s1)}.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {r.bias === 'neutral' && (
+                    <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-2xl p-5">
+                      <div className="text-sm font-black text-[#f0c040] mb-3">◆ NEUTRAL PLAN — Wait for Direction</div>
+                      <div className="space-y-3 text-xs font-mono">
+                        <div className="p-3 rounded-xl bg-[#39d98a]/10 border border-[#39d98a]/30">
+                          <div className="font-black text-[#39d98a] mb-1">IF PRICE GOES UP ▲</div>
+                          <div className="text-[#e8e8f0]">Buy if R1 {fmt(r.r1)} breaks with conviction. Target R2 {fmt(r.r2)}. SL below Pivot {fmt(r.pivot)}.</div>
+                        </div>
+                        <div className="p-3 rounded-xl bg-[#ff4d6d]/10 border border-[#ff4d6d]/30">
+                          <div className="font-black text-[#ff4d6d] mb-1">IF PRICE GOES DOWN ▼</div>
+                          <div className="text-[#e8e8f0]">Short if S1 {fmt(r.s1)} breaks with conviction. Target S2 {fmt(r.s2)}. SL above Pivot {fmt(r.pivot)}.</div>
+                        </div>
+                        <div className="p-3 rounded-xl bg-[#16161f] text-[#6b6b85]">
+                          ⏳ Wait 15–30 min after market opens before entering. Price near Pivot at open = no clear bias. Trade the breakout, not the anticipation.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5 text-xs font-mono">
+                    <div className="font-black text-[#f0c040] mb-3">⚠ Intraday Rules</div>
+                    <div className="space-y-2 text-[#6b6b85]">
+                      <div>· Wait 15 min after 9:15 AM before entering any trade.</div>
+                      <div>· Never hold intraday positions past 3:15 PM.</div>
+                      <div>· If price oscillates around Pivot — stay out. No choppy trades.</div>
+                      <div>· Respect SL without second-guessing. One bad trade can wipe multiple wins.</div>
+                      <div>· R3 / S3 are reversal zones — if price reaches them, consider flipping direction.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── PLAN B TAB (Price Ladder + Confirmations) ── */}
+              {gctTab === 'planb' && (() => {
+                const cp = r.open || r.prevC;
+                const abovePivot = cp >= r.pivot;
+                return (
+                  <div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-2">
+                      {/* Visual price ladder */}
+                      <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4">
+                        <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">📊 Price Ladder</div>
+                        <div className="relative bg-[#0a0a0f] rounded-xl overflow-hidden" style={{ height: '380px' }}>
+                          {/* Zone backgrounds */}
+                          <div className="absolute left-0 right-0 bg-[#ff4d6d]/20" style={{ bottom: 0, height: hp(minP, r.s2) }}>
+                            <span className="text-[9px] font-mono text-[#ff4d6d] px-2 absolute bottom-1">EXTREME SELL</span>
+                          </div>
+                          <div className="absolute left-0 right-0 bg-[#ff8c42]/10" style={{ bottom: hp(minP, r.s2), height: hp(r.s2, r.s1) }}>
+                            <span className="text-[9px] font-mono text-[#ff8c42] px-2 absolute bottom-1">BEARISH</span>
+                          </div>
+                          <div className="absolute left-0 right-0 bg-[#f0c040]/5" style={{ bottom: bp(r.s1), height: hp(r.s1, r.r1) }}>
+                            <span className="text-[9px] font-mono text-[#f0c040] px-2 absolute bottom-1">NEUTRAL BAND</span>
+                          </div>
+                          <div className="absolute left-0 right-0 bg-[#39d98a]/10" style={{ bottom: bp(r.r1), height: hp(r.r1, r.r2) }}>
+                            <span className="text-[9px] font-mono text-[#39d98a] px-2 absolute bottom-1">BULLISH</span>
+                          </div>
+                          <div className="absolute left-0 right-0 bg-[#39d98a]/20" style={{ bottom: bp(r.r2), top: 0 }}>
+                            <span className="text-[9px] font-mono text-[#39d98a] px-2 absolute bottom-1">EXTREME BUY</span>
+                          </div>
+                          {/* Confirmation lines */}
+                          <div className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(r.confAbove) }}>
+                            <div className="flex-1 border-t-2 border-dashed border-[#ff8c42]" />
+                            <span className="text-[8px] font-black font-mono bg-[#ff8c42]/20 text-[#ff8c42] px-1.5 rounded shrink-0">MOMENTUM {fmt(r.confAbove)}</span>
+                          </div>
+                          <div className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(r.confBelow) }}>
+                            <div className="flex-1 border-t-2 border-dashed border-[#a78bfa]" />
+                            <span className="text-[8px] font-black font-mono bg-[#a78bfa]/20 text-[#a78bfa] px-1.5 rounded shrink-0">WEAKNESS {fmt(r.confBelow)}</span>
+                          </div>
+                          {/* Current price */}
+                          <div className="absolute left-0 right-0 flex items-center z-10" style={{ bottom: bp(cp) }}>
+                            <div className="flex-1 border-t-2 border-solid border-white" />
+                            <span className="text-[9px] font-black font-mono bg-white/20 text-white px-1.5 rounded shrink-0">NOW {fmt(cp)}</span>
+                          </div>
+                          {/* Key level lines */}
+                          {[
+                            { price: r.s3,   label: `S3 ${fmt(r.s3)}`,   color: '#ff4d6d' },
+                            { price: r.s2,   label: `S2 ${fmt(r.s2)}`,   color: '#ff8c42' },
+                            { price: r.s1,   label: `S1 ${fmt(r.s1)}`,   color: '#f0c040' },
+                            { price: r.pivot,label: `P ${fmt(r.pivot)}`,  color: '#e8e8f0' },
+                            { price: r.r1,   label: `R1 ${fmt(r.r1)}`,   color: '#f0c040' },
+                            { price: r.r2,   label: `R2 ${fmt(r.r2)}`,   color: '#ff8c42' },
+                            { price: r.r3,   label: `R3 ${fmt(r.r3)}`,   color: '#ff4d6d' },
+                          ].map(({ price, label, color }) => (
+                            <div key={price} className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(price) }}>
+                              <div className="flex-1 border-t border-dashed" style={{ borderColor: color + '60' }} />
+                              <span className="text-[8px] font-mono px-1.5 shrink-0" style={{ color }}>{label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Guidance cards */}
+                      <div className="space-y-3">
+                        <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest">📍 Missed Entry? Use These</div>
+
+                        {/* Price above R1 — momentum play */}
+                        <div className={`border rounded-xl p-4 ${cp > r.r1 ? 'border-[#39d98a]/60 bg-[#39d98a]/10' : 'border-[#1e1e2e] opacity-50'}`}>
+                          <div className="text-xs font-black text-[#39d98a] mb-2">⚡ Above R1 — Chasing the Move</div>
+                          <div className="space-y-2 text-[10px] font-mono text-[#6b6b85]">
+                            <div>Missed the entry at Pivot. Price is already extended.</div>
+                            <div className="bg-[#ff8c42]/10 border border-[#ff8c42]/30 rounded px-2 py-1.5 text-[#ff8c42]">
+                              MOMENTUM confirmation: Enter small qty only if price crosses <span className="font-black">{fmt(r.confAbove)}</span> — confirms momentum toward R2 {fmt(r.r2)}.
+                            </div>
+                            <div>SL for late entry = below R1 {fmt(r.r1)}.</div>
+                          </div>
+                        </div>
+
+                        {/* Price between P and R1 */}
+                        <div className={`border rounded-xl p-4 ${cp >= r.pivot && cp <= r.r1 ? 'border-[#f0c040]/60 bg-[#f0c040]/10' : 'border-[#1e1e2e] opacity-50'}`}>
+                          <div className="text-xs font-black text-[#f0c040] mb-2">👁 Between Pivot & R1 — Classic Setup</div>
+                          <div className="space-y-2 text-[10px] font-mono text-[#6b6b65]">
+                            <div>Ideal zone for long entry. Price is above Pivot = bullish bias.</div>
+                            <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded px-2 py-1.5 text-[#f0c040]">
+                              Buy here with SL below Pivot {fmt(r.pivot)}. Target R1 {fmt(r.r1)} → R2 {fmt(r.r2)}.
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Price below Pivot — reversal watch */}
+                        <div className={`border rounded-xl p-4 ${cp < r.pivot && cp >= r.s1 ? 'border-[#ff8c42]/60 bg-[#ff8c42]/10' : 'border-[#1e1e2e] opacity-50'}`}>
+                          <div className="text-xs font-black text-[#ff8c42] mb-2">⚠ Below Pivot — Watch for Reversal</div>
+                          <div className="space-y-2 text-[10px] font-mono text-[#6b6b85]">
+                            <div>Bearish side. Avoid longs until Pivot is reclaimed.</div>
+                            <div className="bg-[#a78bfa]/10 border border-[#a78bfa]/30 rounded px-2 py-1.5 text-[#a78bfa]">
+                              🔄 Recovery: If price bounces above <span className="font-black">{fmt(r.confBelow)}</span> and holds — weakening selling pressure. Watch Pivot {fmt(r.pivot)} next.
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Price below S1 */}
+                        <div className={`border rounded-xl p-4 ${cp < r.s1 ? 'border-[#ff4d6d]/60 bg-[#ff4d6d]/10' : 'border-[#1e1e2e] opacity-50'}`}>
+                          <div className="text-xs font-black text-[#ff4d6d] mb-2">💀 Below S1 — Extended Sell-off</div>
+                          <div className="space-y-2 text-[10px] font-mono text-[#6b6b85]">
+                            <div>Strong selling underway. Do not buy the dip blindly.</div>
+                            <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded px-2 py-1.5 text-[#ff4d6d]">
+                              Short target: S2 {fmt(r.s2)}. If S3 {fmt(r.s3)} reached — watch for sharp reversal (capitulation zone).
                             </div>
                           </div>
                         </div>
