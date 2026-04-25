@@ -260,6 +260,6 @@ Deno.serve(async (req) => {
     throw new Error('Unknown action: ' + action);
 
   } catch (err) {
-    return respond({ success: false, error: err.message }, 400);
+    return respond({ success: false, error: err.message }, 200);
   }
 });
