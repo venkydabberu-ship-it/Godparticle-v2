@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Allow: /pricing
+
+Disallow: /dashboard
+Disallow: /analysis
+Disallow: /zero-to-hero
+Disallow: /stock-analysis
+Disallow: /admin
+
+Sitemap: https://godparticle-v2-ivory.vercel.app/sitemap.xml
