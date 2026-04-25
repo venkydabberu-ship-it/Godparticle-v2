@@ -250,15 +250,54 @@ export default function Admin() {
     setOptNamesLoading(true);
     setOptCategory(category);
     try {
-      const { data } = await supabase.from('market_data').select('index_name').eq('category', category).order('index_name');
-      const names: string[] = [...new Set((data || []).map((r: any) => r.index_name))];
-      setOptNames(names);
+      if (category === 'index') {
+        // Always show all known index folders, regardless of whether data exists yet
+        const names = DEFAULT_INDICES.map(i => i.key);
+        setOptNames(names);
+      } else {
+        const { data } = await supabase.from('market_data').select('index_name').eq('category', category).order('index_name');
+        const names: string[] = [...new Set((data || []).map((r: any) => r.index_name))];
+        setOptNames(names);
+      }
       setOptView('names');
     } catch (err: any) {
       console.error(err);
     } finally {
       setOptNamesLoading(false);
     }
+  }
+
+  function downloadRowCSV(row: any, name: string) {
+    const sd = row.strike_data || {};
+    const lines = ['Strike,CE OI,CE Chng OI,CE Vol,CE LTP,PE LTP,PE Vol,PE Chng OI,PE OI'];
+    Object.entries(sd).sort((a, b) => Number(a[0]) - Number(b[0])).forEach(([strike, d]: [string, any]) => {
+      lines.push([strike, d.ce_oi ?? 0, d.ce_coi ?? d.ce_chng_oi ?? 0, d.ce_vol ?? 0, d.ce_ltp ?? 0,
+        d.pe_ltp ?? 0, d.pe_vol ?? 0, d.pe_coi ?? d.pe_chng_oi ?? 0, d.pe_oi ?? 0].join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${name}_${row.expiry}_${row.trade_date}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function downloadAllCSV(rows: any[], name: string) {
+    const lines = ['Trade Date,Expiry,Strike,CE OI,CE Chng OI,CE Vol,CE LTP,PE LTP,PE Vol,PE Chng OI,PE OI'];
+    rows.forEach(row => {
+      const sd = row.strike_data || {};
+      Object.entries(sd).sort((a, b) => Number(a[0]) - Number(b[0])).forEach(([strike, d]: [string, any]) => {
+        lines.push([row.trade_date, row.expiry, strike, d.ce_oi ?? 0, d.ce_coi ?? d.ce_chng_oi ?? 0,
+          d.ce_vol ?? 0, d.ce_ltp ?? 0, d.pe_ltp ?? 0, d.pe_vol ?? 0,
+          d.pe_coi ?? d.pe_chng_oi ?? 0, d.pe_oi ?? 0].join(','));
+      });
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${name}_ALL_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   async function loadOptRows(name: string) {
@@ -746,14 +785,17 @@ export default function Admin() {
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      {optNames.map((name, i) => (
-                        <button key={i} onClick={() => loadOptRows(name)}
-                          className={`bg-[#111118] border rounded-xl p-4 transition-all text-left ${optCategory === 'index' ? 'border-[#4d9fff]/40 hover:border-[#4d9fff]' : 'border-[#ff8c42]/40 hover:border-[#ff8c42]'}`}>
-                          <div className="text-2xl mb-2">{optCategory === 'index' ? '📈' : '📦'}</div>
-                          <div className={`text-xs font-black mb-1 ${optCategory === 'index' ? 'text-[#4d9fff]' : 'text-[#ff8c42]'}`}>{name}</div>
-                          <div className="text-[10px] font-mono text-[#6b6b85]">Tap to view data</div>
-                        </button>
-                      ))}
+                      {optNames.map((name, i) => {
+                        const idx = DEFAULT_INDICES.find(d => d.key === name);
+                        return (
+                          <button key={i} onClick={() => loadOptRows(name)}
+                            className={`bg-[#111118] border rounded-xl p-4 transition-all text-left ${optCategory === 'index' ? 'border-[#4d9fff]/40 hover:border-[#4d9fff]' : 'border-[#ff8c42]/40 hover:border-[#ff8c42]'}`}>
+                            <div className="text-2xl mb-2">{optCategory === 'index' ? '📈' : '📦'}</div>
+                            <div className={`text-xs font-black mb-1 ${optCategory === 'index' ? 'text-[#4d9fff]' : 'text-[#ff8c42]'}`}>{idx?.name || name}</div>
+                            <div className="text-[10px] font-mono text-[#6b6b85]">{name}</div>
+                          </button>
+                        );
+                      })}
                     </div>
                   )
                 )}
@@ -763,34 +805,46 @@ export default function Admin() {
                   optRowsLoading ? (
                     <div className="text-center py-12 text-xs font-mono text-[#6b6b85]">Loading...</div>
                   ) : (
-                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
-                      <table className="w-full text-xs font-mono">
-                        <thead><tr className="border-b border-[#1e1e2e]">
-                          {['Expiry', 'Trade Date', 'Strikes', 'Source', 'Action'].map(h => (
-                            <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
-                          ))}
-                        </tr></thead>
-                        <tbody>
-                          {optRows.length === 0 ? (
-                            <tr><td colSpan={5} className="text-center py-8 text-[#6b6b85]">No data found</td></tr>
-                          ) : optRows.map((row, i) => (
-                            <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#f0c040]/5">
-                              <td className="px-4 py-3 text-[#6b6b85]">{row.expiry}</td>
-                              <td className="px-4 py-3 text-[#f0c040] font-bold">{row.trade_date}</td>
-                              <td className="px-4 py-3 text-[#39d98a] font-bold">{row.strikeCount}</td>
-                              <td className="px-4 py-3">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${row.uploaded_by === 'auto-fetch' ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#f0c040]/15 text-[#f0c040]'}`}>
-                                  {row.uploaded_by === 'auto-fetch' ? 'AUTO' : 'MANUAL'}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3">
-                                <button onClick={() => handleDeleteRow(row.id)}
-                                  className="text-[#ff4d6d] hover:bg-[#ff4d6d]/10 rounded px-2 py-1 text-[10px] font-bold">Delete</button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    <div>
+                      {optRows.length > 0 && (
+                        <div className="flex justify-end mb-2">
+                          <button onClick={() => downloadAllCSV(optRows, selectedOptName)}
+                            className="bg-[#4d9fff]/15 border border-[#4d9fff]/40 text-[#4d9fff] hover:bg-[#4d9fff]/25 rounded-lg px-3 py-1.5 text-[10px] font-bold font-mono">
+                            ⬇ Download All ({optRows.length} days) as CSV
+                          </button>
+                        </div>
+                      )}
+                      <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
+                        <table className="w-full text-xs font-mono">
+                          <thead><tr className="border-b border-[#1e1e2e]">
+                            {['Expiry', 'Trade Date', 'Strikes', 'Source', 'Actions'].map(h => (
+                              <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase font-normal whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr></thead>
+                          <tbody>
+                            {optRows.length === 0 ? (
+                              <tr><td colSpan={5} className="text-center py-8 text-[#6b6b85]">No data yet — run auto-fetch to populate this index.</td></tr>
+                            ) : optRows.map((row, i) => (
+                              <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#f0c040]/5">
+                                <td className="px-4 py-3 text-[#6b6b85]">{row.expiry}</td>
+                                <td className="px-4 py-3 text-[#f0c040] font-bold">{row.trade_date}</td>
+                                <td className="px-4 py-3 text-[#39d98a] font-bold">{row.strikeCount}</td>
+                                <td className="px-4 py-3">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${row.uploaded_by === 'auto-fetch' ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#f0c040]/15 text-[#f0c040]'}`}>
+                                    {row.uploaded_by === 'auto-fetch' ? 'AUTO' : 'MANUAL'}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 flex gap-2">
+                                  <button onClick={() => downloadRowCSV(row, selectedOptName)}
+                                    className="text-[#4d9fff] hover:bg-[#4d9fff]/10 rounded px-2 py-1 text-[10px] font-bold">⬇ CSV</button>
+                                  <button onClick={() => handleDeleteRow(row.id)}
+                                    className="text-[#ff4d6d] hover:bg-[#ff4d6d]/10 rounded px-2 py-1 text-[10px] font-bold">Delete</button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )
                 )}
