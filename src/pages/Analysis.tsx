@@ -626,6 +626,8 @@ export default function Analysis() {
               if (!sc) return <div className="text-[#6b6b85] font-mono text-sm p-4">Run analysis first.</div>;
 
               const { sl, entryLow, entryHigh, target1, target2, openEst } = sc;
+              const confAbove = entryHigh + Math.round((target1 - entryHigh) * 0.25);
+              const confBelow = Math.round(sl + (entryLow - sl) * 0.5);
               const decayPerSlot = result.dte === 0 ? 0.04 : result.dte === 1 ? 0.025 : 0.015;
               const dv = (val: number, slot: number) => Math.max(Math.round(val * Math.pow(1 - decayPerSlot, slot)), 1);
 
@@ -695,6 +697,18 @@ export default function Analysis() {
                         <div className="absolute left-0 right-0 bg-[#39d98a]/8" style={{ bottom: bp(target1), height: hp(target1, target2) }} />
                         <div className="absolute left-0 right-0 bg-[#39d98a]/15" style={{ bottom: bp(target2), top: 0 }} />
 
+                        {/* Momentum confirmation band */}
+                        <div className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(confAbove) }}>
+                          <div className="flex-1 border-t-2 border-dashed border-[#ff8c42]" />
+                          <span className="text-[8px] font-black font-mono bg-[#ff8c42]/20 text-[#ff8c42] px-1.5 rounded shrink-0">MOMENTUM ₹{confAbove}</span>
+                        </div>
+
+                        {/* Recovery confirmation band */}
+                        <div className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(confBelow) }}>
+                          <div className="flex-1 border-t-2 border-dashed border-[#a78bfa]" />
+                          <span className="text-[8px] font-black font-mono bg-[#a78bfa]/20 text-[#a78bfa] px-1.5 rounded shrink-0">RECOVERY ₹{confBelow}</span>
+                        </div>
+
                         {/* Price lines */}
                         {[
                           { price: sl, label: `SL ₹${sl}`, color: '#ff4d6d' },
@@ -720,16 +734,21 @@ export default function Analysis() {
                         const dSl = dv(sl, slot);
                         const dT1 = dv(target1, slot);
                         const dT2 = dv(target2, slot);
+                        const dConf = dv(confAbove, slot);
+                        const dRecov = dv(confBelow, slot);
                         return (
                           <div key={time} className="bg-[#16161f] border border-[#1e1e2e] rounded-xl p-3">
                             <div className="text-xs font-black text-[#f0c040] mb-2">{time}</div>
                             <div className="space-y-1.5">
                               <div className="flex items-start gap-2">
                                 <span className="text-[10px] text-[#ff8c42] mt-0.5 shrink-0 font-mono">▲</span>
-                                <span className="text-[10px] font-mono text-[#6b6b85]">
+                                <div className="text-[10px] font-mono text-[#6b6b85]">
                                   Above <span className="text-[#e8e8f0]">₹{eH}</span>
                                   <span className="text-[#ff8c42]"> → Enter · Reduced Qty · SL ₹{eH}</span>
-                                </span>
+                                  <div className="mt-1 bg-[#ff8c42]/10 border border-[#ff8c42]/30 rounded px-1.5 py-1 text-[9px] text-[#ff8c42]">
+                                    ⚡ Wait for <span className="font-black">₹{dConf}</span> — crossing this confirms momentum continues toward T1
+                                  </div>
+                                </div>
                               </div>
                               <div className="flex items-start gap-2 bg-[#39d98a]/10 rounded-lg px-2 py-1.5">
                                 <span className="text-[10px] text-[#39d98a] mt-0.5 shrink-0 font-mono">✓</span>
@@ -740,10 +759,13 @@ export default function Analysis() {
                               </div>
                               <div className="flex items-start gap-2">
                                 <span className="text-[10px] text-[#ff4d6d] mt-0.5 shrink-0 font-mono">▼</span>
-                                <span className="text-[10px] font-mono text-[#6b6b85]">
+                                <div className="text-[10px] font-mono text-[#6b6b85]">
                                   Below <span className="text-[#e8e8f0]">₹{eL}</span>
-                                  <span className="text-[#ff4d6d]"> → WAIT / SKIP · Possible reversal</span>
-                                </span>
+                                  <span className="text-[#ff4d6d]"> → WAIT / SKIP</span>
+                                  <div className="mt-1 bg-[#a78bfa]/10 border border-[#a78bfa]/30 rounded px-1.5 py-1 text-[9px] text-[#a78bfa]">
+                                    🔄 Watch <span className="font-black">₹{dRecov}</span> — if price bounces back above this, reversal forming. Wait for zone retest before entering.
+                                  </div>
+                                </div>
                               </div>
                             </div>
                           </div>
