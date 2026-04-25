@@ -691,7 +691,7 @@ export default function StockAnalysis() {
   }
 
   // ── RUN INTRADAY PIVOT ANALYSIS ──
-  function runIntraday() {
+  async function runIntraday() {
     const H = parseFloat(prevHigh);
     const L = parseFloat(prevLow);
     const C = parseFloat(prevClose);
@@ -701,6 +701,26 @@ export default function StockAnalysis() {
     }
     if (H <= L) { setError('High must be greater than Low.'); return; }
     if (C < L || C > H) { setError('Close must be between High and Low.'); return; }
+
+    // Credit check: pro/admin are free; everyone else pays 5 credits
+    setLoading(true);
+    setError('');
+    if (!['pro', 'admin'].includes(role) && user) {
+      const currentCredits = profile?.credits ?? 0;
+      if (currentCredits < 5) {
+        setError(`Need 5 credits for intraday analysis. You have ${currentCredits}. Buy more credits or upgrade to Pro.`);
+        setLoading(false);
+        return;
+      }
+      try {
+        await supabase.rpc('use_credits', { p_user_id: user.id, p_credits: 5 });
+        await refreshProfile();
+      } catch {
+        setError('Credit deduction failed. Try again.');
+        setLoading(false);
+        return;
+      }
+    }
 
     const P  = (H + L + C) / 3;
     const HL = H - L;
@@ -754,6 +774,7 @@ export default function StockAnalysis() {
     });
     setGctTab('overview');
     setStep('result');
+    setLoading(false);
   }
 
   const zoneColor = (zone: string) => {
@@ -1072,9 +1093,9 @@ export default function StockAnalysis() {
                 {loading ? '⏳ Analysing...' : optCsvData.length < 2 ? '⚛ Run God Particle Analysis (fetch options data first)' : `⚛ Run God Particle Analysis — ${stockName} ${optStrike} ${optType}`}
               </button>
             ) : (
-              <button onClick={runIntraday} disabled={!prevHigh || !prevLow || !prevClose}
+              <button onClick={runIntraday} disabled={loading || !prevHigh || !prevLow || !prevClose}
                 className="w-full bg-[#ff8c42] text-black font-black py-3 rounded-xl text-sm hover:opacity-90 transition-all disabled:opacity-40">
-                {`⚡ Calculate Pivot Levels${stockName ? ' — ' + stockName : ''}`}
+                {loading ? '⏳ Processing...' : `⚡ Calculate Pivot Levels${stockName ? ' — ' + stockName : ''} ${!['pro','admin'].includes(role) ? '(5 credits)' : '(Free)'}`}
               </button>
             )}
           </div>
