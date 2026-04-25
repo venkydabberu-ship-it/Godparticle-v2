@@ -12,8 +12,9 @@ const PLANS = {
 
 const CREDIT_PACKS = { 60: 49, 140: 99, 320: 199 };
 
-const CF_PG  = 'https://api.cashfree.com/pg';
-const CF_SUB = 'https://api.cashfree.com/subscriptions';
+const CF_HOST = 'api.cashfree.com';
+const CF_PG   = 'https://' + CF_HOST + '/pg';
+const CF_SUB  = 'https://' + CF_HOST + '/subscriptions';
 
 function pgH(appId, secret) {
   return { 'x-client-id': appId, 'x-client-secret': secret, 'x-api-version': '2023-08-01', 'Content-Type': 'application/json' };
