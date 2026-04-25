@@ -140,7 +140,7 @@ export default function Analysis() {
           close: isCE ? sd.ce_ltp : sd.pe_ltp,
           volume: isCE ? sd.ce_vol : sd.pe_vol,
           oi: isCE ? sd.ce_oi : sd.pe_oi,
-          chng_oi: isCE ? sd.ce_chng_oi : sd.pe_chng_oi,
+          chng_oi: isCE ? (sd.ce_coi ?? sd.ce_chng_oi ?? 0) : (sd.pe_coi ?? sd.pe_chng_oi ?? 0),
         };
       }).filter(Boolean).filter((d: any) => d.close > 0 || d.oi > 0);
 
@@ -475,8 +475,8 @@ export default function Analysis() {
                         <td className="px-4 py-3 font-bold">₹{d.close.toFixed(2)}</td>
                         <td className="px-4 py-3">{d.volume.toLocaleString()}</td>
                         <td className="px-4 py-3">{d.oi.toLocaleString()}</td>
-                        <td className={`px-4 py-3 ${d.chng_oi >= 0 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>
-                          {d.chng_oi >= 0 ? '+' : ''}{Math.round(d.chng_oi).toLocaleString()}
+                        <td className={`px-4 py-3 ${(d.chng_oi || 0) >= 0 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>
+                          {(d.chng_oi || 0) >= 0 ? '+' : ''}{Math.round(d.chng_oi || 0).toLocaleString()}
                         </td>
                       </tr>
                     ))}
