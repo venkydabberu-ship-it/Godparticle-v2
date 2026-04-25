@@ -46,9 +46,11 @@ const Loader = () => (
 );
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) return <Loader />;
-  if (!user) return <Navigate to="/login" replace />;
+  const { user, profile, loading } = useAuth();
+  // Only block on loading if we have no cached profile to show
+  if (loading && !profile) return <Loader />;
+  // Auth settled with no user or profile → go to login
+  if (!loading && !user && !profile) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
