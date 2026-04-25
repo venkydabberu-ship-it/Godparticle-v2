@@ -189,7 +189,7 @@ export default function StockAnalysis() {
             close: isCE ? sd.ce_ltp : sd.pe_ltp,
             volume: isCE ? sd.ce_vol : sd.pe_vol,
             oi: isCE ? sd.ce_oi : sd.pe_oi,
-            chng_oi: isCE ? sd.ce_chng_oi : sd.pe_chng_oi,
+            chng_oi: isCE ? (sd.ce_coi ?? sd.ce_chng_oi ?? 0) : (sd.pe_coi ?? sd.pe_chng_oi ?? 0),
           };
         }).filter(Boolean);
         setOptCsvData(optData);
