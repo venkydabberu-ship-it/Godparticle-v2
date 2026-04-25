@@ -1,6 +1,29 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, Component, ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { crashed: boolean }> {
+  constructor(props: any) { super(props); this.state = { crashed: false }; }
+  static getDerivedStateFromError() { return { crashed: true }; }
+  render() {
+    if (this.state.crashed) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-[#0a0a0f]">
+          <div className="flex flex-col items-center gap-4 text-center px-6">
+            <div className="w-12 h-12 bg-[#ff4d6d] rounded-xl flex items-center justify-center text-xl">⚠</div>
+            <div className="text-[#e8e8f0] font-black text-lg">Something went wrong</div>
+            <div className="text-[#6b6b85] font-mono text-sm">A new version may have been deployed.</div>
+            <button onClick={() => window.location.reload()}
+              className="bg-[#f0c040] text-[#0a0a0f] font-black px-6 py-3 rounded-xl text-sm">
+              Tap to Reload
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const Landing      = lazy(() => import('./pages/Landing'));
 const Login        = lazy(() => import('./pages/Login'));
@@ -47,6 +70,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <ErrorBoundary>
         <Suspense fallback={<Loader />}>
           <Routes>
             <Route path="/" element={<Landing />} />
@@ -82,6 +106,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
+        </ErrorBoundary>
       </AuthProvider>
     </BrowserRouter>
   );
