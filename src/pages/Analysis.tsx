@@ -45,6 +45,7 @@ export default function Analysis() {
   const [scenarios, setScenarios] = useState<any[]>([]);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('raw');
+  const [planBGap, setPlanBGap] = useState(0);
 
   const location = useLocation();
   useEffect(() => {
@@ -177,6 +178,7 @@ export default function Analysis() {
     { id: 'gp', label: '⚛ God Particle' },
     { id: 'story', label: '📖 Story' },
     { id: 'matrix', label: '🎯 Matrix' },
+    { id: 'planb', label: '🔀 Plan B' },
     ...(isAdmin ? [{ id: 'ig', label: '📸 Instagram' }] : []),
   ];
 
@@ -616,6 +618,142 @@ export default function Analysis() {
                 </div>
               </div>
             )}
+
+            {/* Plan B */}
+            {activeTab === 'planb' && (() => {
+              const validScenarios = scenarios.filter(s => !s.avoid);
+              const sc = validScenarios.find(s => s.gap === planBGap) || validScenarios.find(s => s.gap === 0) || validScenarios[0];
+              if (!sc) return <div className="text-[#6b6b85] font-mono text-sm p-4">Run analysis first.</div>;
+
+              const { sl, entryLow, entryHigh, target1, target2, openEst } = sc;
+              const decayPerSlot = result.dte === 0 ? 0.04 : result.dte === 1 ? 0.025 : 0.015;
+              const dv = (val: number, slot: number) => Math.max(Math.round(val * Math.pow(1 - decayPerSlot, slot)), 1);
+
+              const slots = [
+                { time: '9:30 AM', slot: 0 },
+                { time: '10:00 AM', slot: 1 },
+                { time: '10:30 AM', slot: 2 },
+                { time: '11:00 AM', slot: 3 },
+                { time: '11:30 AM', slot: 4 },
+                { time: '12:00 PM', slot: 5 },
+              ];
+
+              const minP = Math.max(0, sl - Math.round((target2 - sl) * 0.12));
+              const maxP = target2 + Math.round((target2 - sl) * 0.08);
+              const range = maxP - minP || 1;
+              const bp = (p: number) => `${Math.min(100, Math.max(0, ((p - minP) / range) * 100)).toFixed(1)}%`;
+              const hp = (from: number, to: number) => `${Math.max(2, ((to - from) / range) * 100).toFixed(1)}%`;
+
+              return (
+                <div>
+                  {/* Scenario selector */}
+                  <div className="mb-5">
+                    <label className="block text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">Select Scenario</label>
+                    <select
+                      value={planBGap}
+                      onChange={e => setPlanBGap(Number(e.target.value))}
+                      className="bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]"
+                    >
+                      {validScenarios.map(s => (
+                        <option key={s.gap} value={s.gap}>{s.label}</option>
+                      ))}
+                    </select>
+                    <div className="text-[10px] font-mono text-[#6b6b85] mt-1">
+                      Open Est: <span className="text-[#f0c040]">₹{openEst}</span> &nbsp;·&nbsp;
+                      Buy Zone: <span className="text-[#f0c040]">₹{entryLow}–₹{entryHigh}</span> &nbsp;·&nbsp;
+                      SL: <span className="text-[#ff4d6d]">₹{sl}</span> &nbsp;·&nbsp;
+                      T1: <span className="text-[#39d98a]">₹{target1}</span> &nbsp;·&nbsp;
+                      T2: <span className="text-[#39d98a]">₹{target2}</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+                    {/* Price Ladder */}
+                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4">
+                      <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">📊 Price Ladder</div>
+                      <div className="relative bg-[#0a0a0f] rounded-xl overflow-hidden" style={{ height: '320px' }}>
+
+                        {/* Danger zone */}
+                        <div className="absolute left-0 right-0 bg-[#ff4d6d]/15" style={{ bottom: 0, height: hp(minP, sl) }}>
+                          <span className="text-[9px] font-mono text-[#ff4d6d] px-2 absolute bottom-1">DANGER</span>
+                        </div>
+
+                        {/* Wait zone */}
+                        <div className="absolute left-0 right-0 bg-[#ff8c42]/8" style={{ bottom: hp(minP, sl), height: hp(sl, entryLow) }} />
+
+                        {/* Buy zone */}
+                        <div className="absolute left-0 right-0 bg-[#39d98a]/20 border-y border-[#39d98a]/40 flex items-center justify-center"
+                          style={{ bottom: bp(entryLow), height: hp(entryLow, entryHigh) }}>
+                          <span className="text-[10px] font-black text-[#39d98a]">✓ BUY ZONE</span>
+                        </div>
+
+                        {/* Neutral zone */}
+                        <div className="absolute left-0 right-0 bg-[#f0c040]/5" style={{ bottom: bp(entryHigh), height: hp(entryHigh, target1) }} />
+
+                        {/* Target zones */}
+                        <div className="absolute left-0 right-0 bg-[#39d98a]/8" style={{ bottom: bp(target1), height: hp(target1, target2) }} />
+                        <div className="absolute left-0 right-0 bg-[#39d98a]/15" style={{ bottom: bp(target2), top: 0 }} />
+
+                        {/* Price lines */}
+                        {[
+                          { price: sl, label: `SL ₹${sl}`, color: '#ff4d6d' },
+                          { price: entryLow, label: `₹${entryLow}`, color: '#f0c040' },
+                          { price: entryHigh, label: `₹${entryHigh}`, color: '#f0c040' },
+                          { price: target1, label: `T1 ₹${target1}`, color: '#39d98a' },
+                          { price: target2, label: `T2 ₹${target2}`, color: '#39d98a' },
+                        ].map(({ price, label, color }) => (
+                          <div key={price} className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(price) }}>
+                            <div className="flex-1 border-t border-dashed" style={{ borderColor: color + '80' }} />
+                            <span className="text-[9px] font-mono px-1.5 shrink-0" style={{ color }}>{label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Time slot cards */}
+                    <div className="space-y-2">
+                      <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">⏰ Dynamic Entry by Time</div>
+                      {slots.map(({ time, slot }) => {
+                        const eL = dv(entryLow, slot);
+                        const eH = dv(entryHigh, slot);
+                        const dSl = dv(sl, slot);
+                        const dT1 = dv(target1, slot);
+                        const dT2 = dv(target2, slot);
+                        return (
+                          <div key={time} className="bg-[#16161f] border border-[#1e1e2e] rounded-xl p-3">
+                            <div className="text-xs font-black text-[#f0c040] mb-2">{time}</div>
+                            <div className="space-y-1.5">
+                              <div className="flex items-start gap-2">
+                                <span className="text-[10px] text-[#ff8c42] mt-0.5 shrink-0 font-mono">▲</span>
+                                <span className="text-[10px] font-mono text-[#6b6b85]">
+                                  Above <span className="text-[#e8e8f0]">₹{eH}</span>
+                                  <span className="text-[#ff8c42]"> → Enter · Reduced Qty · SL ₹{eH}</span>
+                                </span>
+                              </div>
+                              <div className="flex items-start gap-2 bg-[#39d98a]/10 rounded-lg px-2 py-1.5">
+                                <span className="text-[10px] text-[#39d98a] mt-0.5 shrink-0 font-mono">✓</span>
+                                <span className="text-[10px] font-mono">
+                                  <span className="text-[#39d98a] font-bold">₹{eL}–₹{eH}</span>
+                                  <span className="text-[#39d98a]"> → IDEAL ENTRY · Full Qty · SL ₹{dSl} · T1 ₹{dT1} · T2 ₹{dT2}</span>
+                                </span>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <span className="text-[10px] text-[#ff4d6d] mt-0.5 shrink-0 font-mono">▼</span>
+                                <span className="text-[10px] font-mono text-[#6b6b85]">
+                                  Below <span className="text-[#e8e8f0]">₹{eL}</span>
+                                  <span className="text-[#ff4d6d]"> → WAIT / SKIP · Possible reversal</span>
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Instagram */}
             {activeTab === 'ig' && (() => {
