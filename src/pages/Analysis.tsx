@@ -141,6 +141,7 @@ export default function Analysis() {
           volume: isCE ? sd.ce_vol : sd.pe_vol,
           oi: isCE ? sd.ce_oi : sd.pe_oi,
           chng_oi: isCE ? (sd.ce_coi ?? sd.ce_chng_oi ?? 0) : (sd.pe_coi ?? sd.pe_chng_oi ?? 0),
+          iv: isCE ? (sd.ce_iv ?? 0) : (sd.pe_iv ?? 0),
         };
       }).filter(Boolean).filter((d: any) => d.close > 0 || d.oi > 0);
 
@@ -464,7 +465,7 @@ export default function Analysis() {
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
                 <table className="w-full text-xs font-mono">
                   <thead><tr className="border-b border-[#1e1e2e]">
-                    {['Date', 'Close', 'Volume', 'OI', 'Chng OI'].map(h => (
+                    {['Date', 'Close', 'IV %', 'Volume', 'OI', 'Chng OI'].map(h => (
                       <th key={h} className="text-left px-4 py-3 text-[#6b6b85] uppercase tracking-widest font-normal">{h}</th>
                     ))}
                   </tr></thead>
@@ -473,6 +474,7 @@ export default function Analysis() {
                       <tr key={i} className="border-b border-[#1e1e2e]/50 hover:bg-[#f0c040]/5">
                         <td className="px-4 py-3">{d.date}</td>
                         <td className="px-4 py-3 font-bold">₹{d.close.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-[#a78bfa] font-bold">{d.iv > 0 ? d.iv.toFixed(1) + '%' : '—'}</td>
                         <td className="px-4 py-3">{d.volume.toLocaleString()}</td>
                         <td className="px-4 py-3">{d.oi.toLocaleString()}</td>
                         <td className={`px-4 py-3 ${(d.chng_oi || 0) >= 0 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>

@@ -448,6 +448,11 @@ export function computeGodParticle(
     data, decomp, pcbRounded, vwapRounded, oiwapRounded, dte, optType
   );
 
+  // IV from the fetched data (Upstox option_greeks → iv field)
+  const ivValues = data.map((d: any) => d.iv || 0).filter((v: number) => v > 0);
+  const latestIV = ivValues.length > 0 ? ivValues[ivValues.length - 1] : 0;
+  const avgIV    = ivValues.length > 0 ? ivValues.reduce((s: number, v: number) => s + v, 0) / ivValues.length : 0;
+
   return {
     data,
     decomp,
@@ -460,6 +465,8 @@ export function computeGodParticle(
     oiwap: oiwapRounded,
     pcb:   pcbRounded,
     lc:    lastClose,
+    latestIV: Math.round(latestIV * 10) / 10,
+    avgIV:    Math.round(avgIV    * 10) / 10,
     conviction:     verdict.conviction,
     bias:           verdict.bias,
     recommendation: verdict.recommendation,
@@ -506,6 +513,8 @@ export function generateScenarioMatrix(
   const dte            = result.dte;
   const daysSinceClose = result.daysSinceClose ?? 0;
   const isCE           = result.optType === 'CE';
+  const latestIV       = result.latestIV ?? 0;
+  const avgIV          = result.avgIV ?? 0;
 
   // Theta discount applied to targets
   const td = dte <= 0 ? 0.50
@@ -539,9 +548,19 @@ export function generateScenarioMatrix(
 
   const thetaFactor = baseTheta * dayPenalty;
 
-  // thetaBase = realistic flat-open price for next session
+  // IV adjustment: current IV vs recent average tells us if options will open
+  // more expensive (high IV) or cheaper (low IV) than historical patterns suggest.
+  // Baseline: use avgIV if available, otherwise fall back to 13% (typical Nifty weekly IV).
+  // Effect: ±35% weight per unit of IV ratio. Clamped to ±30% impact.
+  const refIV  = avgIV > 0 ? avgIV : 13;
+  const ivMult = latestIV > 0
+    ? 1 + ((latestIV / refIV) - 1) * 0.35
+    : 1.0;
+  const ivFactor = Math.min(1.30, Math.max(0.70, ivMult));
+
+  // thetaBase = realistic flat-open price for next session, IV-adjusted
   const thetaBase = Math.max(
-    Math.round(coreValue + timePremium * thetaFactor),
+    Math.round((coreValue + timePremium * thetaFactor) * ivFactor),
     1
   );
 

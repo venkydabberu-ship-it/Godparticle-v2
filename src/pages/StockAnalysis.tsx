@@ -190,6 +190,7 @@ export default function StockAnalysis() {
             volume: isCE ? sd.ce_vol : sd.pe_vol,
             oi: isCE ? sd.ce_oi : sd.pe_oi,
             chng_oi: isCE ? (sd.ce_coi ?? sd.ce_chng_oi ?? 0) : (sd.pe_coi ?? sd.pe_chng_oi ?? 0),
+            iv: isCE ? (sd.ce_iv ?? 0) : (sd.pe_iv ?? 0),
           };
         }).filter(Boolean);
         setOptCsvData(optData);
@@ -221,12 +222,14 @@ export default function StockAnalysis() {
         strikes[k] = {
           ce_ltp:    v.ce_ltp  || 0,
           ce_oi:     v.ce_oi   || 0,
-          ce_chng_oi: v.ce_coi || 0,   // smooth-endpoint stores as ce_coi
+          ce_chng_oi: v.ce_coi || 0,
           ce_vol:    v.ce_vol  || 0,
+          ce_iv:     v.ce_iv   || 0,
           pe_ltp:    v.pe_ltp  || 0,
           pe_oi:     v.pe_oi   || 0,
-          pe_chng_oi: v.pe_coi || 0,   // smooth-endpoint stores as pe_coi
+          pe_chng_oi: v.pe_coi || 0,
           pe_vol:    v.pe_vol  || 0,
+          pe_iv:     v.pe_iv   || 0,
         };
       });
 
@@ -264,7 +267,8 @@ export default function StockAnalysis() {
             close: isCE ? s.ce_ltp : s.pe_ltp,
             volume: isCE ? s.ce_vol : s.pe_vol,
             oi: isCE ? s.ce_oi : s.pe_oi,
-            chng_oi: isCE ? s.ce_chng_oi : s.pe_chng_oi,
+            chng_oi: isCE ? (s.ce_coi ?? s.ce_chng_oi ?? 0) : (s.pe_coi ?? s.pe_chng_oi ?? 0),
+            iv: isCE ? (s.ce_iv ?? 0) : (s.pe_iv ?? 0),
           };
         }).filter(Boolean);
         setOptCsvData(optData);
@@ -277,7 +281,8 @@ export default function StockAnalysis() {
           close: isCE ? sd.ce_ltp : sd.pe_ltp,
           volume: isCE ? sd.ce_vol : sd.pe_vol,
           oi: isCE ? sd.ce_oi : sd.pe_oi,
-          chng_oi: isCE ? sd.ce_chng_oi : sd.pe_chng_oi,
+          chng_oi: isCE ? (sd.ce_coi ?? sd.ce_chng_oi ?? 0) : (sd.pe_coi ?? sd.pe_chng_oi ?? 0),
+          iv: isCE ? (sd.ce_iv ?? 0) : (sd.pe_iv ?? 0),
         }]);
       }
 
