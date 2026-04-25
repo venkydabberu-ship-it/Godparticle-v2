@@ -982,6 +982,7 @@ export default function StockAnalysis() {
             { id: 'upside',   label: '🚀 Upside' },
             { id: 'fss',      label: '🔬 FSS' },
             { id: 'plan',     label: '🎯 My Plan' },
+            { id: 'planb',    label: '🔀 Plan B' },
           ];
           return (
             <div className="space-y-4">
@@ -1446,6 +1447,144 @@ export default function StockAnalysis() {
                   </div>
                 );
               })()}
+
+              {/* ── GCT PLAN B: Graphical price ladder ── */}
+              {gctTab === 'planb' && (() => {
+                const cp = result.currentPrice;
+                const al = result.al;
+                const mgc = result.mgc;
+                const cl = result.cl;
+                const u1 = result.upsideLevels[0].price;
+                const u2 = result.upsideLevels[1].price;
+                const u3 = result.upsideLevels[2].price;
+                const l1 = result.crashLevels[0].price;
+                const l2 = result.crashLevels[1].price;
+
+                // Confirmation levels
+                const confAbove = u2;     // Already above AL → momentum confirmed when crossing U2
+                const confBelow = Math.round(mgc + (al - mgc) * 0.5); // Halfway between MGC and AL — recovery signal
+
+                const minP = Math.max(0, l2 - Math.round((u3 - l2) * 0.05));
+                const maxP = u3 + Math.round((u3 - l2) * 0.05);
+                const range = maxP - minP || 1;
+                const bp = (p: number) => `${Math.min(100, Math.max(0, ((p - minP) / range) * 100)).toFixed(1)}%`;
+                const hp = (from: number, to: number) => `${Math.max(1, ((to - from) / range) * 100).toFixed(1)}%`;
+                const fmt = (n: number) => '₹' + Math.round(n).toLocaleString();
+                const inBuyZone = cp >= al;
+                const inWatchZone = cp >= mgc && cp < al;
+                const inDangerZone = cp >= cl && cp < mgc;
+                const inCrashZone = cp < cl;
+
+                return (
+                  <div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-4">
+                      {/* Price Ladder */}
+                      <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4">
+                        <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">📊 Price Ladder</div>
+                        <div className="relative bg-[#0a0a0f] rounded-xl overflow-hidden" style={{ height: '360px' }}>
+                          {/* Crash zone */}
+                          <div className="absolute left-0 right-0 bg-[#ff4d6d]/15" style={{ bottom: 0, height: hp(minP, l2) }}>
+                            <span className="text-[9px] font-mono text-[#ff4d6d] px-2 absolute bottom-1">CRASH ZONE</span>
+                          </div>
+                          {/* Danger zone */}
+                          <div className="absolute left-0 right-0 bg-[#ff8c42]/10" style={{ bottom: hp(minP, l2), height: hp(l2, mgc) }}>
+                            <span className="text-[9px] font-mono text-[#ff8c42] px-2 absolute bottom-1">DANGER</span>
+                          </div>
+                          {/* Watch zone */}
+                          <div className="absolute left-0 right-0 bg-[#f0c040]/8" style={{ bottom: bp(mgc), height: hp(mgc, al) }} />
+                          {/* Buy zone */}
+                          <div className="absolute left-0 right-0 bg-[#39d98a]/20 border-y border-[#39d98a]/40 flex items-center justify-center"
+                            style={{ bottom: bp(al), height: hp(al, u1) }}>
+                            <span className="text-[10px] font-black text-[#39d98a]">✓ BUY ZONE</span>
+                          </div>
+                          {/* Above U1 */}
+                          <div className="absolute left-0 right-0 bg-[#39d98a]/8" style={{ bottom: bp(u1), top: 0 }} />
+                          {/* Momentum confirmation */}
+                          <div className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(confAbove) }}>
+                            <div className="flex-1 border-t-2 border-dashed border-[#ff8c42]" />
+                            <span className="text-[8px] font-black font-mono bg-[#ff8c42]/20 text-[#ff8c42] px-1.5 rounded shrink-0">MOMENTUM {fmt(confAbove)}</span>
+                          </div>
+                          {/* Recovery confirmation */}
+                          <div className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(confBelow) }}>
+                            <div className="flex-1 border-t-2 border-dashed border-[#a78bfa]" />
+                            <span className="text-[8px] font-black font-mono bg-[#a78bfa]/20 text-[#a78bfa] px-1.5 rounded shrink-0">RECOVERY {fmt(confBelow)}</span>
+                          </div>
+                          {/* Current price marker */}
+                          <div className="absolute left-0 right-0 flex items-center z-10" style={{ bottom: bp(cp) }}>
+                            <div className="flex-1 border-t-2 border-solid border-white" />
+                            <span className="text-[9px] font-black font-mono bg-white/20 text-white px-1.5 rounded shrink-0">NOW {fmt(cp)}</span>
+                          </div>
+                          {/* Key lines */}
+                          {[
+                            { price: l2, label: `L2 ${fmt(l2)}`, color: '#ff4d6d' },
+                            { price: l1, label: `L1 ${fmt(l1)}`, color: '#ff8c42' },
+                            { price: mgc, label: `MGC ${fmt(mgc)}`, color: '#f0c040' },
+                            { price: al,  label: `AL ${fmt(al)}`,  color: '#39d98a' },
+                            { price: u1,  label: `U1 ${fmt(u1)}`,  color: '#39d98a' },
+                            { price: u2,  label: `U2 ${fmt(u2)}`,  color: '#4d9fff' },
+                          ].map(({ price, label, color }) => (
+                            <div key={price} className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(price) }}>
+                              <div className="flex-1 border-t border-dashed" style={{ borderColor: color + '60' }} />
+                              <span className="text-[8px] font-mono px-1.5 shrink-0" style={{ color }}>{label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Guidance cards */}
+                      <div className="space-y-3">
+                        <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest">📍 Where Is Price Now?</div>
+
+                        {/* Already in buy zone */}
+                        <div className={`border rounded-xl p-4 ${inBuyZone ? 'border-[#39d98a]/60 bg-[#39d98a]/10' : 'border-[#1e1e2e] opacity-50'}`}>
+                          <div className="text-xs font-black text-[#39d98a] mb-2">✅ Above AL — In Buy Zone</div>
+                          <div className="space-y-2 text-[10px] font-mono text-[#6b6b85]">
+                            <div className="bg-[#39d98a]/10 rounded px-2 py-1.5">Ideal entry was at AL {fmt(al)}. If you missed it:</div>
+                            <div className="bg-[#ff8c42]/10 border border-[#ff8c42]/30 rounded px-2 py-1.5 text-[#ff8c42]">
+                              ⚡ Enter Reduced Qty only if price crosses <span className="font-black">{fmt(confAbove)}</span> — that confirms momentum toward U3+
+                            </div>
+                            <div>SL for late entry = {fmt(al)} (below AL invalidates the trade)</div>
+                          </div>
+                        </div>
+
+                        {/* Watch zone */}
+                        <div className={`border rounded-xl p-4 ${inWatchZone ? 'border-[#f0c040]/60 bg-[#f0c040]/10' : 'border-[#1e1e2e] opacity-50'}`}>
+                          <div className="text-xs font-black text-[#f0c040] mb-2">👁 Between MGC & AL — Watch Zone</div>
+                          <div className="space-y-2 text-[10px] font-mono text-[#6b6b85]">
+                            <div>Stock has recovered from crash but not broken out yet.</div>
+                            <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded px-2 py-1.5 text-[#f0c040]">
+                              Wait for monthly close above AL <span className="font-black">{fmt(al)}</span> — only then buy. FOMO entry below AL always loses.
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Danger zone */}
+                        <div className={`border rounded-xl p-4 ${inDangerZone ? 'border-[#ff8c42]/60 bg-[#ff8c42]/10' : 'border-[#1e1e2e] opacity-50'}`}>
+                          <div className="text-xs font-black text-[#ff8c42] mb-2">⚠ Below MGC — Danger Zone</div>
+                          <div className="space-y-2 text-[10px] font-mono text-[#6b6b85]">
+                            <div>Institutions are in loss. Avoid fresh buying.</div>
+                            <div className="bg-[#a78bfa]/10 border border-[#a78bfa]/30 rounded px-2 py-1.5 text-[#a78bfa]">
+                              🔄 Recovery signal: if price bounces and closes above <span className="font-black">{fmt(confBelow)}</span> for 2 weeks → reversal forming. Watch MGC {fmt(mgc)} next.
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Crash zone */}
+                        <div className={`border rounded-xl p-4 ${inCrashZone ? 'border-[#ff4d6d]/60 bg-[#ff4d6d]/10' : 'border-[#1e1e2e] opacity-50'}`}>
+                          <div className="text-xs font-black text-[#ff4d6d] mb-2">💀 Crash Zone — Accumulate Only</div>
+                          <div className="space-y-2 text-[10px] font-mono text-[#6b6b85]">
+                            <div>Buy small parts only at L1 {fmt(l1)} and L2 {fmt(l2)}.</div>
+                            <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded px-2 py-1.5 text-[#ff4d6d]">
+                              Recovery: Watch for price to reclaim L1 {fmt(l1)} first, then MGC {fmt(mgc)}. No FOMO buying until both levels hold.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
             </div>
           );
         })()}
