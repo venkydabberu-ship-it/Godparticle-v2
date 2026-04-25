@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { computeGodParticle, saveAnalysis } from '../lib/market';
+import { computeGodParticle, generateScenarioMatrix, saveAnalysis } from '../lib/market';
 
 export default function StockAnalysis() {
   const { user, profile, refreshProfile } = useAuth();
@@ -38,6 +38,7 @@ export default function StockAnalysis() {
   const [step, setStep] = useState<'input' | 'result'>('input');
   const [activeTab, setActiveTab] = useState('raw');
   const [gctTab, setGctTab] = useState('overview');
+  const [planBGap, setPlanBGap] = useState(0);
   const [holdingQty, setHoldingQty] = useState('');
 
   const sectorPE: Record<string, number> = {
@@ -64,7 +65,11 @@ export default function StockAnalysis() {
       setOptType(replay.option_type || 'CE');
       setOptExpiry(replay.expiry || '');
       setAnalysisType('options');
-      setResult({ type: 'options', ...r, stockName: r.stockName || replay.index_name });
+      const replayScenarios = generateScenarioMatrix(r, 'NIFTY50');
+      const replayMatrix = replayScenarios.map((s: any) => ({
+        ...s, buyZoneLow: s.entryLow, buyZoneHigh: s.entryHigh, t1: s.target1,
+      }));
+      setResult({ type: 'options', ...r, stockName: r.stockName || replay.index_name, scenarios: replayScenarios, matrix: replayMatrix });
       setActiveTab('raw');
       setStep('result');
     }
@@ -334,38 +339,54 @@ export default function StockAnalysis() {
     setFetchMsg(prev => prev + ` · ${monthlyData.length} months ready!`);
   }
 
-  // ── CSV UPLOAD — PRICE ──
+  // ── CSV UPLOAD — PRICE (supports NSE and BSE formats) ──
   async function handlePriceCSV(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     const text = await file.text();
     const lines = text.split('\n').filter(l => l.trim());
-    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+    // Normalize all headers to uppercase so NSE and BSE formats both work
+    const rawHeaders = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+    const headers = rawHeaders.map(h => h.toUpperCase());
     const rows = lines.slice(1).map(line => {
       const vals = line.split(',').map(v => v.trim().replace(/"/g, ''));
       const row: any = {};
       headers.forEach((h, i) => { row[h] = vals[i]; });
       return row;
-    }).filter(r => r.DATE && r.CLOSE);
+    }).filter(r => (r.DATE || r.DATE1) && (r.CLOSE || r.LAST_PRICE || r.LSTP));
+    const n = (v: string | undefined) => parseFloat((v || '0').replace(/,/g, '')) || 0;
     const monthly: Record<string, any> = {};
     rows.forEach(row => {
-      const date = row.DATE;
-      const parts = date.split('-');
-      const key = parts[0].length === 4
-        ? `${parts[0]}-${parts[1]}`
-        : `${parts[2]}-${parts[1]}`;
-      if (!monthly[key] || new Date(date) > new Date(monthly[key].DATE)) {
-        monthly[key] = row;
+      // Handle BSE date format (DATE1 column, dd-mm-yyyy or dd/mm/yyyy)
+      const rawDate: string = row.DATE || row.DATE1 || '';
+      const parts = rawDate.includes('/') ? rawDate.split('/') : rawDate.split('-');
+      let isoDate = rawDate;
+      if (parts[0].length <= 2) {
+        // dd-mm-yyyy → yyyy-mm-dd
+        isoDate = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+      }
+      const key = `${isoDate.slice(0,4)}-${isoDate.slice(5,7)}`;
+      if (!monthly[key] || isoDate > (monthly[key]._iso || '')) {
+        // BSE volumes: NO_OF_SHRS or TRDVOL or VOLUME or fallback to 1
+        const vol = n(row.VOLUME) || n(row['NO. OF SHARES']) || n(row.NO_OF_SHRS) || n(row.TRDVOL) || 1;
+        monthly[key] = {
+          _iso: isoDate,
+          date: isoDate,
+          high:  n(row.HIGH)  || n(row.HIGHP)  || 0,
+          low:   n(row.LOW)   || n(row.LOWP)   || 0,
+          close: n(row.CLOSE) || n(row.CLOSP)  || n(row.LAST_PRICE) || n(row.LSTP) || 0,
+          volume: vol,
+        };
       }
     });
-    const monthlyData = Object.values(monthly).slice(-12).map((r: any) => ({
-      date: r.DATE,
-      high: parseFloat(r.HIGH?.replace(/,/g,'') || '0'),
-      low: parseFloat(r.LOW?.replace(/,/g,'') || '0'),
-      close: parseFloat(r.CLOSE?.replace(/,/g,'') || '0'),
-      volume: parseFloat(r.VOLUME?.replace(/,/g,'') || '0'),
-    })).filter(r => r.high > 0 && r.volume > 0);
-    setCsvData(monthlyData);
+    const monthlyData = Object.values(monthly)
+      .sort((a: any, b: any) => a._iso.localeCompare(b._iso))
+      .slice(-14)
+      .map(({ _iso: _removed, ...rest }: any) => rest)
+      .filter((r: any) => r.close > 0);
+    if (monthlyData.length < 6) { setError('Not enough data — need at least 6 months.'); return; }
+    setCsvData(monthlyData as any[]);
+    setFetchMsg(prev => prev + ` · ${monthlyData.length} months loaded from CSV!`);
   }
 
   // ── CSV UPLOAD — OPTIONS ──
@@ -650,8 +671,12 @@ export default function StockAnalysis() {
       const computed = computeGodParticle(
         optCsvData, parseFloat(optStrike), optType, optExpiry, stockName.toUpperCase()
       );
+      const scenarios = generateScenarioMatrix(computed, 'NIFTY50');
+      const matrix = scenarios.map((s: any) => ({
+        ...s, buyZoneLow: s.entryLow, buyZoneHigh: s.entryHigh, t1: s.target1,
+      }));
       await saveAnalysis(user.id, stockName.toUpperCase(), parseFloat(optStrike), optType, optExpiry, computed);
-      setResult({ type: 'options', ...computed, stockName });
+      setResult({ type: 'options', ...computed, stockName, scenarios, matrix });
       setActiveTab('raw');
       setStep('result');
     } catch (err: any) {
@@ -668,10 +693,10 @@ export default function StockAnalysis() {
     return '#ff4d6d';
   };
 
-  const adminTabs = ['raw','decomp','gp','story','matrix','ig'];
-  const adminTabLabels = ['📊 Raw','🔀 Decomp','⚛ God Particle','📖 Story','🎯 Matrix','📸 Instagram'];
-  const customerTabs = ['raw','story','matrix'];
-  const customerTabLabels = ['📊 Raw Data','📖 Analysis','🎯 Trade Levels'];
+  const adminTabs = ['raw','decomp','gp','story','matrix','planb','ig'];
+  const adminTabLabels = ['📊 Raw','🔀 Decomp','⚛ God Particle','📖 Story','🎯 Matrix','🔀 Plan B','📸 Instagram'];
+  const customerTabs = ['raw','story','matrix','planb'];
+  const customerTabLabels = ['📊 Raw Data','📖 Analysis','🎯 Trade Levels','🔀 Plan B'];
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-[#e8e8f0]">
@@ -1597,6 +1622,125 @@ export default function StockAnalysis() {
                 </div>
               </div>
             )}
+            {activeTab === 'planb' && (() => {
+              const validScenarios = (result.scenarios || []).filter((s: any) => !s.avoid);
+              const sc = validScenarios.find((s: any) => s.gap === planBGap) || validScenarios.find((s: any) => s.gap === 0) || validScenarios[0];
+              if (!sc) return <div className="text-[#6b6b85] font-mono text-sm p-4">No scenarios available.</div>;
+              const { sl, entryLow, entryHigh, target1, target2, openEst } = sc;
+              const confAbove = entryHigh + Math.round((target1 - entryHigh) * 0.25);
+              const confBelow = Math.round(sl + (entryLow - sl) * 0.5);
+              const decayPerSlot = result.dte === 0 ? 0.04 : result.dte === 1 ? 0.025 : 0.015;
+              const dv = (val: number, slot: number) => Math.max(Math.round(val * Math.pow(1 - decayPerSlot, slot)), 1);
+              const slots = [
+                { time: '9:30 AM', slot: 0 }, { time: '10:00 AM', slot: 1 },
+                { time: '10:30 AM', slot: 2 }, { time: '11:00 AM', slot: 3 },
+                { time: '11:30 AM', slot: 4 }, { time: '12:00 PM', slot: 5 },
+              ];
+              const minP = Math.max(0, sl - Math.round((target2 - sl) * 0.12));
+              const maxP = target2 + Math.round((target2 - sl) * 0.08);
+              const range = maxP - minP || 1;
+              const bp = (p: number) => `${Math.min(100, Math.max(0, ((p - minP) / range) * 100)).toFixed(1)}%`;
+              const hp = (from: number, to: number) => `${Math.max(2, ((to - from) / range) * 100).toFixed(1)}%`;
+              const accentColor = result.optType === 'CE' ? '#39d98a' : '#ff4d6d';
+              return (
+                <div>
+                  <div className="mb-5">
+                    <label className="block text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">Select Scenario</label>
+                    <select value={planBGap} onChange={e => setPlanBGap(Number(e.target.value))}
+                      className="bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]">
+                      {validScenarios.map((s: any) => <option key={s.gap} value={s.gap}>{s.label}</option>)}
+                    </select>
+                    <div className="text-[10px] font-mono text-[#6b6b85] mt-1">
+                      Open Est: <span className="text-[#f0c040]">₹{openEst}</span> &nbsp;·&nbsp;
+                      Buy Zone: <span style={{ color: accentColor }}>₹{entryLow}–₹{entryHigh}</span> &nbsp;·&nbsp;
+                      SL: <span className="text-[#ff4d6d]">₹{sl}</span> &nbsp;·&nbsp;
+                      T1: <span className="text-[#39d98a]">₹{target1}</span> &nbsp;·&nbsp;
+                      T2: <span className="text-[#39d98a]">₹{target2}</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4">
+                      <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">📊 Price Ladder</div>
+                      <div className="relative bg-[#0a0a0f] rounded-xl overflow-hidden" style={{ height: '320px' }}>
+                        <div className="absolute left-0 right-0 bg-[#ff4d6d]/15" style={{ bottom: 0, height: hp(minP, sl) }}>
+                          <span className="text-[9px] font-mono text-[#ff4d6d] px-2 absolute bottom-1">DANGER</span>
+                        </div>
+                        <div className="absolute left-0 right-0 bg-[#ff8c42]/8" style={{ bottom: hp(minP, sl), height: hp(sl, entryLow) }} />
+                        <div className="absolute left-0 right-0 border-y flex items-center justify-center"
+                          style={{ bottom: bp(entryLow), height: hp(entryLow, entryHigh), background: `${accentColor}20`, borderColor: `${accentColor}40` }}>
+                          <span className="text-[10px] font-black" style={{ color: accentColor }}>✓ BUY ZONE</span>
+                        </div>
+                        <div className="absolute left-0 right-0 bg-[#f0c040]/5" style={{ bottom: bp(entryHigh), height: hp(entryHigh, target1) }} />
+                        <div className="absolute left-0 right-0 bg-[#39d98a]/8" style={{ bottom: bp(target1), height: hp(target1, target2) }} />
+                        <div className="absolute left-0 right-0 bg-[#39d98a]/15" style={{ bottom: bp(target2), top: 0 }} />
+                        <div className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(confAbove) }}>
+                          <div className="flex-1 border-t-2 border-dashed border-[#ff8c42]" />
+                          <span className="text-[8px] font-black font-mono bg-[#ff8c42]/20 text-[#ff8c42] px-1.5 rounded shrink-0">MOMENTUM ₹{confAbove}</span>
+                        </div>
+                        <div className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(confBelow) }}>
+                          <div className="flex-1 border-t-2 border-dashed border-[#a78bfa]" />
+                          <span className="text-[8px] font-black font-mono bg-[#a78bfa]/20 text-[#a78bfa] px-1.5 rounded shrink-0">RECOVERY ₹{confBelow}</span>
+                        </div>
+                        {[
+                          { price: sl, label: `SL ₹${sl}`, color: '#ff4d6d' },
+                          { price: entryLow, label: `₹${entryLow}`, color: '#f0c040' },
+                          { price: entryHigh, label: `₹${entryHigh}`, color: '#f0c040' },
+                          { price: target1, label: `T1 ₹${target1}`, color: '#39d98a' },
+                          { price: target2, label: `T2 ₹${target2}`, color: '#39d98a' },
+                        ].map(({ price, label, color }) => (
+                          <div key={price} className="absolute left-0 right-0 flex items-center" style={{ bottom: bp(price) }}>
+                            <div className="flex-1 border-t border-dashed" style={{ borderColor: color + '80' }} />
+                            <span className="text-[9px] font-mono px-1.5 shrink-0" style={{ color }}>{label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">⏰ Dynamic Entry by Time</div>
+                      {slots.map(({ time, slot }) => {
+                        const eL = dv(entryLow, slot); const eH = dv(entryHigh, slot);
+                        const dSl = dv(sl, slot); const dT1 = dv(target1, slot); const dT2 = dv(target2, slot);
+                        const dConf = dv(confAbove, slot); const dRecov = dv(confBelow, slot);
+                        return (
+                          <div key={time} className="bg-[#16161f] border border-[#1e1e2e] rounded-xl p-3">
+                            <div className="text-xs font-black text-[#f0c040] mb-2">{time}</div>
+                            <div className="space-y-1.5">
+                              <div className="flex items-start gap-2">
+                                <span className="text-[10px] text-[#ff8c42] mt-0.5 shrink-0 font-mono">▲</span>
+                                <div className="text-[10px] font-mono text-[#6b6b85]">
+                                  Above <span className="text-[#e8e8f0]">₹{eH}</span>
+                                  <span className="text-[#ff8c42]"> → Enter · Reduced Qty · SL ₹{eH}</span>
+                                  <div className="mt-1 bg-[#ff8c42]/10 border border-[#ff8c42]/30 rounded px-1.5 py-1 text-[9px] text-[#ff8c42]">
+                                    ⚡ Wait for <span className="font-black">₹{dConf}</span> — crossing this confirms momentum continues
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2 rounded-lg px-2 py-1.5" style={{ background: `${accentColor}15` }}>
+                                <span className="text-[10px] mt-0.5 shrink-0 font-mono" style={{ color: accentColor }}>✓</span>
+                                <span className="text-[10px] font-mono">
+                                  <span className="font-bold" style={{ color: accentColor }}>₹{eL}–₹{eH}</span>
+                                  <span style={{ color: accentColor }}> → IDEAL ENTRY · Full Qty · SL ₹{dSl} · T1 ₹{dT1} · T2 ₹{dT2}</span>
+                                </span>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <span className="text-[10px] text-[#ff4d6d] mt-0.5 shrink-0 font-mono">▼</span>
+                                <div className="text-[10px] font-mono text-[#6b6b85]">
+                                  Below <span className="text-[#e8e8f0]">₹{eL}</span>
+                                  <span className="text-[#ff4d6d]"> → WAIT / SKIP</span>
+                                  <div className="mt-1 bg-[#a78bfa]/10 border border-[#a78bfa]/30 rounded px-1.5 py-1 text-[9px] text-[#a78bfa]">
+                                    🔄 Watch <span className="font-black">₹{dRecov}</span> — bounce above this confirms reversal forming
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
