@@ -164,7 +164,7 @@ export default function Dashboard() {
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: 'Credits', value: ['premium','admin','pro'].includes(role) ? '∞' : profile?.credits ?? 0, color: '#f0c040' },
+            { label: 'Credits', value: ['admin','pro'].includes(role) ? '∞' : profile?.credits ?? 0, color: '#f0c040' },
 
             { label: 'Plan', value: role.toUpperCase(), color: '#f0c040' },
             { label: 'Analyses Done', value: analyses.length, color: '#4d9fff' },
@@ -178,7 +178,7 @@ export default function Dashboard() {
         </div>
 
         {/* Low credits warning */}
-        {!['premium','admin','pro'].includes(role) && (profile?.credits ?? 0) < 20 && (
+        {!['admin','pro'].includes(role) && (profile?.credits ?? 0) < 20 && (
           <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl px-4 py-3 flex items-center justify-between">
             <div className="text-xs font-mono text-[#ff4d6d]">
               ⚠️ Low credits! You have {profile?.credits} credits left ({Math.floor((profile?.credits ?? 0) / 2)} analyses remaining)
@@ -228,7 +228,7 @@ export default function Dashboard() {
                 }
               </div>
             </div>
-            {['basic','premium','pro','admin'].includes(role) ? (
+            {user ? (
               <Link to="/zero-to-hero"
                 className="bg-[#39d98a] text-black text-xs font-black px-4 py-2 rounded-lg hover:opacity-90 transition-all">
                 View Signal →
@@ -242,7 +242,7 @@ export default function Dashboard() {
           </div>
 
           {/* Signal preview */}
-          {isExpiryDay && z2hSignal && ['basic','premium','pro','admin'].includes(role) && (
+          {isExpiryDay && z2hSignal && !!user && (
             <div className="bg-[#0a0a0f] rounded-xl p-4 border border-[#39d98a]/20">
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
@@ -262,7 +262,7 @@ export default function Dashboard() {
           )}
 
           {/* Locked preview */}
-          {isExpiryDay && role === 'free' && (
+          {isExpiryDay && !user && (
             <div className="bg-[#0a0a0f] rounded-xl p-4 border border-[#1e1e2e] relative overflow-hidden">
               <div className="absolute inset-0 backdrop-blur-sm bg-[#0a0a0f]/80 flex items-center justify-center z-10">
                 <div className="text-center">
@@ -289,21 +289,12 @@ export default function Dashboard() {
             <div className="text-xs font-mono text-[#6b6b85]">Analyse any option strike — 2 credits per analysis</div>
           </Link>
 
-          {['premium','pro','admin'].includes(role) ? (
-            <Link to="/stock-analysis"
-              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#4d9fff] transition-all">
-              <div className="text-2xl mb-2">📊</div>
-              <div className="font-black text-sm text-[#4d9fff] mb-1">Stock Intelligence</div>
-              <div className="text-xs font-mono text-[#6b6b85]">Gravitational levels for any large-cap stock</div>
-            </Link>
-          ) : (
-            <Link to="/pricing"
-              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#4d9fff] transition-all opacity-60">
-              <div className="text-2xl mb-2">📊</div>
-              <div className="font-black text-sm text-[#4d9fff] mb-1">Stock Intelligence 🔒</div>
-              <div className="text-xs font-mono text-[#6b6b85]">Upgrade to Premium to unlock</div>
-            </Link>
-          )}
+          <Link to="/stock-analysis"
+            className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#4d9fff] transition-all">
+            <div className="text-2xl mb-2">📊</div>
+            <div className="font-black text-sm text-[#4d9fff] mb-1">Stock Intelligence</div>
+            <div className="text-xs font-mono text-[#6b6b85]">Gravitational levels for any large-cap stock</div>
+          </Link>
 
           <Link to="/pricing"
             className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#39d98a] transition-all">
