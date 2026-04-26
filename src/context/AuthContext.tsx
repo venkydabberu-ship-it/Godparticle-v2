@@ -81,9 +81,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const currentUser = session?.user ?? null;
         setUser(currentUser);
         if (currentUser) {
+          // Always clear stale cache on sign-in so DB data wins
+          try { localStorage.removeItem(CACHE_KEY); } catch {}
           await fetchProfile(currentUser.id);
         } else {
-          // Logout — clear cache
           try { localStorage.removeItem(CACHE_KEY); } catch {}
           setProfile(null);
           setLoading(false);
