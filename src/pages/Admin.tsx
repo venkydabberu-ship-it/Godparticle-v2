@@ -378,8 +378,23 @@ export default function Admin() {
   }
 
   async function loadAll() {
-    const { data: usersRaw } = await supabase.rpc('admin_get_all_profiles', { p_admin_id: user?.id });
-    const usersData: any[] | null = Array.isArray(usersRaw) ? usersRaw : null;
+    let usersData: any[] | null = null;
+
+    // Try SECURITY DEFINER RPC first (bypasses RLS)
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('admin_get_all_profiles', { p_admin_id: user?.id });
+    if (rpcErr) console.error('[Admin] RPC error:', rpcErr.message);
+    if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
+      usersData = rpcData;
+    }
+
+    // Fallback: direct table read (works if RLS allows admin reads)
+    if (!usersData) {
+      const { data: directData, error: directErr } = await supabase
+        .from('profiles').select('*').order('created_at', { ascending: false });
+      if (directErr) console.error('[Admin] Direct read error:', directErr.message);
+      if (directData) usersData = directData;
+    }
+
     if (usersData) setUsers(usersData);
     const { data: queriesData } = await supabase.from('customer_queries').select('*').order('created_at', { ascending: false });
     if (queriesData) setQueries(queriesData);
