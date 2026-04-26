@@ -378,7 +378,23 @@ export default function Admin() {
   }
 
   async function loadAll() {
-    const { data: usersData } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+    let usersData: any[] | null = null;
+
+    // Try SECURITY DEFINER RPC first (bypasses RLS)
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('admin_get_all_profiles', { p_admin_id: user?.id });
+    if (rpcErr) console.error('[Admin] RPC error:', rpcErr.message);
+    if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
+      usersData = rpcData;
+    }
+
+    // Fallback: direct table read (works if RLS allows admin reads)
+    if (!usersData) {
+      const { data: directData, error: directErr } = await supabase
+        .from('profiles').select('*').order('created_at', { ascending: false });
+      if (directErr) console.error('[Admin] Direct read error:', directErr.message);
+      if (directData) usersData = directData;
+    }
+
     if (usersData) setUsers(usersData);
     const { data: queriesData } = await supabase.from('customer_queries').select('*').order('created_at', { ascending: false });
     if (queriesData) setQueries(queriesData);
@@ -487,9 +503,8 @@ export default function Admin() {
     const { credits } = roleDefaults(changeRole);
     const err = await adminRoleRpc(changeRoleUserId, changeRole, credits);
     if (err) { setRoleMsg(`Error: ${err}`); return; }
-    // Re-fetch to confirm DB actually changed
     await loadAll();
-    const updated = users.find(u => u.id === changeRoleUserId) || (await supabase.from('profiles').select('role,credits').eq('id', changeRoleUserId).single()).data;
+    const updated = users.find(u => u.id === changeRoleUserId);
     const confirmedRole = (updated as any)?.role ?? '?';
     const confirmedCr   = (updated as any)?.credits ?? '?';
     setRoleMsg(`Done! DB now shows: role=${confirmedRole}, credits=${confirmedCr}. Ask user to reload.`);
