@@ -35,6 +35,9 @@ const Admin        = lazy(() => import('./pages/Admin'));
 const ZeroToHero   = lazy(() => import('./pages/ZeroToHero'));
 const StockAnalysis = lazy(() => import('./pages/StockAnalysis'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const Terms        = lazy(() => import('./pages/Terms'));
+const Privacy      = lazy(() => import('./pages/Privacy'));
+const Refund       = lazy(() => import('./pages/Refund'));
 
 const Loader = () => (
   <div className="min-h-screen flex items-center justify-center bg-[#0a0a0f]">
@@ -105,6 +108,9 @@ export default function App() {
             <Route path="/stock-analysis" element={
               <ProtectedRoute><StockAnalysis /></ProtectedRoute>
             } />
+            <Route path="/terms"   element={<Terms />} />
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/refund"  element={<Refund />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>

@@ -434,6 +434,21 @@ export default function Pricing() {
           </div>
         </div>
 
+        {/* Policy footer — required for Cashfree compliance */}
+        <div className="mt-10 pt-6 border-t border-[#1e1e2e] text-center space-y-3">
+          <div className="text-[10px] font-mono text-[#3a3a4a]">
+            Payments processed securely by Cashfree Payments · UPI AutoPay / eNACH
+          </div>
+          <div className="flex flex-wrap justify-center gap-4 text-[10px] font-mono text-[#3a3a4a]">
+            <Link to="/terms" className="hover:text-[#6b6b85] transition-all">Terms &amp; Conditions</Link>
+            <Link to="/privacy" className="hover:text-[#6b6b85] transition-all">Privacy Policy</Link>
+            <Link to="/refund" className="hover:text-[#6b6b85] transition-all">Refund &amp; Cancellation Policy</Link>
+          </div>
+          <div className="text-[10px] font-mono text-[#3a3a4a]">
+            © 2026 God Particle Intelligence · <a href="mailto:support@godparticle.app" className="hover:text-[#6b6b85] transition-all">support@godparticle.app</a>
+          </div>
+        </div>
+
       </div>
     </div>
   );
