@@ -95,7 +95,7 @@ export default function Refund() {
             <h2 className="text-base font-black text-[#f0c040] mb-3">7. Contact for Billing Issues</h2>
             <p className="mb-3">For any refund requests, billing disputes, or payment failures, contact us with the following information:</p>
             <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 space-y-2">
-              <div><span className="text-[#6b6b85]">Email: </span><a href="mailto:support@godparticle.app" className="text-[#f0c040] underline">support@godparticle.app</a></div>
+              <div><span className="text-[#6b6b85]">Email: </span><a href="mailto:supportgodparticle.app@gmail.com" className="text-[#f0c040] underline">supportgodparticle.app@gmail.com</a></div>
               <div><span className="text-[#6b6b85]">Include: </span><span>Your registered email · Subscription ID or Order ID · Description of the issue</span></div>
               <div><span className="text-[#6b6b85]">Response time: </span><span>Within 2 business days</span></div>
               <div><span className="text-[#6b6b85]">Refund decision: </span><span>Within 7 business days of your request</span></div>

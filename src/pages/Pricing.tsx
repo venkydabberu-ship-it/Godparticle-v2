@@ -445,7 +445,7 @@ export default function Pricing() {
             <Link to="/refund" className="hover:text-[#6b6b85] transition-all">Refund &amp; Cancellation Policy</Link>
           </div>
           <div className="text-[10px] font-mono text-[#3a3a4a]">
-            © 2026 God Particle Intelligence · <a href="mailto:support@godparticle.app" className="hover:text-[#6b6b85] transition-all">support@godparticle.app</a>
+            © 2026 God Particle Intelligence · <a href="mailto:supportgodparticle.app@gmail.com" className="hover:text-[#6b6b85] transition-all">supportgodparticle.app@gmail.com</a>
           </div>
         </div>
 
