@@ -471,8 +471,11 @@ export default function Landing() {
             <div className="text-[10px] font-mono text-[#3a3a4a]">
               © 2026 God Particle Intelligence. All rights reserved.
             </div>
-            <div className="text-[10px] font-mono text-[#3a3a4a]">
-              NSE · BSE · SEBI regulated markets
+            <div className="flex flex-wrap gap-4 text-[10px] font-mono text-[#3a3a4a]">
+              <Link to="/terms" className="hover:text-[#6b6b85] transition-all">Terms &amp; Conditions</Link>
+              <Link to="/privacy" className="hover:text-[#6b6b85] transition-all">Privacy Policy</Link>
+              <Link to="/refund" className="hover:text-[#6b6b85] transition-all">Refund &amp; Cancellation</Link>
+              <span>NSE · BSE · SEBI regulated markets</span>
             </div>
           </div>
         </div>
