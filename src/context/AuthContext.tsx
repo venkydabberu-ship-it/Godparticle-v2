@@ -15,6 +15,21 @@ function readCachedProfile(): Profile | null {
   try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch { return null; }
 }
 
+// Build a minimal profile from JWT metadata so admin works even if DB fetch fails
+function profileFromMetadata(user: User): Profile {
+  const meta = user.user_metadata ?? {};
+  return {
+    id: user.id,
+    username: meta.username ?? meta.name ?? user.email ?? 'user',
+    phone: null,
+    role: (meta.role as Profile['role']) ?? 'free',
+    credits: typeof meta.credits === 'number' ? meta.credits : 0,
+    credits_reset_at: null,
+    created_at: user.created_at ?? new Date().toISOString(),
+    is_active: true,
+  };
+}
+
 interface AuthContextType {
   user: User | null;
   profile: Profile | null;
@@ -33,43 +48,62 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const cached = readCachedProfile();
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(cached);
-  // If we have a cached profile, start as not-loading so app renders instantly
   const [loading, setLoading] = useState(!cached);
 
-  async function fetchProfile(userId: string) {
-    supabase.rpc('refresh_monthly_credits', { p_user_id: userId }).catch(() => {});
-    // Retry up to 4 times (slow mobile networks need more time)
+  async function fetchProfile(currentUser: User) {
+    // Immediately apply metadata-based profile so role/admin is available right away
+    const metaProfile = profileFromMetadata(currentUser);
+    setProfile(prev => {
+      // Only use meta as fallback if nothing better is in state
+      if (!prev || prev.id !== currentUser.id) return metaProfile;
+      // If cached profile has a better role (e.g. admin) keep it
+      const roleRank: Record<string, number> = { free: 0, basic: 1, premium: 2, admin: 3 };
+      const prevRank = roleRank[prev.role] ?? 0;
+      const metaRank = roleRank[metaProfile.role] ?? 0;
+      return metaRank > prevRank ? { ...prev, role: metaProfile.role } : prev;
+    });
+
+    supabase.rpc('refresh_monthly_credits', { p_user_id: currentUser.id }).catch(() => {});
+
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        const p = await getProfile(userId);
+        const p = await getProfile(currentUser.id);
         if (p) {
-          setProfile(p as Profile);
-          try { localStorage.setItem(CACHE_KEY, JSON.stringify(p)); } catch {}
+          // JWT metadata role wins if it's higher privilege (protects against stale cache)
+          const roleRank: Record<string, number> = { free: 0, basic: 1, premium: 2, admin: 3 };
+          const dbRank = roleRank[(p as Profile).role] ?? 0;
+          const metaRank = roleRank[metaProfile.role] ?? 0;
+          const merged: Profile = {
+            ...(p as Profile),
+            role: metaRank > dbRank ? metaProfile.role : (p as Profile).role,
+          };
+          setProfile(merged);
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify(merged)); } catch {}
           setLoading(false);
           return;
         }
       } catch {}
       if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
     }
-    // All retries failed — keep whatever is already in state (cache or null)
+
+    // DB fetch failed — use metadata profile (admin still works)
+    setProfile(metaProfile);
     setLoading(false);
   }
 
   async function refreshProfile() {
-    if (user) await fetchProfile(user.id);
+    if (user) await fetchProfile(user);
   }
 
   useEffect(() => {
-    // Absolute safety net — never leave user on loading screen
     const safetyTimer = setTimeout(() => setLoading(false), 8000);
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       const currentUser = session?.user ?? null;
       setUser(currentUser);
       if (currentUser) {
-        fetchProfile(currentUser.id);
+        fetchProfile(currentUser);
       } else {
-        // No active session — clear stale cache and stop loading
         try { localStorage.removeItem(CACHE_KEY); } catch {}
         setProfile(null);
         setLoading(false);
@@ -81,9 +115,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const currentUser = session?.user ?? null;
         setUser(currentUser);
         if (currentUser) {
-          // Always clear stale cache on sign-in so DB data wins
           try { localStorage.removeItem(CACHE_KEY); } catch {}
-          await fetchProfile(currentUser.id);
+          await fetchProfile(currentUser);
         } else {
           try { localStorage.removeItem(CACHE_KEY); } catch {}
           setProfile(null);
