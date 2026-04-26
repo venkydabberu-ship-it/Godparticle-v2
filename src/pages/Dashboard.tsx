@@ -40,6 +40,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!user) return;
+    refreshProfile();
     loadDashboard();
   }, [user]);
 
