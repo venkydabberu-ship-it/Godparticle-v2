@@ -487,9 +487,13 @@ export default function Admin() {
     const { credits } = roleDefaults(changeRole);
     const err = await adminRoleRpc(changeRoleUserId, changeRole, credits);
     if (err) { setRoleMsg(`Error: ${err}`); return; }
-    setRoleMsg(`Done! ${changeRole.toUpperCase()} applied. Ask user to reload their app.`);
-    setTimeout(() => setRoleMsg(''), 6000);
-    loadAll();
+    // Re-fetch to confirm DB actually changed
+    await loadAll();
+    const updated = users.find(u => u.id === changeRoleUserId) || (await supabase.from('profiles').select('role,credits').eq('id', changeRoleUserId).single()).data;
+    const confirmedRole = (updated as any)?.role ?? '?';
+    const confirmedCr   = (updated as any)?.credits ?? '?';
+    setRoleMsg(`Done! DB now shows: role=${confirmedRole}, credits=${confirmedCr}. Ask user to reload.`);
+    setTimeout(() => setRoleMsg(''), 8000);
   }
 
   async function handleSaveSettings() {

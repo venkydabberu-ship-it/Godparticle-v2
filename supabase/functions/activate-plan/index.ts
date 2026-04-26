@@ -7,7 +7,7 @@ const CORS = {
 
 const PLANS = {
   'Basic':   { role: 'basic',   credits: 100, amount: 99,  planId: 'gp_basic_monthly',   planName: 'God Particle Basic Monthly'   },
-  'Premium': { role: 'premium', credits: 0,   amount: 299, planId: 'gp_premium_monthly', planName: 'God Particle Premium Monthly' },
+  'Premium': { role: 'premium', credits: 1000, amount: 299, planId: 'gp_premium_monthly', planName: 'God Particle Premium Monthly' },
 };
 
 const CREDIT_PACKS = { 60: 49, 140: 99, 320: 199 };
@@ -170,7 +170,7 @@ Deno.serve(async (req) => {
           subscription_plan:         planKey,
           subscription_next_billing: subData['subscription_first_charge_time'] || null,
         };
-        if (planConfig['credits'] > 0) upd['credits'] = planConfig['credits'];
+        upd['credits'] = planConfig['credits'];
         await patchProfile(upd);
         return respond({ success: true, status: status });
       }
