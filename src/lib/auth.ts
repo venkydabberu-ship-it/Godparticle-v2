@@ -30,12 +30,8 @@ export async function signOut() {
   if (error) throw error;
 }
 
-export async function getProfile(userId: string) {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
+export async function getProfile(_userId: string) {
+  const { data, error } = await supabase.rpc('get_my_profile');
   if (error) {
     console.error('getProfile error:', error);
     return null;
