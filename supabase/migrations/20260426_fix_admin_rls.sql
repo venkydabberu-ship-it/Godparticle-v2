@@ -32,9 +32,9 @@ AS $$
 DECLARE
   result json;
 BEGIN
-  SELECT row_to_json(p) INTO result
-  FROM profiles p
-  WHERE p.id = auth.uid();
+  SELECT row_to_json(profiles) INTO result
+  FROM profiles
+  WHERE id = auth.uid();
 
   RETURN COALESCE(result, json_build_object(
     'id',         auth.uid(),
