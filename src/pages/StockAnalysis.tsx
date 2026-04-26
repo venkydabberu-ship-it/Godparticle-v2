@@ -772,7 +772,7 @@ export default function StockAnalysis() {
       bias, biasDesc,
       confAbove, confBelow,
     });
-    setGctTab('overview');
+    setGctTab('plan');
     setStep('result');
     setLoading(false);
   }
@@ -1720,83 +1720,239 @@ export default function StockAnalysis() {
         {/* ── INTRADAY PIVOT RESULTS ── */}
         {canAccess && step === 'result' && result?.type === 'intraday' && (() => {
           const r = result;
-          const biasColor = r.bias === 'bullish' ? '#39d98a' : r.bias === 'bearish' ? '#ff4d6d' : '#f0c040';
-          const intradayTabs = [
-            { id: 'overview', label: '📐 Pivot Levels' },
-            { id: 'plan',     label: '🎯 Trade Plan' },
-            { id: 'planb',    label: '🔀 Plan B' },
-          ];
-          // Price ladder helpers
-          const allLevels = [r.s3, r.s2, r.s1, r.pivot, r.r1, r.r2, r.r3];
-          const minP = r.s3 - (r.r3 - r.s3) * 0.05;
-          const maxP = r.r3 + (r.r3 - r.s3) * 0.05;
-          const pRange = maxP - minP || 1;
-          const bp = (p: number) => `${Math.min(100, Math.max(0, ((p - minP) / pRange) * 100)).toFixed(1)}%`;
-          const hp = (from: number, to: number) => `${Math.max(1, ((to - from) / pRange) * 100).toFixed(1)}%`;
-          const fmt = (n: number) => '₹' + n.toLocaleString();
+          const fmt = (n: number) => '₹' + n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
           return (
             <div className="space-y-4">
               {/* Header */}
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-black">
-                    <span style={{ color: biasColor }}>{r.stockName || 'Intraday'}</span>
-                    <span className="ml-2 text-xs font-mono text-[#6b6b85]">Pivot Analysis</span>
-                  </h2>
-                  <div className="text-xs font-mono text-[#6b6b85]">Yesterday: H {fmt(r.prevH)} · L {fmt(r.prevL)} · C {fmt(r.prevC)}{r.open ? ` · Open ${fmt(r.open)}` : ''}</div>
+                  <h2 className="text-lg font-black text-[#ff8c42]">{r.stockName || 'Intraday'} <span className="text-xs font-mono text-[#6b6b85]">· Pivot Points</span></h2>
+                  <div className="text-xs font-mono text-[#6b6b85]">Prev: H {fmt(r.prevH)} · L {fmt(r.prevL)} · C {fmt(r.prevC)} · Pivot {fmt(r.pivot)}</div>
                 </div>
                 <button onClick={() => { setStep('input'); setResult(null); }}
                   className="px-4 py-2 text-xs font-bold border border-[#1e1e2e] rounded-lg hover:border-[#f0c040] transition-all">← New</button>
               </div>
 
-              {/* Bias banner */}
-              <div className="rounded-2xl p-4 text-center" style={{ background: `linear-gradient(135deg,#0a0a0f,${biasColor}18)`, border: `1px solid ${biasColor}50` }}>
-                <div className="text-xs font-mono tracking-widest mb-1" style={{ color: biasColor }}>
-                  {r.bias === 'bullish' ? '▲ BULLISH BIAS' : r.bias === 'bearish' ? '▼ BEARISH BIAS' : '◆ NEUTRAL — WAIT FOR DIRECTION'}
-                </div>
-                <div className="text-3xl font-black mb-1" style={{ color: biasColor }}>{fmt(r.pivot)}</div>
-                <div className="text-[10px] font-mono text-[#6b6b85]">PIVOT</div>
-                <div className="mt-2 text-xs font-mono text-[#e8e8f0] max-w-sm mx-auto">{r.biasDesc}</div>
+              {/* Wait 15 min banner */}
+              <div className="bg-[#f0c040]/10 border-2 border-[#f0c040]/50 rounded-2xl p-4 text-center">
+                <div className="text-xl font-black text-[#f0c040]">⏰ WAIT 15 MINUTES AFTER 9:15 AM</div>
+                <div className="text-xs font-mono text-[#e8e8f0] mt-1">Do not enter any trade before <strong>9:30 AM</strong>. Let at least 3 five-minute candles form first.</div>
               </div>
 
               {/* Tabs */}
-              <div className="flex gap-1 bg-[#111118] rounded-xl p-1 overflow-x-auto">
-                {intradayTabs.map(t => (
+              <div className="flex gap-1 bg-[#111118] rounded-xl p-1">
+                {[{ id: 'plan', label: '📋 Trade Plan' }, { id: 'planb', label: '🔀 Plan B — Missed Entry?' }].map(t => (
                   <button key={t.id} onClick={() => setGctTab(t.id)}
-                    className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${gctTab === t.id ? 'bg-[#16161f] text-[#e8e8f0] border border-[#1e1e2e]' : 'text-[#6b6b85]'}`}>
+                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${gctTab === t.id ? 'bg-[#16161f] text-[#e8e8f0] border border-[#1e1e2e]' : 'text-[#6b6b85]'}`}>
                     {t.label}
                   </button>
                 ))}
               </div>
 
-              {/* ── PIVOT LEVELS TAB ── */}
-              {gctTab === 'overview' && (
+              {/* ── TRADE PLAN TAB ── */}
+              {gctTab === 'plan' && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    {/* Table */}
-                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-hidden">
-                      <table className="w-full text-xs font-mono">
-                        <thead><tr className="border-b border-[#1e1e2e]">
-                          <th className="text-left px-4 py-3 text-[#6b6b85] font-normal uppercase tracking-widest">Level</th>
-                          <th className="text-left px-4 py-3 text-[#6b6b85] font-normal uppercase tracking-widest">Price</th>
-                          <th className="text-left px-4 py-3 text-[#6b6b85] font-normal uppercase tracking-widest">Meaning</th>
-                        </tr></thead>
-                        <tbody>
-                          {[
-                            { lbl: 'R3', price: r.r3, color: '#ff4d6d',  desc: 'Extreme resistance — reversal zone' },
-                            { lbl: 'R2', price: r.r2, color: '#ff8c42',  desc: 'Strong resistance — extended target' },
-                            { lbl: 'R1', price: r.r1, color: '#f0c040',  desc: 'First resistance — intraday target' },
-                            { lbl: 'P',  price: r.pivot, color: '#e8e8f0', desc: 'Pivot — key support/resistance' },
-                            { lbl: 'S1', price: r.s1, color: '#f0c040',  desc: 'First support — intraday target' },
-                            { lbl: 'S2', price: r.s2, color: '#ff8c42',  desc: 'Strong support — extended target' },
-                            { lbl: 'S3', price: r.s3, color: '#ff4d6d',  desc: 'Extreme support — reversal zone' },
-                          ].map(lv => {
-                            const isHere = r.open && Math.abs(r.open - lv.price) < r.hl * 0.03;
-                            return (
-                              <tr key={lv.lbl} className={`border-b border-[#1e1e2e]/50 ${isHere ? 'bg-[#f0c040]/10' : ''}`}>
-                                <td className="px-4 py-2.5 font-black" style={{ color: lv.color }}>{lv.lbl}</td>
-                                <td className="px-4 py-2.5 font-black" style={{ color: lv.color }}>{fmt(lv.price)}</td>
-                                <td className="px-4 py-2.5 text-[#6b6b85]">{lv.desc}</td>
+
+                  {/* GO LONG */}
+                  <div className="bg-[#39d98a]/10 border border-[#39d98a]/40 rounded-2xl p-5">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 bg-[#39d98a] rounded-xl flex items-center justify-center text-black font-black text-lg">▲</div>
+                      <div>
+                        <div className="font-black text-[#39d98a] text-base">GO LONG (BUY)</div>
+                        <div className="text-xs font-mono text-[#6b6b85]">When to enter ↓</div>
+                      </div>
+                    </div>
+                    <div className="bg-[#0a0a0f] border border-[#39d98a]/30 rounded-xl p-4 mb-4">
+                      <div className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Entry Signal</div>
+                      <div className="text-sm font-black text-[#e8e8f0]">
+                        A 5-min candle <span className="text-[#39d98a]">CLOSES ABOVE</span>{' '}
+                        <span className="text-[#39d98a] text-xl">{fmt(r.r1)}</span>
+                      </div>
+                      <div className="text-xs font-mono text-[#6b6b85] mt-1">Wait for the full candle to close above this level — not just a touch</div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 text-center text-xs font-mono mb-4">
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">ENTRY</div>
+                        <div className="font-black text-[#39d98a]">{fmt(r.r1)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">Buy here</div>
+                      </div>
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">TARGET 1</div>
+                        <div className="font-black text-[#f0c040]">{fmt(r.r2)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">Exit 50%</div>
+                      </div>
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">TARGET 2</div>
+                        <div className="font-black text-[#f0c040]">{fmt(r.r3)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">Exit rest</div>
+                      </div>
+                    </div>
+                    <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/40 rounded-xl p-3 flex items-center gap-3">
+                      <div className="text-xs font-black text-[#ff4d6d] shrink-0">🛑 SL</div>
+                      <div className="text-lg font-black text-[#ff4d6d]">{fmt(r.pivot)}</div>
+                      <div className="text-xs font-mono text-[#6b6b85]">Exit ALL if any candle closes below this</div>
+                    </div>
+                  </div>
+
+                  {/* GO SHORT */}
+                  <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/40 rounded-2xl p-5">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 bg-[#ff4d6d] rounded-xl flex items-center justify-center text-black font-black text-lg">▼</div>
+                      <div>
+                        <div className="font-black text-[#ff4d6d] text-base">GO SHORT (SELL)</div>
+                        <div className="text-xs font-mono text-[#6b6b85]">When to enter ↓</div>
+                      </div>
+                    </div>
+                    <div className="bg-[#0a0a0f] border border-[#ff4d6d]/30 rounded-xl p-4 mb-4">
+                      <div className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Entry Signal</div>
+                      <div className="text-sm font-black text-[#e8e8f0]">
+                        A 5-min candle <span className="text-[#ff4d6d]">CLOSES BELOW</span>{' '}
+                        <span className="text-[#ff4d6d] text-xl">{fmt(r.s1)}</span>
+                      </div>
+                      <div className="text-xs font-mono text-[#6b6b85] mt-1">Wait for the full candle to close below this level — not just a touch</div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 text-center text-xs font-mono mb-4">
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">ENTRY</div>
+                        <div className="font-black text-[#ff4d6d]">{fmt(r.s1)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">Sell here</div>
+                      </div>
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">TARGET 1</div>
+                        <div className="font-black text-[#f0c040]">{fmt(r.s2)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">Cover 50%</div>
+                      </div>
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">TARGET 2</div>
+                        <div className="font-black text-[#f0c040]">{fmt(r.s3)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">Cover rest</div>
+                      </div>
+                    </div>
+                    <div className="bg-[#39d98a]/10 border border-[#39d98a]/40 rounded-xl p-3 flex items-center gap-3">
+                      <div className="text-xs font-black text-[#39d98a] shrink-0">🛑 SL</div>
+                      <div className="text-lg font-black text-[#39d98a]">{fmt(r.pivot)}</div>
+                      <div className="text-xs font-mono text-[#6b6b85]">Cover ALL if any candle closes above this</div>
+                    </div>
+                  </div>
+
+                  {/* Key levels quick reference */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4">
+                    <div className="text-xs font-black text-[#f0c040] mb-3">Today's Key Levels</div>
+                    <div className="grid grid-cols-4 gap-2 text-center text-xs font-mono">
+                      <div className="bg-[#16161f] rounded-lg p-2">
+                        <div className="text-[#6b6b85] text-[10px] mb-1">S1</div>
+                        <div className="font-black text-[#ff4d6d]">{fmt(r.s1)}</div>
+                      </div>
+                      <div className="bg-[#16161f] rounded-lg p-2 border border-[#e8e8f0]/20">
+                        <div className="text-[#6b6b85] text-[10px] mb-1">PIVOT</div>
+                        <div className="font-black text-[#e8e8f0]">{fmt(r.pivot)}</div>
+                      </div>
+                      <div className="bg-[#16161f] rounded-lg p-2">
+                        <div className="text-[#6b6b85] text-[10px] mb-1">R1</div>
+                        <div className="font-black text-[#39d98a]">{fmt(r.r1)}</div>
+                      </div>
+                      <div className="bg-[#16161f] rounded-lg p-2">
+                        <div className="text-[#6b6b85] text-[10px] mb-1">R2</div>
+                        <div className="font-black text-[#f0c040]">{fmt(r.r2)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Rules */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5 text-xs font-mono">
+                    <div className="font-black text-[#f0c040] mb-3">📌 Simple Rules to Follow</div>
+                    <div className="space-y-2 text-[#6b6b85]">
+                      <div className="flex gap-2"><span className="text-[#f0c040] font-black">1.</span><span>Wait — no trades before <strong className="text-[#e8e8f0]">9:30 AM</strong>.</span></div>
+                      <div className="flex gap-2"><span className="text-[#f0c040] font-black">2.</span><span>Enter ONLY after a 5-min candle <strong className="text-[#e8e8f0]">fully closes</strong> above R1 or below S1.</span></div>
+                      <div className="flex gap-2"><span className="text-[#f0c040] font-black">3.</span><span>If SL hits, exit <strong className="text-[#e8e8f0]">immediately</strong>. No second-guessing.</span></div>
+                      <div className="flex gap-2"><span className="text-[#f0c040] font-black">4.</span><span>Close <strong className="text-[#e8e8f0]">all positions by 3:15 PM</strong>. Never hold overnight.</span></div>
+                      <div className="flex gap-2"><span className="text-[#f0c040] font-black">5.</span><span>If price stays near Pivot all day — <strong className="text-[#e8e8f0]">skip the day</strong>. No clear signal = no trade.</span></div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── PLAN B TAB ── */}
+              {gctTab === 'planb' && (
+                <div className="space-y-4">
+                  <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-2xl p-4 text-center">
+                    <div className="text-sm font-black text-[#f0c040]">Missed the entry? Here's what to do</div>
+                    <div className="text-xs font-mono text-[#6b6b85] mt-1">Price already moved past R1 or S1? Use these alternate setups.</div>
+                  </div>
+
+                  {/* Late long */}
+                  <div className="bg-[#ff8c42]/10 border border-[#ff8c42]/30 rounded-2xl p-5">
+                    <div className="font-black text-[#ff8c42] mb-1">▲ Missed Long — Price Already Above R1</div>
+                    <div className="text-xs font-mono text-[#6b6b85] mb-4">Do NOT chase. Wait for a pullback to R1 and re-confirm.</div>
+                    <div className="bg-[#0a0a0f] rounded-xl p-4 mb-4 text-xs font-mono space-y-2">
+                      <div className="font-black text-[#e8e8f0]">What to do:</div>
+                      <div className="text-[#6b6b85]">1. Wait for price to pull back to R1 {fmt(r.r1)}</div>
+                      <div className="text-[#6b6b85]">2. If a 5-min candle closes above {fmt(r.r1)} again → enter small quantity (half normal qty)</div>
+                      <div className="text-[#6b6b85]">3. Target: {fmt(r.r2)}</div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 text-center text-xs font-mono">
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">LATE ENTRY</div>
+                        <div className="font-black text-[#ff8c42]">{fmt(r.r1)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">After pullback</div>
+                      </div>
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">TARGET</div>
+                        <div className="font-black text-[#f0c040]">{fmt(r.r2)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">Exit all</div>
+                      </div>
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">STOP LOSS</div>
+                        <div className="font-black text-[#ff4d6d]">{fmt(r.pivot)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">Strict SL</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Late short */}
+                  <div className="bg-[#a78bfa]/10 border border-[#a78bfa]/30 rounded-2xl p-5">
+                    <div className="font-black text-[#a78bfa] mb-1">▼ Missed Short — Price Already Below S1</div>
+                    <div className="text-xs font-mono text-[#6b6b85] mb-4">Do NOT chase. Wait for a bounce to S1 and re-confirm.</div>
+                    <div className="bg-[#0a0a0f] rounded-xl p-4 mb-4 text-xs font-mono space-y-2">
+                      <div className="font-black text-[#e8e8f0]">What to do:</div>
+                      <div className="text-[#6b6b85]">1. Wait for price to bounce back to S1 {fmt(r.s1)}</div>
+                      <div className="text-[#6b6b85]">2. If a 5-min candle closes below {fmt(r.s1)} again → sell small quantity (half normal qty)</div>
+                      <div className="text-[#6b6b85]">3. Target: {fmt(r.s2)}</div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 text-center text-xs font-mono">
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">LATE ENTRY</div>
+                        <div className="font-black text-[#a78bfa]">{fmt(r.s1)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">After bounce</div>
+                      </div>
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">TARGET</div>
+                        <div className="font-black text-[#f0c040]">{fmt(r.s2)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">Cover all</div>
+                      </div>
+                      <div className="bg-[#16161f] rounded-xl p-3">
+                        <div className="text-[#6b6b85] mb-1">STOP LOSS</div>
+                        <div className="font-black text-[#39d98a]">{fmt(r.pivot)}</div>
+                        <div className="text-[10px] text-[#6b6b85]">Strict SL</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* No signal */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5 text-xs font-mono">
+                    <div className="font-black text-[#6b6b85] mb-2">🤷 No signal today? (Price stuck near Pivot)</div>
+                    <div className="text-[#6b6b85]">
+                      If price is oscillating between <span className="text-[#e8e8f0]">{fmt(r.s1)}</span> and <span className="text-[#e8e8f0]">{fmt(r.r1)}</span> without breaking either level — it's a <strong className="text-[#f0c040]">choppy day</strong>. Best move: <strong className="text-[#e8e8f0]">do not trade</strong>. Protecting capital is a win on choppy days.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          );
+        })()}
+
+        {/* OPTIONS RESULTS */}
                               </tr>
                             );
                           })}

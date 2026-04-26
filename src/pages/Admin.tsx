@@ -447,20 +447,46 @@ export default function Admin() {
     setAddStockName(''); setAddStockSector('');
   }
 
+  function buildRoleUpdate(role: string): Record<string, any> {
+    const updates: Record<string, any> = { role };
+    if (role === 'premium') {
+      updates.subscription_status = 'ACTIVE';
+      updates.subscription_plan = 'premium';
+      updates.credits = 1000;
+      updates.credits_reset_at = new Date().toISOString();
+    } else if (role === 'basic') {
+      updates.subscription_status = 'ACTIVE';
+      updates.subscription_plan = 'basic';
+      updates.credits = 100;
+    } else if (role === 'free') {
+      updates.subscription_status = 'CANCELLED';
+      updates.subscription_plan = null;
+    } else if (role === 'admin' || role === 'pro') {
+      updates.subscription_status = 'ACTIVE';
+      updates.subscription_plan = role;
+    }
+    return updates;
+  }
+
   async function handleGrantCredits() {
     if (!grantUserId || !grantCredits) { setGrantMsg('Select user and enter credits!'); return; }
-    const { error } = await supabase.from('profiles').update({ credits: parseInt(grantCredits) }).eq('id', grantUserId);
+    const targetUser = users.find(u => u.id === grantUserId);
+    const addAmount = parseInt(grantCredits);
+    if (isNaN(addAmount) || addAmount <= 0) { setGrantMsg('Enter a valid credit amount.'); return; }
+    const newCredits = (targetUser?.credits ?? 0) + addAmount;
+    const { error } = await supabase.from('profiles').update({ credits: newCredits }).eq('id', grantUserId);
     if (error) { setGrantMsg(`Error: ${error.message}`); return; }
-    setGrantMsg('Credits updated!');
+    setGrantMsg(`+${addAmount} credits added! ${targetUser?.username} now has ${newCredits} total.`);
+    setTimeout(() => setGrantMsg(''), 5000);
     loadAll();
   }
 
   async function handleChangeRole() {
     if (!changeRoleUserId || !changeRole) { setRoleMsg('Select user and role!'); return; }
-    const { error } = await supabase.from('profiles').update({ role: changeRole }).eq('id', changeRoleUserId);
+    const { error } = await supabase.from('profiles').update(buildRoleUpdate(changeRole)).eq('id', changeRoleUserId);
     if (error) { setRoleMsg(`Error: ${error.message}`); return; }
-    setRoleMsg(`Role updated to ${changeRole.toUpperCase()}!`);
-    setTimeout(() => setRoleMsg(''), 3000);
+    setRoleMsg(`Done! ${changeRole.toUpperCase()} applied. Ask user to reload their app.`);
+    setTimeout(() => setRoleMsg(''), 6000);
     loadAll();
   }
 
@@ -628,25 +654,27 @@ export default function Admin() {
             <h2 className="text-base font-black mb-6">User Management</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5">
-                <div className="text-sm font-black mb-4 text-[#f0c040]">Grant Credits</div>
+                <div className="text-sm font-black mb-1 text-[#f0c040]">Add Credits</div>
+                <div className="text-[10px] font-mono text-[#6b6b85] mb-3">Credits are ADDED to the user's existing balance</div>
                 <div className="space-y-3">
                   <select value={grantUserId} onChange={e => setGrantUserId(e.target.value)}
                     className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none">
                     <option value="">Select user...</option>
-                    {users.map(u => <option key={u.id} value={u.id}>{u.username} ({u.role})</option>)}
+                    {users.map(u => <option key={u.id} value={u.id}>{u.username} — {u.credits} cr ({u.role})</option>)}
                   </select>
                   <input type="number" value={grantCredits} onChange={e => setGrantCredits(e.target.value)}
-                    placeholder="Credits to grant"
+                    placeholder="Credits to add (e.g. 500)"
                     className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none" />
                   <button onClick={handleGrantCredits}
                     className="w-full bg-[#f0c040] text-black font-black text-xs py-2.5 rounded-xl">
-                    Grant Credits
+                    Add Credits
                   </button>
                   {grantMsg && <div className="text-xs font-mono text-[#39d98a]">{grantMsg}</div>}
                 </div>
               </div>
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5">
-                <div className="text-sm font-black mb-4 text-[#4d9fff]">Change Role</div>
+                <div className="text-sm font-black mb-1 text-[#4d9fff]">Change Role</div>
+                <div className="text-[10px] font-mono text-[#6b6b85] mb-3">Also updates plan, credits &amp; subscription status</div>
                 <div className="space-y-3">
                   <select value={changeRoleUserId} onChange={e => setChangeRoleUserId(e.target.value)}
                     className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none">
@@ -656,14 +684,15 @@ export default function Admin() {
                   <select value={changeRole} onChange={e => setChangeRole(e.target.value)}
                     className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none">
                     <option value="">Select role...</option>
-                    <option value="free">Free</option>
-                    <option value="basic">Basic</option>
-                    <option value="premium">Premium</option>
-                    <option value="admin">Admin</option>
+                    <option value="free">Free — reset to 0 credits, cancel sub</option>
+                    <option value="basic">Basic — set 100 credits, activate sub</option>
+                    <option value="premium">Premium — set 1000 credits, activate sub</option>
+                    <option value="pro">Pro — unlimited, no credit deduction</option>
+                    <option value="admin">Admin — full access</option>
                   </select>
                   <button onClick={handleChangeRole}
                     className="w-full bg-[#4d9fff] text-black font-black text-xs py-2.5 rounded-xl">
-                    Change Role
+                    Apply Role Change
                   </button>
                   {roleMsg && <div className="text-xs font-mono text-[#39d98a]">{roleMsg}</div>}
                 </div>
@@ -688,12 +717,13 @@ export default function Admin() {
                       <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-bold ${u.is_active ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#ff4d6d]/15 text-[#ff4d6d]'}`}>{u.is_active ? 'ACTIVE' : 'INACTIVE'}</span></td>
                       <td className="px-4 py-3 text-[#6b6b85]">{new Date(u.created_at).toLocaleDateString('en-IN')}</td>
                       <td className="px-4 py-3">
-                        <select defaultValue="" onChange={async (e) => { if (!e.target.value) return; await supabase.from('profiles').update({ role: e.target.value }).eq('id', u.id); loadAll(); e.target.value = ''; }}
+                        <select defaultValue="" onChange={async (e) => { if (!e.target.value) return; await supabase.from('profiles').update(buildRoleUpdate(e.target.value)).eq('id', u.id); loadAll(); e.target.value = ''; }}
                           className="bg-[#16161f] border border-[#1e1e2e] rounded px-2 py-1 text-xs font-mono text-[#e8e8f0] outline-none">
                           <option value="">Change...</option>
                           <option value="free">Free</option>
                           <option value="basic">Basic</option>
                           <option value="premium">Premium</option>
+                          <option value="pro">Pro</option>
                           <option value="admin">Admin</option>
                         </select>
                       </td>
