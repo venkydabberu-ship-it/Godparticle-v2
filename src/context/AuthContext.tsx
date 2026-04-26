@@ -37,25 +37,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(!cached);
 
   async function fetchProfile(userId: string) {
-    try {
-      // For premium users, refresh monthly credits before loading profile
-      // Fire-and-forget — don't block profile load on this
-      supabase.rpc('refresh_monthly_credits', { p_user_id: userId }).catch(() => {});
-
-      const result = await Promise.race([
-        getProfile(userId),
-        new Promise<null>(r => setTimeout(() => r(null), 5000))
-      ]);
-      if (result) {
-        const p = result as Profile;
-        setProfile(p);
-        try { localStorage.setItem(CACHE_KEY, JSON.stringify(p)); } catch {}
-      }
-    } catch (e) {
-      console.error('fetchProfile error:', e);
-    } finally {
-      setLoading(false);
+    supabase.rpc('refresh_monthly_credits', { p_user_id: userId }).catch(() => {});
+    // Retry up to 4 times (slow mobile networks need more time)
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const p = await getProfile(userId);
+        if (p) {
+          setProfile(p as Profile);
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify(p)); } catch {}
+          setLoading(false);
+          return;
+        }
+      } catch {}
+      if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
     }
+    // All retries failed — keep whatever is already in state (cache or null)
+    setLoading(false);
   }
 
   async function refreshProfile() {
