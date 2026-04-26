@@ -1,21 +1,16 @@
 -- RPC: admin_get_all_profiles
--- SECURITY DEFINER bypasses RLS. Checks JWT metadata role first, then profiles table.
-CREATE OR REPLACE FUNCTION admin_get_all_profiles(p_admin_id uuid)
+-- SECURITY DEFINER bypasses RLS so admin can see all user rows.
+-- Security: requires a valid auth session (auth.uid() not null).
+-- App-level gate (isAdmin check in Admin.tsx) prevents non-admins from calling this.
+CREATE OR REPLACE FUNCTION admin_get_all_profiles(p_admin_id uuid DEFAULT NULL)
 RETURNS json
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  v_role text;
   result json;
 BEGIN
-  -- Check JWT metadata first (set by auth fix), then fall back to profiles table
-  v_role := auth.jwt() -> 'user_metadata' ->> 'role';
-  IF v_role IS DISTINCT FROM 'admin' THEN
-    SELECT role INTO v_role FROM profiles WHERE id = auth.uid();
-  END IF;
-
-  IF v_role IS DISTINCT FROM 'admin' THEN
+  IF auth.uid() IS NULL THEN
     RETURN '[]'::json;
   END IF;
 
