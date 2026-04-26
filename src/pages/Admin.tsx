@@ -447,24 +447,26 @@ export default function Admin() {
     setAddStockName(''); setAddStockSector('');
   }
 
-  function buildRoleUpdate(role: string): Record<string, any> {
-    const updates: Record<string, any> = { role };
-    if (role === 'premium') {
-      updates.subscription_status = 'ACTIVE';
-      updates.subscription_plan = 'premium';
-      updates.credits = 1000;
-    } else if (role === 'basic') {
-      updates.subscription_status = 'ACTIVE';
-      updates.subscription_plan = 'basic';
-      updates.credits = 100;
-    } else if (role === 'free') {
-      updates.subscription_status = 'CANCELLED';
-      updates.subscription_plan = null;
-    } else if (role === 'admin' || role === 'pro') {
-      updates.subscription_status = 'ACTIVE';
-      updates.subscription_plan = role;
-    }
-    return updates;
+  function roleDefaults(role: string) {
+    if (role === 'premium') return { status: 'ACTIVE', plan: 'premium', credits: 1000 };
+    if (role === 'basic')   return { status: 'ACTIVE', plan: 'basic',   credits: 100  };
+    if (role === 'free')    return { status: 'CANCELLED', plan: '',      credits: 0   };
+    return { status: 'ACTIVE', plan: role, credits: 0 };
+  }
+
+  async function adminRoleRpc(userId: string, role: string, credits: number) {
+    const { status, plan } = roleDefaults(role);
+    const { data, error } = await supabase.rpc('admin_update_user_role', {
+      p_admin_id: user!.id,
+      p_user_id: userId,
+      p_role: role,
+      p_credits: credits,
+      p_subscription_status: status,
+      p_subscription_plan: plan,
+    });
+    if (error) return error.message;
+    if (data !== 'ok') return data as string;
+    return null;
   }
 
   async function handleGrantCredits() {
@@ -473,8 +475,8 @@ export default function Admin() {
     const addAmount = parseInt(grantCredits);
     if (isNaN(addAmount) || addAmount <= 0) { setGrantMsg('Enter a valid credit amount.'); return; }
     const newCredits = (targetUser?.credits ?? 0) + addAmount;
-    const { error } = await supabase.from('profiles').update({ credits: newCredits }).eq('id', grantUserId);
-    if (error) { setGrantMsg(`Error: ${error.message}`); return; }
+    const err = await adminRoleRpc(grantUserId, targetUser?.role ?? 'free', newCredits);
+    if (err) { setGrantMsg(`Error: ${err}`); return; }
     setGrantMsg(`+${addAmount} credits added! ${targetUser?.username} now has ${newCredits} total.`);
     setTimeout(() => setGrantMsg(''), 5000);
     loadAll();
@@ -482,8 +484,9 @@ export default function Admin() {
 
   async function handleChangeRole() {
     if (!changeRoleUserId || !changeRole) { setRoleMsg('Select user and role!'); return; }
-    const { error } = await supabase.from('profiles').update(buildRoleUpdate(changeRole)).eq('id', changeRoleUserId);
-    if (error) { setRoleMsg(`Error: ${error.message}`); return; }
+    const { credits } = roleDefaults(changeRole);
+    const err = await adminRoleRpc(changeRoleUserId, changeRole, credits);
+    if (err) { setRoleMsg(`Error: ${err}`); return; }
     setRoleMsg(`Done! ${changeRole.toUpperCase()} applied. Ask user to reload their app.`);
     setTimeout(() => setRoleMsg(''), 6000);
     loadAll();
@@ -716,7 +719,7 @@ export default function Admin() {
                       <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-bold ${u.is_active ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#ff4d6d]/15 text-[#ff4d6d]'}`}>{u.is_active ? 'ACTIVE' : 'INACTIVE'}</span></td>
                       <td className="px-4 py-3 text-[#6b6b85]">{new Date(u.created_at).toLocaleDateString('en-IN')}</td>
                       <td className="px-4 py-3">
-                        <select defaultValue="" onChange={async (e) => { if (!e.target.value) return; await supabase.from('profiles').update(buildRoleUpdate(e.target.value)).eq('id', u.id); loadAll(); e.target.value = ''; }}
+                        <select defaultValue="" onChange={async (e) => { if (!e.target.value) return; const r = e.target.value; await adminRoleRpc(u.id, r, roleDefaults(r).credits); loadAll(); e.target.value = ''; }}
                           className="bg-[#16161f] border border-[#1e1e2e] rounded px-2 py-1 text-xs font-mono text-[#e8e8f0] outline-none">
                           <option value="">Change...</option>
                           <option value="free">Free</option>
