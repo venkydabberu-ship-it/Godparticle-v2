@@ -31,36 +31,16 @@ export async function signOut() {
 }
 
 export async function getProfile(userId: string) {
-  try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    if (error) {
-      console.error('getProfile error:', error);
-      // Return default profile if fetch fails
-      return {
-        id: userId,
-        username: 'user',
-        role: 'free',
-        credits: 50,
-        is_active: true,
-        created_at: new Date().toISOString()
-      };
-    }
-    return data;
-  } catch(e) {
-    console.error('getProfile exception:', e);
-    return {
-      id: userId,
-      username: 'user',
-      role: 'free',
-      credits: 50,
-      is_active: true,
-      created_at: new Date().toISOString()
-    };
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+  if (error) {
+    console.error('getProfile error:', error);
+    return null;
   }
+  return data;
 }
 
 export async function getCurrentUser() {
