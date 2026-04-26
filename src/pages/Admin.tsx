@@ -453,7 +453,6 @@ export default function Admin() {
       updates.subscription_status = 'ACTIVE';
       updates.subscription_plan = 'premium';
       updates.credits = 1000;
-      updates.credits_reset_at = new Date().toISOString();
     } else if (role === 'basic') {
       updates.subscription_status = 'ACTIVE';
       updates.subscription_plan = 'basic';

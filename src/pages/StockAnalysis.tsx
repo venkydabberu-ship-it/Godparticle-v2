@@ -1066,6 +1066,28 @@ export default function StockAnalysis() {
               <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#ff4d6d]">{error}</div>
             )}
 
+            {/* Low credit warning */}
+            {!['admin','pro'].includes(role) && (() => {
+              const credits = profile?.credits ?? 0;
+              const need = analysisType === 'intraday' ? 5 : 2;
+              if (credits >= need) return null;
+              return (
+                <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/40 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-black text-[#ff4d6d] mb-0.5">
+                      Not enough credits — need {need}, you have {credits}
+                    </div>
+                    <div className="text-[10px] font-mono text-[#6b6b85]">
+                      Buy a credit pack or upgrade your plan to continue
+                    </div>
+                  </div>
+                  <Link to="/pricing" className="shrink-0 bg-[#f0c040] text-black text-xs font-black px-3 py-2 rounded-lg whitespace-nowrap">
+                    Get Credits →
+                  </Link>
+                </div>
+              );
+            })()}
+
             {analysisType === 'gct' ? (
               <button onClick={runGCT} disabled={loading || csvData.length < 6 || !stockName}
                 className="w-full bg-[#f0c040] text-black font-black py-3 rounded-xl text-sm hover:bg-[#ffd060] transition-all disabled:opacity-40">
