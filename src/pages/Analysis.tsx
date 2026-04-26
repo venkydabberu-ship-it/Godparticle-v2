@@ -117,7 +117,7 @@ export default function Analysis() {
     if (!user || !profile) return;
     if (!strike) { setError('Enter a strike price!'); return; }
     if (!expiry) { setError('Select an expiry!'); return; }
-    if (profile.role !== 'premium' && profile.role !== 'pro' && profile.role !== 'admin' && (profile.credits ?? 0) < 2) {
+    if (!['pro', 'admin'].includes(profile.role) && (profile.credits ?? 0) < 2) {
       setError('Not enough credits! Buy more to continue.'); return;
     }
 
@@ -151,7 +151,7 @@ export default function Analysis() {
       }
 
       // Deduct credits
-      if (!['premium', 'pro', 'admin'].includes(profile.role)) {
+      if (!['pro', 'admin'].includes(profile.role)) {
         await useCredits(user.id, 2);
         await refreshProfile();
       }
@@ -195,7 +195,7 @@ export default function Analysis() {
         </Link>
         <div className="flex items-center gap-3">
           <span className="text-xs font-mono text-[#6b6b85]">
-            Credits: <span className="text-[#f0c040] font-bold">{profile?.role === 'premium' || profile?.role === 'pro' || profile?.role === 'admin' ? '∞' : profile?.credits ?? 0}</span>
+            Credits: <span className="text-[#f0c040] font-bold">{['pro', 'admin'].includes(profile?.role ?? '') ? '∞' : profile?.credits ?? 0}</span>
           </span>
           <Link to="/dashboard" className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040]">← Dashboard</Link>
         </div>
@@ -320,6 +320,16 @@ export default function Analysis() {
 
           {error && (
             <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#ff4d6d] mb-3">{error}</div>
+          )}
+
+          {!['admin','pro'].includes(profile?.role ?? '') && (profile?.credits ?? 0) < 2 && (
+            <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/40 rounded-xl px-4 py-3 flex items-center justify-between gap-3 mb-3">
+              <div>
+                <div className="text-xs font-black text-[#ff4d6d] mb-0.5">Not enough credits — need 2, you have {profile?.credits ?? 0}</div>
+                <div className="text-[10px] font-mono text-[#6b6b85]">Buy a credit pack or upgrade your plan to continue</div>
+              </div>
+              <Link to="/pricing" className="shrink-0 bg-[#f0c040] text-black text-xs font-black px-3 py-2 rounded-lg whitespace-nowrap">Get Credits →</Link>
+            </div>
           )}
 
           <button onClick={handleAnalyse} disabled={analysing}
