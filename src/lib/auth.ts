@@ -31,6 +31,13 @@ export async function signOut() {
 }
 
 export async function getProfile(userId: string) {
+  // Try SECURITY DEFINER RPC first — bypasses RLS entirely
+  const { data: rpcData, error: rpcError } = await supabase.rpc('get_my_profile');
+  if (!rpcError && rpcData && rpcData.id) {
+    return rpcData;
+  }
+
+  // Fallback: direct table read (works when RLS policy allows it)
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
