@@ -80,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return metaRank > prevRank ? { ...prev, role: metaProfile.role } : prev;
     });
 
-    supabase.rpc('refresh_monthly_credits', { p_user_id: currentUser.id }).catch(() => {});
+    (async () => { try { await supabase.rpc('refresh_monthly_credits', { p_user_id: currentUser.id }); } catch {} })();
 
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
