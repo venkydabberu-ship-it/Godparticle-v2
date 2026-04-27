@@ -111,6 +111,8 @@ export default function Admin() {
   const [fundStockNames, setFundStockNames] = useState<string[]>([]);
   const [selectedFundStock, setSelectedFundStock] = useState('');
   const [fundRowsForStock, setFundRowsForStock] = useState<any[]>([]);
+  const [editRow, setEditRow] = useState<{ id: string; role: string; credits: number } | null>(null);
+  const [editMsg, setEditMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
 
   useEffect(() => {
     if (profile?.role !== 'admin') return;
@@ -730,26 +732,73 @@ export default function Admin() {
                   ))}
                 </tr></thead>
                 <tbody>
-                  {users.filter(u => !searchUser || u.username?.toLowerCase().includes(searchUser.toLowerCase())).map((u, i) => (
-                    <tr key={i} className="border-b border-[#1e1e2e]/50">
-                      <td className="px-4 py-3 font-bold">{u.username}</td>
-                      <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-bold ${roleColors[u.role] || roleColors.free}`}>{u.role?.toUpperCase()}</span></td>
-                      <td className="px-4 py-3 text-[#f0c040] font-bold">{u.credits?.toLocaleString()}</td>
-                      <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-bold ${u.is_active ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#ff4d6d]/15 text-[#ff4d6d]'}`}>{u.is_active ? 'ACTIVE' : 'INACTIVE'}</span></td>
-                      <td className="px-4 py-3 text-[#6b6b85]">{new Date(u.created_at).toLocaleDateString('en-IN')}</td>
-                      <td className="px-4 py-3">
-                        <select defaultValue="" onChange={async (e) => { if (!e.target.value) return; const r = e.target.value; await adminRoleRpc(u.id, r, roleDefaults(r).credits); loadAll(); e.target.value = ''; }}
-                          className="bg-[#16161f] border border-[#1e1e2e] rounded px-2 py-1 text-xs font-mono text-[#e8e8f0] outline-none">
-                          <option value="">Change...</option>
-                          <option value="free">Free</option>
-                          <option value="basic">Basic</option>
-                          <option value="premium">Premium</option>
-                          <option value="pro">Pro</option>
-                          <option value="admin">Admin</option>
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
+                  {users.filter(u => !searchUser || u.username?.toLowerCase().includes(searchUser.toLowerCase())).map((u, i) => {
+                    const isEditing = editRow?.id === u.id;
+                    const isAdmin = u.id === user?.id;
+                    return (
+                      <tr key={i} className="border-b border-[#1e1e2e]/50">
+                        <td className="px-4 py-3 font-bold">
+                          {u.username}
+                          {isAdmin && <span className="ml-1 text-[8px] text-[#f0c040] font-mono">(you)</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          {isEditing
+                            ? <select value={editRow.role} onChange={e => setEditRow(r => r && ({ ...r, role: e.target.value }))}
+                                className="bg-[#16161f] border border-[#4d9fff] rounded px-2 py-1 text-xs font-mono text-[#e8e8f0] outline-none w-24">
+                                <option value="free">Free</option>
+                                <option value="basic">Basic</option>
+                                <option value="premium">Premium</option>
+                                <option value="pro">Pro</option>
+                                <option value="admin">Admin</option>
+                              </select>
+                            : <span className={`px-2 py-0.5 rounded text-xs font-bold ${roleColors[u.role] || roleColors.free}`}>{u.role?.toUpperCase()}</span>
+                          }
+                        </td>
+                        <td className="px-4 py-3 text-[#f0c040] font-bold">
+                          {isEditing
+                            ? <input type="number" value={editRow.credits} onChange={e => setEditRow(r => r && ({ ...r, credits: Number(e.target.value) }))}
+                                className="bg-[#16161f] border border-[#4d9fff] rounded px-2 py-1 text-xs font-mono text-[#e8e8f0] outline-none w-24" />
+                            : u.credits?.toLocaleString()
+                          }
+                        </td>
+                        <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-bold ${u.is_active ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#ff4d6d]/15 text-[#ff4d6d]'}`}>{u.is_active ? 'ACTIVE' : 'INACTIVE'}</span></td>
+                        <td className="px-4 py-3 text-[#6b6b85]">{new Date(u.created_at).toLocaleDateString('en-IN')}</td>
+                        <td className="px-4 py-3">
+                          {isEditing ? (
+                            <div className="flex gap-1 items-center">
+                              <button onClick={async () => {
+                                const err = await adminRoleRpc(editRow.id, editRow.role, editRow.credits);
+                                if (err) {
+                                  setEditMsg({ id: u.id, msg: `Error: ${err}`, ok: false });
+                                } else {
+                                  setEditMsg({ id: u.id, msg: '✓ Updated!', ok: true });
+                                  setEditRow(null);
+                                  await loadAll();
+                                }
+                                setTimeout(() => setEditMsg(null), 4000);
+                              }} className="bg-[#39d98a] text-black font-black text-[10px] px-2 py-1 rounded">
+                                Save
+                              </button>
+                              <button onClick={() => { setEditRow(null); setEditMsg(null); }}
+                                className="bg-[#1e1e2e] text-[#6b6b85] font-bold text-[10px] px-2 py-1 rounded">
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-1 items-center">
+                              <button onClick={() => { setEditRow({ id: u.id, role: u.role, credits: u.credits }); setEditMsg(null); }}
+                                className="bg-[#4d9fff] text-black font-black text-[10px] px-2 py-1 rounded">
+                                Edit
+                              </button>
+                              {editMsg?.id === u.id && (
+                                <span className={`text-[10px] font-mono ${editMsg.ok ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>{editMsg.msg}</span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

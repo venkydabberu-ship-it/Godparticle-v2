@@ -2,10 +2,11 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   ReactNode
 } from 'react';
-import { User } from '@supabase/supabase-js';
+import { User, RealtimeChannel } from '@supabase/supabase-js';
 import { supabase, Profile } from '../lib/supabase';
 import { getProfile } from '../lib/auth';
 
@@ -15,7 +16,6 @@ function readCachedProfile(): Profile | null {
   try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch { return null; }
 }
 
-// Build a minimal profile from JWT metadata so admin works even if DB fetch fails
 function profileFromMetadata(user: User): Profile {
   const meta = user.user_metadata ?? {};
   return {
@@ -49,14 +49,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(cached);
   const [loading, setLoading] = useState(!cached);
+  const channelRef = useRef<RealtimeChannel | null>(null);
+
+  function subscribeToProfileChanges(userId: string) {
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+    // When admin updates this user's role/credits, reflect it live
+    channelRef.current = supabase
+      .channel(`profile-live:${userId}`)
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` },
+        (payload) => {
+          const updated = payload.new as Profile;
+          setProfile(updated);
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify(updated)); } catch {}
+        }
+      )
+      .subscribe();
+  }
 
   async function fetchProfile(currentUser: User) {
-    // Immediately apply metadata-based profile so role/admin is available right away
     const metaProfile = profileFromMetadata(currentUser);
     setProfile(prev => {
-      // Only use meta as fallback if nothing better is in state
       if (!prev || prev.id !== currentUser.id) return metaProfile;
-      // If cached profile has a better role (e.g. admin) keep it
       const roleRank: Record<string, number> = { free: 0, basic: 1, premium: 2, admin: 3 };
       const prevRank = roleRank[prev.role] ?? 0;
       const metaRank = roleRank[metaProfile.role] ?? 0;
@@ -69,7 +86,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const p = await getProfile(currentUser.id);
         if (p) {
-          // JWT metadata role wins if it's higher privilege (protects against stale cache)
           const roleRank: Record<string, number> = { free: 0, basic: 1, premium: 2, admin: 3 };
           const dbRank = roleRank[(p as Profile).role] ?? 0;
           const metaRank = roleRank[metaProfile.role] ?? 0;
@@ -80,15 +96,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setProfile(merged);
           try { localStorage.setItem(CACHE_KEY, JSON.stringify(merged)); } catch {}
           setLoading(false);
+          subscribeToProfileChanges(currentUser.id);
           return;
         }
       } catch {}
       if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
     }
 
-    // DB fetch failed — use metadata profile (admin still works)
     setProfile(metaProfile);
     setLoading(false);
+    subscribeToProfileChanges(currentUser.id);
   }
 
   async function refreshProfile() {
@@ -121,6 +138,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           try { localStorage.removeItem(CACHE_KEY); } catch {}
           setProfile(null);
           setLoading(false);
+          if (channelRef.current) {
+            supabase.removeChannel(channelRef.current);
+            channelRef.current = null;
+          }
         }
       }
     );
@@ -128,6 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       clearTimeout(safetyTimer);
       subscription.unsubscribe();
+      if (channelRef.current) supabase.removeChannel(channelRef.current);
     };
   }, []);
 
