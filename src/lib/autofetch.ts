@@ -139,6 +139,10 @@ async function processIndex(
         continue;
       }
 
+      if (item.spotPrice > 0) {
+        item.strikes['_spot_close'] = item.spotPrice;
+      }
+
       const result = await saveMarketData(
         indexKey, item.expiry, tradeDate, item.strikes
       );
@@ -200,12 +204,17 @@ async function processStockOptions(
         continue;
       }
 
+      const stockSpot = item.spotPrice || data.spotPrice;
+      if (stockSpot > 0) {
+        item.strikes['_spot_close'] = stockSpot;
+      }
+
       const result = await saveMarketData(
         symbol.toUpperCase(),
         item.expiry,
         tradeDate,
         item.strikes,
-        'stock'  // ✅ category = stock
+        'stock'
       );
 
       results.push({
