@@ -33,12 +33,13 @@ export default function Pricing() {
     }
 
     if (orderId) {
-      const savedCredits = sessionStorage.getItem('cf_credits');
+      const savedCredits = localStorage.getItem('cf_credits') || sessionStorage.getItem('cf_credits');
       setLoading('credits');
       window.history.replaceState({}, '', window.location.pathname);
       supabase.functions
         .invoke('activate-plan', { body: { action: 'verify_payment', order_id: orderId, credits: savedCredits ? parseInt(savedCredits) : 0 } })
         .then(({ data, error: fnErr }) => {
+          localStorage.removeItem('cf_credits');
           sessionStorage.removeItem('cf_credits');
           if (fnErr || !data?.success) {
             setError('Payment received but activation failed. Order ID: ' + orderId + '. Contact support.');
@@ -116,6 +117,7 @@ export default function Pricing() {
         throw new Error(orderErr?.message || orderData?.error || 'Could not create payment order');
       }
 
+      localStorage.setItem('cf_credits', String(credits));
       sessionStorage.setItem('cf_credits', String(credits));
 
       const cashfree = (window as any).Cashfree({ mode: 'production' });
@@ -135,6 +137,7 @@ export default function Pricing() {
       const { data: verifyData, error: verifyErr } = await supabase.functions.invoke('activate-plan', {
         body: { action: 'verify_payment', order_id: orderData.order_id, credits },
       });
+      localStorage.removeItem('cf_credits');
       sessionStorage.removeItem('cf_credits');
       if (verifyErr || !verifyData?.success) {
         throw new Error('Payment received but activation failed. Order ID: ' + orderData.order_id);
