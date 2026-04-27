@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { useCredits as rpcUseCredits } from './auth';
 
 // ── STANDARDIZED INDEX NAMES ──
 export const INDEX_DISPLAY: Record<string, string> = {
@@ -200,19 +201,9 @@ export async function uploadMarketData(
   if (error) throw new Error(error.message);
 }
 
-// ── DEDUCT CREDITS ──
+// ── DEDUCT CREDITS — uses SECURITY DEFINER RPC to bypass RLS ──
 export async function useCredits(userId: string, amount: number): Promise<void> {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('credits')
-    .eq('id', userId)
-    .single();
-  if (!profile) throw new Error('Profile not found');
-  if (profile.credits < amount) throw new Error('Insufficient credits');
-  await supabase
-    .from('profiles')
-    .update({ credits: profile.credits - amount })
-    .eq('id', userId);
+  await rpcUseCredits(userId, amount);
 }
 
 // ── SAVE ANALYSIS ──

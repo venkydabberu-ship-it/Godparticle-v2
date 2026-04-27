@@ -203,8 +203,8 @@ export default function Analysis() {
 
       <div className="relative z-10 max-w-4xl mx-auto px-4 py-6">
 
-        {/* ── UPLOAD CSV DATA ── */}
-        <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5 mb-5">
+        {/* ── UPLOAD CSV DATA — admin only ── */}
+        {isAdmin && <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5 mb-5">
           <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">📥 Upload CSV Data</div>
 
           {/* Upload tabs */}
@@ -264,7 +264,7 @@ export default function Analysis() {
               {uploadMsg}
             </div>
           )}
-        </div>
+        </div>}
 
         {/* ── ANALYSE SECTION ── */}
         <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5 mb-5">
