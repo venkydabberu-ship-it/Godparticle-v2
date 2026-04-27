@@ -1,7 +1,80 @@
 import { supabase } from './supabase';
 import { useCredits as rpcUseCredits } from './auth';
 
-// ── STANDARDIZED INDEX NAMES ──
+// ══════════════════════════════════════════════════
+// BLACK-SCHOLES ENGINE — for accurate open estimates
+// ══════════════════════════════════════════════════
+
+function normCdf(x: number): number {
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
+  const a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const sign = x < 0 ? -1 : 1;
+  const t = 1.0 / (1.0 + p * Math.abs(x) / Math.SQRT2);
+  const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x / 2);
+  return 0.5 * (1.0 + sign * y);
+}
+
+function normPdf(x: number): number {
+  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+}
+
+function bsPrice(S: number, K: number, T: number, sigma: number, type: 'CE' | 'PE'): number {
+  const r = 0.065;
+  if (T <= 0 || sigma <= 0) return type === 'CE' ? Math.max(0, S - K) : Math.max(0, K - S);
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+  const d2 = d1 - sigma * Math.sqrt(T);
+  const df = Math.exp(-r * T);
+  return type === 'CE'
+    ? S * normCdf(d1) - K * df * normCdf(d2)
+    : K * df * normCdf(-d2) - S * normCdf(-d1);
+}
+
+function bsGreeks(S: number, K: number, T: number, sigma: number, type: 'CE' | 'PE') {
+  const r = 0.065;
+  if (T <= 0 || sigma <= 0) return { delta: 0, gamma: 0, theta: 0, vega: 0 };
+  const sqrtT = Math.sqrt(T);
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+  const d2 = d1 - sigma * sqrtT;
+  const nd1 = normPdf(d1);
+  const df = Math.exp(-r * T);
+  const delta = type === 'CE' ? normCdf(d1) : normCdf(d1) - 1;
+  const gamma = nd1 / (S * sigma * sqrtT);
+  const thetaYear = type === 'CE'
+    ? -(S * nd1 * sigma) / (2 * sqrtT) - r * K * df * normCdf(d2)
+    : -(S * nd1 * sigma) / (2 * sqrtT) + r * K * df * normCdf(-d2);
+  const theta = thetaYear / 365;
+  const vega = S * nd1 * sqrtT / 100;
+  return { delta, gamma, theta, vega };
+}
+
+// IV adjustment: gap-up compresses IV, gap-down spikes it
+function estimateIVChange(gap: number, daysElapsed: number): number {
+  let ivChange = 0;
+  if (gap > 0) {
+    ivChange = -0.02 * (gap / 100);
+    ivChange = Math.max(ivChange, -0.08);
+  } else if (gap < 0) {
+    ivChange = 0.025 * (Math.abs(gap) / 100);
+    ivChange = Math.min(ivChange, 0.12);
+  }
+  if (daysElapsed >= 2) ivChange -= 0.005 * (daysElapsed - 1);
+  return ivChange;
+}
+
+function bsOpenEstimate(
+  prevSpot: number, openSpot: number, strike: number,
+  optType: 'CE' | 'PE', dte: number, ivPrev: number, daysElapsed: number
+): number {
+  const gap = openSpot - prevSpot;
+  const ivChange = estimateIVChange(gap, daysElapsed);
+  const ivAtOpen = Math.max(0.05, ivPrev + ivChange);
+  const T = Math.max(dte, 0) / 365;
+  const price = bsPrice(openSpot, strike, T, ivAtOpen, optType);
+  const intrinsic = optType === 'CE' ? Math.max(0, openSpot - strike) : Math.max(0, strike - openSpot);
+  return Math.max(price, intrinsic, 0.5);
+}
+
+
 export const INDEX_DISPLAY: Record<string, string> = {
   'NIFTY50': 'Nifty 50',
   'SENSEX': 'Sensex',
@@ -133,8 +206,10 @@ export function parseNSEOptionChain(csvText: string): Record<string, any> {
       ce_oi: toNum(p[1]),
       ce_chng_oi: toNum(p[2]),
       ce_vol: toNum(p[3]),
+      ce_iv: toNum(p[4]),   // IV extracted from NSE CSV col 4
       ce_ltp: toNum(p[5]),
       pe_ltp: toNum(p[17]),
+      pe_iv: toNum(p[18]),  // IV extracted from NSE CSV col 18
       pe_vol: toNum(p[19]),
       pe_chng_oi: toNum(p[20]),
       pe_oi: toNum(p[21]),
@@ -439,10 +514,14 @@ export function computeGodParticle(
     data, decomp, pcbRounded, vwapRounded, oiwapRounded, dte, optType
   );
 
-  // IV from the fetched data (Upstox option_greeks → iv field)
+  // IV: prefer CSV-extracted iv, fall back to Upstox iv
   const ivValues = data.map((d: any) => d.iv || 0).filter((v: number) => v > 0);
   const latestIV = ivValues.length > 0 ? ivValues[ivValues.length - 1] : 0;
   const avgIV    = ivValues.length > 0 ? ivValues.reduce((s: number, v: number) => s + v, 0) / ivValues.length : 0;
+
+  // Spot close: last available spot price stored with the data
+  const spotCloseValues = data.map((d: any) => d.spot_close || 0).filter((v: number) => v > 0);
+  const spotClose = spotCloseValues.length > 0 ? spotCloseValues[spotCloseValues.length - 1] : 0;
 
   return {
     data,
@@ -452,6 +531,7 @@ export function computeGodParticle(
     expiry,
     dte,
     daysSinceClose,
+    spotClose,
     vwap:  vwapRounded,
     oiwap: oiwapRounded,
     pcb:   pcbRounded,
@@ -506,6 +586,11 @@ export function generateScenarioMatrix(
   const isCE           = result.optType === 'CE';
   const latestIV       = result.latestIV ?? 0;
   const avgIV          = result.avgIV ?? 0;
+  const spotClose      = result.spotClose ?? 0;
+  const strike         = result.strike ?? 0;
+
+  // Use Black-Scholes when we have spot price and IV — much more accurate
+  const useBSModel = spotClose > 0 && latestIV > 0 && strike > 0 && dte >= 0;
 
   // Theta discount applied to targets
   const td = dte <= 0 ? 0.50
@@ -569,14 +654,23 @@ export function generateScenarioMatrix(
     const isAdv     = isCE ? (gap < 0) : (gap > 0);
     const avoid     = isAdv && absGap >= avoidLimit;
 
-    // ── Open Estimate — built on theta-adjusted base, not raw lc ──
-    // Proportional scaling: gap / maxGap gives a 0–1 ratio consistent across
-    // Nifty (±500, 50pt steps) and Sensex (±1500, 100pt steps).
+    // ── Open Estimate ──
+    // If we have spot close + IV: use Black-Scholes (Delta + Gamma + Theta + IV crush)
+    // Otherwise: fall back to proportional theta-adjusted formula
     let openEst: number;
-    if (isFav) {
+    if (useBSModel) {
+      const openSpot = spotClose + gap;
+      const raw = bsOpenEstimate(
+        spotClose, openSpot, strike,
+        isCE ? 'CE' : 'PE', dte,
+        latestIV / 100,  // convert % to decimal
+        Math.max(daysSinceClose, 1)
+      );
+      openEst = Math.max(Math.round(raw), 1);
+    } else if (isFav) {
       openEst = Math.round(thetaBase * (1 + (absGap / maxGap) * 0.85));
     } else if (isNeutral) {
-      openEst = thetaBase; // flat open = theta-adjusted base directly
+      openEst = thetaBase;
     } else {
       openEst = Math.round(thetaBase * Math.max(1 - (absGap / maxGap) * 0.70, 0.10));
     }

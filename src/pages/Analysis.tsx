@@ -26,6 +26,7 @@ export default function Analysis() {
   const [uploadIndex, setUploadIndex] = useState('NIFTY50');
   const [uploadExpiry, setUploadExpiry] = useState('');
   const [uploadDate, setUploadDate] = useState(new Date().toISOString().split('T')[0]);
+  const [uploadSpot, setUploadSpot] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState('');
   const [uploadTab, setUploadTab] = useState<'index' | 'stock'>('index');
@@ -100,6 +101,10 @@ export default function Analysis() {
       const parsed = parseNSEOptionChain(text);
       const count = Object.keys(parsed).length;
       if (!count) { setUploadMsg('❌ No valid data found in CSV!'); return; }
+      // Store Nifty spot close with this day's data for Black-Scholes open estimates
+      if (uploadSpot && parseFloat(uploadSpot) > 0) {
+        parsed['_spot_close'] = parseFloat(uploadSpot);
+      }
       await uploadMarketData(uploadIndex, uploadExpiry, uploadDate, parsed, user.id);
       setUploadMsg(`✅ Saved ${count} strikes — ${uploadIndex} | ${formatExpiryDisplay(uploadExpiry)} | ${uploadDate}`);
       // Refresh expiries
@@ -142,6 +147,7 @@ export default function Analysis() {
           oi: isCE ? sd.ce_oi : sd.pe_oi,
           chng_oi: isCE ? (sd.ce_coi ?? sd.ce_chng_oi ?? 0) : (sd.pe_coi ?? sd.pe_chng_oi ?? 0),
           iv: isCE ? (sd.ce_iv ?? 0) : (sd.pe_iv ?? 0),
+          spot_close: r.strike_data?.['_spot_close'] ?? 0,
         };
       }).filter(Boolean).filter((d: any) => d.close > 0 || d.oi > 0);
 
@@ -244,6 +250,14 @@ export default function Analysis() {
               <label className="block text-xs font-mono text-[#6b6b85] uppercase mb-1">Date of CSV</label>
               <input type="date" value={uploadDate} onChange={e => setUploadDate(e.target.value)}
                 className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+            </div>
+            <div>
+              <label className="block text-xs font-mono text-[#6b6b85] uppercase mb-1">
+                Nifty Spot at Close <span className="text-[#f0c040]">(for BS open estimates)</span>
+              </label>
+              <input type="number" value={uploadSpot} onChange={e => setUploadSpot(e.target.value)}
+                placeholder="e.g. 24350"
+                className="w-full bg-[#16161f] border border-[#f0c040]/40 rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
             </div>
           </div>
 
