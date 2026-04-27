@@ -253,10 +253,10 @@ export default function Analysis() {
             </div>
             <div>
               <label className="block text-xs font-mono text-[#6b6b85] uppercase mb-1">
-                Nifty Spot at Close <span className="text-[#f0c040]">(for BS open estimates)</span>
+                {INDEX_DISPLAY[uploadIndex] ?? uploadIndex} Spot at Close <span className="text-[#f0c040]">(for open estimates)</span>
               </label>
               <input type="number" value={uploadSpot} onChange={e => setUploadSpot(e.target.value)}
-                placeholder="e.g. 24350"
+                placeholder={uploadIndex === 'SENSEX' ? 'e.g. 80500' : uploadIndex === 'BANKNIFTY' ? 'e.g. 52000' : 'e.g. 24350'}
                 className="w-full bg-[#16161f] border border-[#f0c040]/40 rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
             </div>
           </div>
