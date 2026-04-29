@@ -57,7 +57,7 @@ async function saveMarketData(
 
     if (existing && existing.length > 0) return { status: 'duplicate' };
 
-    await supabase.from('market_data').insert({
+    const { error: insertErr } = await supabase.from('market_data').insert({
       index_name: indexName,
       expiry,
       trade_date: tradeDate,
@@ -67,6 +67,7 @@ async function saveMarketData(
       category
     });
 
+    if (insertErr) return { status: 'error', error: insertErr.message };
     return { status: 'saved' };
   } catch (err: any) {
     return { status: 'error', error: err.message };
