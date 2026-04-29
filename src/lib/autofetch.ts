@@ -94,6 +94,8 @@ async function saveZ2HSnapshot(
       spot_price: spotPrice,
       max_pain: maxPain,
       vix,
+      fetched_by: 'auto-fetch',
+      fetched_at: new Date().toISOString(),
     };
     if (strikeData) payload.strike_data = strikeData;
 
