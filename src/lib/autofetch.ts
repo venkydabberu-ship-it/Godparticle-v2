@@ -8,7 +8,7 @@ const STOCK_OPT_RETRIES = 2;
 
 // Batch processing to avoid NSE rate-limiting
 const BATCH_SIZE = 5;   // stocks per batch
-const BATCH_PAUSE = 5000;  // ms pause between batches (reduced from 10s)
+const BATCH_PAUSE = 10000; // ms pause between batches
 
 // ── CALL EDGE FUNCTION (with aggressive retry + backoff) ──
 // stock_price and stock_chain route to fetch-stock-data; everything else to fetch-nse-data
