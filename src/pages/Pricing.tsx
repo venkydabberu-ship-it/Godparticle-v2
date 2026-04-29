@@ -355,9 +355,9 @@ export default function Pricing() {
             {[
               { action: '⚛ God Particle Analysis', free: '2 credits', basic: '2 credits', premium: '✅ FREE' },
               { action: '⚡ Intraday Pivot Points',  free: '5 credits', basic: '5 credits', premium: '✅ FREE' },
-              { action: '🚀 Z2H Morning Snapshot',   free: '❌ Locked',  basic: '✅ FREE',   premium: '✅ FREE' },
-              { action: '📊 Z2H Analysis Snapshot',  free: '❌ Locked',  basic: '10 credits',premium: '✅ FREE' },
-              { action: '📈 Stock Intelligence',     free: '❌ Locked',  basic: '❌ Locked', premium: '✅ FREE' },
+              { action: '🚀 Z2H Trade',             free: '5 credits', basic: '5 credits', premium: '✅ FREE' },
+              { action: '📈 Stock Intelligence',    free: '5 credits', basic: '5 credits', premium: '✅ FREE' },
+              { action: '🔥 Trending Stocks',       free: '1 credit',  basic: '1 credit',  premium: '✅ FREE' },
             ].map((item, i) => (
               <div key={i} className="bg-[#16161f] rounded-xl p-4">
                 <div className="text-sm font-bold mb-3 text-[#f0c040]">{item.action}</div>
@@ -410,7 +410,7 @@ export default function Pricing() {
                 <div className="text-xs font-mono text-[#39d98a] mb-3">{pack.bonus}</div>
                 <div className="text-xl font-black">₹{pack.price}</div>
                 <div className="text-[10px] font-mono text-[#6b6b85] mt-1">
-                  {Math.floor(pack.credits / 10)} Z2H analyses or {Math.floor(pack.credits / 2)} God Particle analyses
+                  {Math.floor(pack.credits / 5)} Z2H trades or {Math.floor(pack.credits / 2)} God Particle analyses
                 </div>
               </button>
             ))}

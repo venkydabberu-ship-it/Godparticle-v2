@@ -18,7 +18,7 @@ export default function ZeroToHero() {
   const role = profile?.role ?? 'free';
   const isAdmin = role === 'admin';
   const credits = profile?.credits ?? 0;
-  const canAccess = role !== 'free';
+  const canAccess = true; // all plans can access Z2H
   const isPremiumPlus = ['premium', 'pro', 'admin'].includes(role);
   const isBasic = role === 'basic';
 
@@ -58,8 +58,7 @@ export default function ZeroToHero() {
     if (!expiry) return;
     setResult(null);
     setError('');
-    if (isExpiryDay(index, expiry)) loadSnapshots();
-    else setSnapshots([]);
+    loadSnapshots(); // always load — DAY_BEFORE may be available even on non-expiry days
   }, [expiry, index]);
 
   async function loadSnapshots() {
@@ -113,9 +112,9 @@ export default function ZeroToHero() {
   async function fetchAnalysis() {
     if (!user) return;
     setError('');
-    if (isBasic) {
-      if (credits < 10) { setError('Need 10 credits for analysis snapshot!'); return; }
-      const { error: ce } = await supabase.rpc('use_credits', { p_user_id: user.id, p_credits: 10 });
+    if (!isPremiumPlus) {
+      if (credits < 5) { setError('Need 5 credits for Analysis CSV!'); return; }
+      const { error: ce } = await supabase.rpc('use_credits', { p_user_id: user.id, p_credits: 5 });
       if (ce) { setError('Credit deduction failed!'); return; }
       await refreshProfile();
     }
@@ -177,20 +176,11 @@ export default function ZeroToHero() {
           <p className="text-xs font-mono text-[#6b6b85]">Identifies deeply OTM options on expiry day with 3x–10x potential.</p>
         </div>
 
-        {!canAccess && (
-          <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-2xl p-6 mb-6 text-center">
-            <div className="text-3xl mb-3">🔒</div>
-            <div className="text-sm font-bold mb-2">Premium Feature</div>
-            <div className="text-xs font-mono text-[#6b6b85] mb-4">Zero to Hero is available for Basic and above plans.</div>
-            <Link to="/pricing" className="inline-block bg-[#f0c040] text-black font-black px-6 py-2.5 rounded-xl text-sm">Upgrade Now →</Link>
-          </div>
-        )}
-
-        {isBasic && (
+        {!isPremiumPlus && credits >= 0 && (
           <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-2xl p-4 mb-6">
             <div className="text-xs font-mono text-[#f0c040]">
-              ⚡ Basic Plan · Morning snapshot FREE · Analysis snapshot 10 credits · You have {credits} credits ·
-              <Link to="/pricing" className="underline ml-1">Upgrade for unlimited access →</Link>
+              ⚡ Opening CSV — Free · Analysis CSV — 5 credits · You have {credits} credits ·
+              <Link to="/pricing" className="underline ml-1">Upgrade to Premium for unlimited free access →</Link>
             </div>
           </div>
         )}
@@ -283,10 +273,13 @@ export default function ZeroToHero() {
               )}
             </div>
 
-            {/* STEP 3 — Snapshots */}
+            {/* STEP 3 — Market CSV Data */}
             {selectedIsExpiry && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6 mb-4">
-                <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-4">Step 3 · Capture Market Snapshots</div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest">Step 3 · Market CSV Data</div>
+                  <button onClick={loadSnapshots} className="text-[10px] font-mono text-[#6b6b85] hover:text-[#f0c040] border border-[#1e1e2e] rounded-lg px-2 py-1 transition-all">🔄 Refresh</button>
+                </div>
                 {error && (
                   <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#ff4d6d] mb-4">{error}</div>
                 )}
@@ -316,26 +309,26 @@ export default function ZeroToHero() {
                   <div className={`rounded-xl p-4 border ${snap930 ? 'border-[#39d98a]/30 bg-[#39d98a]/5' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
                     <div className="flex items-center justify-between mb-2">
                       <div>
-                        <div className="text-xs font-bold">Morning Snapshot</div>
-                        <div className="text-[10px] font-mono text-[#6b6b85]">Ideal: 9:30 AM · fetch anytime</div>
+                        <div className="text-xs font-bold">Opening CSV</div>
+                        <div className="text-[10px] font-mono text-[#6b6b85]">Fetch at 9:30 AM · Free for all</div>
                       </div>
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#39d98a]/10 text-[#39d98a] border border-[#39d98a]/20">FREE</span>
                     </div>
                     {snap930 ? (
                       <div className="text-[10px] font-mono space-y-0.5">
-                        <div className="text-[#39d98a]">✅ Captured</div>
+                        <div className="text-[#39d98a]">✅ Fetched</div>
                         <div className="text-[#6b6b85]">Spot: <span className="text-[#e8e8f0]">{snap930.spot_price?.toLocaleString()}</span> · MP: <span className="text-[#e8e8f0]">{snap930.max_pain?.toLocaleString()}</span> · VIX: <span className="text-[#e8e8f0]">{snap930.vix}</span></div>
                         <button onClick={fetchMorning} disabled={fetchingMorning}
                           className="mt-2 w-full py-1.5 rounded-lg text-[10px] font-bold bg-[#1e1e2e] text-[#6b6b85] hover:text-[#39d98a] disabled:opacity-40 transition-all">
-                          {fetchingMorning ? '⏳ Refreshing...' : '🔄 Re-fetch'}
+                          {fetchingMorning ? '⏳ Re-fetching...' : '🔄 Re-fetch'}
                         </button>
                       </div>
                     ) : (
                       <>
-                        <div className="text-[10px] font-mono text-[#6b6b85] mb-3">⏳ Not captured yet. Fetch after market opens.</div>
+                        <div className="text-[10px] font-mono text-[#6b6b85] mb-3">⏳ Not fetched yet. Fetch after market opens at 9:30 AM.</div>
                         <button onClick={fetchMorning} disabled={fetchingMorning}
                           className="w-full py-2 rounded-lg text-xs font-black bg-[#39d98a]/20 text-[#39d98a] border border-[#39d98a]/30 hover:bg-[#39d98a]/30 disabled:opacity-40 transition-all">
-                          {fetchingMorning ? '⏳ Fetching...' : '📡 Fetch Morning Data (Free)'}
+                          {fetchingMorning ? '⏳ Fetching...' : '📡 Fetch Opening CSV (Free)'}
                         </button>
                       </>
                     )}
@@ -344,8 +337,8 @@ export default function ZeroToHero() {
                   <div className={`rounded-xl p-4 border ${snap1115 ? 'border-[#f0c040]/30 bg-[#f0c040]/5' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
                     <div className="flex items-center justify-between mb-2">
                       <div>
-                        <div className="text-xs font-bold">Analysis Snapshot</div>
-                        <div className="text-[10px] font-mono text-[#6b6b85]">Ideal: 11:15 AM · fetch anytime</div>
+                        <div className="text-xs font-bold">Analysis CSV</div>
+                        <div className="text-[10px] font-mono text-[#6b6b85]">Fetch after 11:15 AM</div>
                       </div>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                         isPremiumPlus ? 'bg-[#f0c040]/10 text-[#f0c040] border-[#f0c040]/20' : 'bg-[#ff8c42]/10 text-[#ff8c42] border-[#ff8c42]/20'
@@ -353,22 +346,22 @@ export default function ZeroToHero() {
                     </div>
                     {snap1115 ? (
                       <div className="text-[10px] font-mono space-y-0.5">
-                        <div className="text-[#f0c040]">✅ Captured</div>
+                        <div className="text-[#f0c040]">✅ Fetched</div>
                         <div className="text-[#6b6b85]">Spot: <span className="text-[#e8e8f0]">{snap1115.spot_price?.toLocaleString()}</span> · MP: <span className="text-[#e8e8f0]">{snap1115.max_pain?.toLocaleString()}</span> · VIX: <span className="text-[#e8e8f0]">{snap1115.vix}</span></div>
                         <button onClick={fetchAnalysis} disabled={fetchingAnalysis}
                           className="mt-2 w-full py-1.5 rounded-lg text-[10px] font-bold bg-[#1e1e2e] text-[#6b6b85] hover:text-[#f0c040] disabled:opacity-40 transition-all">
-                          {fetchingAnalysis ? '⏳ Refreshing...' : '🔄 Re-fetch'}
+                          {fetchingAnalysis ? '⏳ Re-fetching...' : '🔄 Re-fetch'}
                         </button>
                       </div>
                     ) : (
                       <>
                         <div className="text-[10px] font-mono text-[#6b6b85] mb-3">
-                          ⏳ Not captured yet. Fetch after 11:15 AM.
-                          {!snap930 && <span className="text-[#ff4d6d]"> Fetch morning data first!</span>}
+                          ⏳ Not fetched yet. Fetch after 11:15 AM.
+                          {!snap930 && <span className="text-[#ff4d6d]"> Fetch Opening CSV first!</span>}
                         </div>
                         <button onClick={fetchAnalysis} disabled={fetchingAnalysis || !snap930}
                           className="w-full py-2 rounded-lg text-xs font-black bg-[#f0c040]/20 text-[#f0c040] border border-[#f0c040]/30 hover:bg-[#f0c040]/30 disabled:opacity-40 transition-all">
-                          {fetchingAnalysis ? '⏳ Fetching...' : `📊 Fetch Analysis Data${isBasic ? ' — 10 Credits' : ' (Free)'}`}
+                          {fetchingAnalysis ? '⏳ Fetching...' : `📊 Fetch Analysis CSV${isPremiumPlus ? ' (Free)' : ' — 5 Credits'}`}
                         </button>
                       </>
                     )}
@@ -378,8 +371,8 @@ export default function ZeroToHero() {
                 {isAdmin && (
                   <div className="mt-2">
                     <div className="text-[10px] font-mono text-[#f0c040] font-bold mb-2 uppercase tracking-widest">Admin · All Snapshots</div>
-                    <div className="grid grid-cols-5 gap-2">
-                      {(['DAY_BEFORE','EXPIRY_EOD','EXPIRY_930','EXPIRY_1115','EXPIRY_115','EXPIRY_315'] as SnapshotType[]).map(type => {
+                    <div className="grid grid-cols-4 gap-2">
+                      {(['DAY_BEFORE','EXPIRY_EOD','EXPIRY_930','EXPIRY_1115'] as SnapshotType[]).map(type => {
                         const s = getSnap(type);
                         const meta = SNAPSHOT_META[type];
                         return (

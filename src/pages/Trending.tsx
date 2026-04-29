@@ -236,8 +236,13 @@ export default function Trending() {
                         )}
                       </div>
 
-                      {/* Analyse button */}
-                      <div className="mt-3 flex justify-end">
+                      {/* Analyse buttons */}
+                      <div className="mt-3 flex justify-end gap-2">
+                        <button
+                          onClick={() => navigate('/analysis', { state: { prefill: { symbol: q.symbol, tab: 'stock' } } })}
+                          className="text-[10px] font-black border border-[#4d9fff]/40 text-[#4d9fff] px-3 py-1.5 rounded-lg hover:bg-[#4d9fff]/10 transition-all">
+                          Analyse with Pivot →
+                        </button>
                         <button
                           onClick={() => navigate('/stock-analysis', { state: { prefill: { symbol: q.symbol, name: q.name } } })}
                           className="text-[10px] font-black border border-[#f0c040]/40 text-[#f0c040] px-3 py-1.5 rounded-lg hover:bg-[#f0c040]/10 transition-all">

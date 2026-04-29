@@ -49,6 +49,14 @@ export default function Analysis() {
   const [planBGap, setPlanBGap] = useState(0);
 
   const location = useLocation();
+
+  useEffect(() => {
+    const prefill = (location.state as any)?.prefill;
+    if (prefill?.symbol) {
+      setUploadTab('stock');
+      setUploadIndex(prefill.symbol.toUpperCase());
+    }
+  }, []);
   useEffect(() => {
     const replay = (location.state as any)?.replay;
     if (!replay?.result) return;

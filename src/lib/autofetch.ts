@@ -3,10 +3,12 @@ import { INDEX_CONFIG, calculateMaxPain, SnapshotType } from './z2h';
 
 // Backoff delays in ms: 3s, 8s, 20s, 45s, 90s
 const BACKOFF = [3000, 8000, 20000, 45000, 90000];
+// Fast-fail backoff for stock options (don't hang forever if Upstox token expired)
+const STOCK_OPT_RETRIES = 2;
 
 // Batch processing to avoid NSE rate-limiting
 const BATCH_SIZE = 5;   // stocks per batch
-const BATCH_PAUSE = 10000; // ms pause between batches
+const BATCH_PAUSE = 5000;  // ms pause between batches (reduced from 10s)
 
 // ── CALL EDGE FUNCTION (with aggressive retry + backoff) ──
 // stock_price and stock_chain route to fetch-stock-data; everything else to fetch-nse-data
@@ -186,7 +188,7 @@ async function processStockOptions(
   results: any[]
 ) {
   try {
-    const data = await callEdge('stock_chain', symbol);
+    const data = await callEdge('stock_chain', symbol, undefined, STOCK_OPT_RETRIES);
 
     if (!data || !data.allExpiries || data.allExpiries.length === 0) {
       results.push({ index: symbol, status: 'error', error: 'No options data' });
