@@ -163,10 +163,11 @@ async function processIndex(
         const dayBefore = new Date(expiryDate);
         dayBefore.setDate(expiryDate.getDate() - 1);
 
+        // Use indexKey (e.g. 'NIFTY50') not indexName ('Nifty 50') so loadSnapshots can find it
         if (expiryDate.toDateString() === todayDate.toDateString()) {
-          await saveZ2HSnapshot(indexName, item.expiry, 'EXPIRY_EOD', item.spotPrice || 0, maxPain, 0, item.strikes);
+          await saveZ2HSnapshot(indexKey, item.expiry, 'EXPIRY_EOD', item.spotPrice || 0, maxPain, 0, item.strikes);
         } else if (dayBefore.toDateString() === todayDate.toDateString()) {
-          await saveZ2HSnapshot(indexName, item.expiry, 'DAY_BEFORE', item.spotPrice || 0, maxPain, 0, item.strikes);
+          await saveZ2HSnapshot(indexKey, item.expiry, 'DAY_BEFORE', item.spotPrice || 0, maxPain, 0, item.strikes);
         }
       }
     }
