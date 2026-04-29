@@ -151,17 +151,19 @@ export function getExpiriesForMonth(
 
 export type SnapshotType =
   | 'DAY_BEFORE'
+  | 'EXPIRY_EOD'
   | 'EXPIRY_930'
   | 'EXPIRY_1115'
   | 'EXPIRY_115'
   | 'EXPIRY_315';
 
 export const SNAPSHOT_META: Record<SnapshotType, { label: string; time: string; isFree: boolean }> = {
-  DAY_BEFORE:  { label: 'Previous Day Close', time: '3:30 PM (prev day)', isFree: false },
-  EXPIRY_930:  { label: 'Opening Snapshot',   time: '9:30 AM',           isFree: true  },
-  EXPIRY_1115: { label: 'Analysis Snapshot',  time: '11:15 AM',          isFree: false },
-  EXPIRY_115:  { label: 'Entry Snapshot',     time: '1:15 PM',           isFree: false },
-  EXPIRY_315:  { label: 'Close Snapshot',     time: '3:15 PM',           isFree: false },
+  DAY_BEFORE:  { label: 'Prev Day Close',   time: '3:30 PM (prev day)', isFree: false },
+  EXPIRY_EOD:  { label: 'Expiry Day Close', time: '3:30 PM (expiry)',   isFree: false },
+  EXPIRY_930:  { label: 'Opening Snapshot', time: '9:30 AM',            isFree: true  },
+  EXPIRY_1115: { label: 'Analysis Snapshot',time: '11:15 AM',           isFree: false },
+  EXPIRY_115:  { label: 'Entry Snapshot',   time: '1:15 PM',            isFree: false },
+  EXPIRY_315:  { label: 'Close Snapshot',   time: '3:15 PM',            isFree: false },
 };
 
 // Returns IST hour+min as total minutes

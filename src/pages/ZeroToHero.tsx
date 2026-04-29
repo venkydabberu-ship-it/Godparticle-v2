@@ -75,7 +75,8 @@ export default function ZeroToHero() {
   const getSnap = (type: SnapshotType) => snapshots.find(s => s.snapshot_type === type) ?? null;
   const snap930 = getSnap('EXPIRY_930');
   const snap1115 = getSnap('EXPIRY_1115');
-  const snapDayBefore = getSnap('DAY_BEFORE');
+  // DAY_BEFORE is saved by auto-fetch (prev day). EXPIRY_EOD is saved on expiry day itself. Use whichever exists.
+  const snapDayBefore = getSnap('DAY_BEFORE') ?? getSnap('EXPIRY_EOD');
 
   function buildCalCells(): (string | null)[] {
     const firstDow = new Date(calYear, calMonth, 1).getDay();
@@ -356,7 +357,7 @@ export default function ZeroToHero() {
                   <div className="mt-2">
                     <div className="text-[10px] font-mono text-[#f0c040] font-bold mb-2 uppercase tracking-widest">Admin · All Snapshots</div>
                     <div className="grid grid-cols-5 gap-2">
-                      {(['DAY_BEFORE','EXPIRY_930','EXPIRY_1115','EXPIRY_115','EXPIRY_315'] as SnapshotType[]).map(type => {
+                      {(['DAY_BEFORE','EXPIRY_EOD','EXPIRY_930','EXPIRY_1115','EXPIRY_115','EXPIRY_315'] as SnapshotType[]).map(type => {
                         const s = getSnap(type);
                         const meta = SNAPSHOT_META[type];
                         return (
