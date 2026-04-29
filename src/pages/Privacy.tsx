@@ -114,7 +114,7 @@ export default function Privacy() {
             <p className="mb-3">In accordance with the Information Technology Act 2000 and rules made thereunder, the name and contact details of our Grievance Officer are:</p>
             <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 space-y-1">
               <div><span className="text-[#6b6b85]">Platform: </span>God Particle Intelligence</div>
-              <div><span className="text-[#6b6b85]">Email: </span><a href="mailto:supportgodparticle.app@gmail.com" className="text-[#f0c040] underline">supportgodparticle.app@gmail.com</a></div>
+              <div><span className="text-[#6b6b85]">Email: </span><a href="mailto:support@godparticle.app" className="text-[#f0c040] underline">support@godparticle.app</a></div>
               <div><span className="text-[#6b6b85]">Response time: </span>Within 30 days of receipt</div>
             </div>
           </section>

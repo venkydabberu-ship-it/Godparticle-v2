@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 
 export default function Pricing() {
-  const { profile, refreshProfile } = useAuth();
+  const { user, profile, refreshProfile } = useAuth();
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -89,6 +89,19 @@ export default function Pricing() {
       }
       setSuccess(planKey + ' plan activated! Valid for 28 days.');
       await refreshProfile();
+      // Send payment confirmation email (fire-and-forget)
+      const PLAN_AMOUNTS: Record<string, number> = { Basic: 99, Premium: 299 };
+      supabase.functions.invoke('send-email', {
+        body: {
+          template: 'payment_success',
+          to: user?.email,
+          data: {
+            plan: planKey + ' Plan',
+            amount: PLAN_AMOUNTS[planKey] ?? '',
+            expires: verifyData?.expires_at ? new Date(verifyData.expires_at).toLocaleDateString('en-IN') : '28 days',
+          },
+        },
+      }).catch(() => {});
     } catch (err: any) {
       setError(err.message || 'Payment failed. Please try again.');
     }
@@ -417,7 +430,7 @@ export default function Pricing() {
             <Link to="/refund" className="hover:text-[#6b6b85] transition-all">Refund &amp; Cancellation Policy</Link>
           </div>
           <div className="text-[10px] font-mono text-[#3a3a4a]">
-            © 2026 God Particle Intelligence · <a href="mailto:supportgodparticle.app@gmail.com" className="hover:text-[#6b6b85] transition-all">supportgodparticle.app@gmail.com</a>
+            © 2026 God Particle Intelligence · <a href="mailto:support@godparticle.app" className="hover:text-[#6b6b85] transition-all">support@godparticle.app</a>
           </div>
         </div>
 
