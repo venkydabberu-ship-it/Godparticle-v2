@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { computeGodParticle, generateScenarioMatrix, saveAnalysis } from '../lib/market';
+import { searchStocks } from '../lib/stockList';
 
 export default function StockAnalysis() {
   const { user, profile, refreshProfile } = useAuth();
@@ -44,6 +45,12 @@ export default function StockAnalysis() {
   const [prevLow, setPrevLow] = useState('');
   const [prevClose, setPrevClose] = useState('');
   const [todayOpen, setTodayOpen] = useState('');
+  const [stockSearch, setStockSearch] = useState('');
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [hlcLoading, setHlcLoading] = useState(false);
+  const [hlcFetched, setHlcFetched] = useState(false);
+  const [hlcError, setHlcError] = useState('');
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const sectorPE: Record<string, number> = {
     'Energy/Oil': 18, 'Banking': 20, 'IT': 28,
@@ -691,6 +698,46 @@ export default function StockAnalysis() {
   }
 
   // ── RUN INTRADAY PIVOT ANALYSIS ──
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  async function fetchStockHLC(symbol: string) {
+    setHlcLoading(true);
+    setHlcError('');
+    setHlcFetched(false);
+    setPrevHigh('');
+    setPrevLow('');
+    setPrevClose('');
+    try {
+      const { data, error: fnErr } = await supabase.functions.invoke('smooth-endpoint', {
+        body: { type: 'stock_price', symbol: symbol.toUpperCase(), exchange }
+      });
+      if (fnErr || !data?.success) throw new Error(data?.error || 'Fetch failed');
+      const records: any[] = data.data?.data || [];
+      if (!records.length) throw new Error(`No price data for ${symbol}`);
+      const latest = records[records.length - 1];
+      const h = parseFloat(latest.CH_TRADE_HIGH_PRICE);
+      const l = parseFloat(latest.CH_TRADE_LOW_PRICE);
+      const c = parseFloat(latest.CH_CLOSING_PRICE);
+      if (!h || !l || !c) throw new Error('Invalid price data received');
+      setPrevHigh(String(h));
+      setPrevLow(String(l));
+      setPrevClose(String(c));
+      setHlcFetched(true);
+    } catch (err: any) {
+      setHlcError(err.message || 'Could not fetch price data. Try again.');
+    } finally {
+      setHlcLoading(false);
+    }
+  }
+
   async function runIntraday() {
     const H = parseFloat(prevHigh);
     const L = parseFloat(prevLow);
@@ -836,7 +883,7 @@ export default function StockAnalysis() {
                   <div className="text-lg mb-1">⚡</div>
                   <div className="font-black text-sm mb-1" style={{color: analysisType === 'intraday' ? '#ff8c42' : '#e8e8f0'}}>Intraday — Pivot Points</div>
                   <div className="text-xs font-mono text-[#6b6b85]">Pivot, R1–R3, S1–S3 + Camarilla for day trading</div>
-                  <div className="text-[10px] font-mono mt-2 text-[#6b6b85]">Enter yesterday H/L/C → instant levels</div>
+                  <div className="text-[10px] font-mono mt-2 text-[#6b6b85]">Select stock → auto-fetch H/L/C → enter today's open</div>
                 </button>
               </div>
             </div>
@@ -850,16 +897,57 @@ export default function StockAnalysis() {
                   <div className="flex gap-2">
                     <div className="flex rounded-lg overflow-hidden border border-[#1e1e2e] shrink-0">
                       {(['NSE', 'BSE'] as const).map(ex => (
-                        <button key={ex} onClick={() => setExchange(ex)}
+                        <button key={ex} onClick={() => { setExchange(ex); setHlcFetched(false); setHlcError(''); }}
                           className={`px-3 py-2.5 text-xs font-black transition-all ${exchange === ex ? 'bg-[#f0c040] text-black' : 'bg-[#16161f] text-[#6b6b85] hover:text-[#e8e8f0]'}`}>
                           {ex}
                         </button>
                       ))}
                     </div>
-                    <input type="text" value={stockName}
-                      onChange={e => setStockName(e.target.value.toUpperCase())}
-                      placeholder="e.g. RELIANCE, SBI, TCS"
-                      className="flex-1 bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                    {analysisType === 'intraday' ? (
+                      <div className="relative flex-1" ref={dropdownRef}>
+                        <input
+                          type="text"
+                          value={stockSearch}
+                          onChange={e => {
+                            const v = e.target.value.toUpperCase();
+                            setStockSearch(v);
+                            setStockName(v);
+                            setShowDropdown(v.length > 0);
+                            setHlcFetched(false);
+                            setHlcError('');
+                          }}
+                          onFocus={() => stockSearch.length > 0 && setShowDropdown(true)}
+                          placeholder="Type stock name e.g. RELIANCE, HAL, SBI"
+                          className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#ff8c42]"
+                        />
+                        {showDropdown && searchStocks(stockSearch, exchange).length > 0 && (
+                          <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-[#16161f] border border-[#ff8c42]/40 rounded-xl shadow-xl max-h-56 overflow-y-auto">
+                            {searchStocks(stockSearch, exchange).map(s => (
+                              <button
+                                key={s.symbol}
+                                type="button"
+                                onMouseDown={e => e.preventDefault()}
+                                onClick={() => {
+                                  setStockName(s.symbol);
+                                  setStockSearch(s.symbol);
+                                  setShowDropdown(false);
+                                  fetchStockHLC(s.symbol);
+                                }}
+                                className="w-full text-left px-4 py-3 hover:bg-[#ff8c42]/10 transition-colors border-b border-[#1e1e2e] last:border-0"
+                              >
+                                <span className="font-black text-xs text-[#ff8c42]">{s.symbol}</span>
+                                <span className="text-xs font-mono text-[#6b6b85] ml-2">{s.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <input type="text" value={stockName}
+                        onChange={e => setStockName(e.target.value.toUpperCase())}
+                        placeholder="e.g. RELIANCE, SBI, TCS"
+                        className="flex-1 bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                    )}
                   </div>
                 </div>
                 {analysisType === 'gct' && (
@@ -1011,24 +1099,61 @@ export default function StockAnalysis() {
             {/* Intraday Input */}
             {analysisType === 'intraday' && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
-                <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-1">Step 3 — Yesterday's Price Data</h2>
-                <div className="bg-[#ff8c42]/8 border border-[#ff8c42]/25 rounded-xl p-3 mb-4 text-xs font-mono text-[#ff8c42]">
-                  ⚡ Use yesterday's NSE closing High, Low, Close. Adding today's open gives you a bias direction.
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {[
-                    { label: 'Yesterday High', val: prevHigh, set: setPrevHigh, placeholder: 'e.g. 2540' },
-                    { label: 'Yesterday Low',  val: prevLow,  set: setPrevLow,  placeholder: 'e.g. 2480' },
-                    { label: 'Yesterday Close',val: prevClose,set: setPrevClose,placeholder: 'e.g. 2510' },
-                    { label: "Today's Open (optional)", val: todayOpen, set: setTodayOpen, placeholder: 'e.g. 2525' },
-                  ].map((f, i) => (
-                    <div key={i}>
-                      <label className="block text-xs font-mono text-[#6b6b85] mb-1">{f.label}</label>
-                      <input type="number" value={f.val} onChange={e => f.set(e.target.value)}
-                        placeholder={f.placeholder}
-                        className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#ff8c42]" />
+                <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-1">Step 3 — Today's Open Price</h2>
+
+                {/* Loading state */}
+                {hlcLoading && (
+                  <div className="flex items-center gap-3 bg-[#ff8c42]/8 border border-[#ff8c42]/25 rounded-xl p-4 mb-4">
+                    <div className="w-4 h-4 border-2 border-[#ff8c42] border-t-transparent rounded-full animate-spin shrink-0" />
+                    <span className="text-xs font-mono text-[#ff8c42]">Fetching yesterday's High, Low, Close for {stockName}... Please wait</span>
+                  </div>
+                )}
+
+                {/* Error state */}
+                {hlcError && !hlcLoading && (
+                  <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl p-3 mb-4 text-xs font-mono text-[#ff4d6d]">
+                    {hlcError}
+                    <button onClick={() => fetchStockHLC(stockName)} className="ml-3 underline hover:text-[#ff8c42]">Retry</button>
+                  </div>
+                )}
+
+                {/* Fetched H/L/C display */}
+                {hlcFetched && !hlcLoading && (
+                  <div className="bg-[#39d98a]/8 border border-[#39d98a]/25 rounded-xl p-3 mb-4">
+                    <div className="text-[10px] font-mono text-[#39d98a] mb-2 uppercase tracking-widest">✓ Yesterday's data auto-fetched for {stockName}</div>
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { label: 'High', val: prevHigh },
+                        { label: 'Low',  val: prevLow },
+                        { label: 'Close', val: prevClose },
+                      ].map(f => (
+                        <div key={f.label} className="bg-[#16161f] rounded-lg px-3 py-2 text-center">
+                          <div className="text-[10px] font-mono text-[#6b6b85] mb-0.5">{f.label}</div>
+                          <div className="text-sm font-black text-[#e8e8f0]">₹{f.val}</div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  </div>
+                )}
+
+                {/* No stock selected prompt */}
+                {!hlcFetched && !hlcLoading && !hlcError && (
+                  <div className="bg-[#ff8c42]/8 border border-[#ff8c42]/25 rounded-xl p-3 mb-4 text-xs font-mono text-[#ff8c42]">
+                    ⚡ Select a stock from the dropdown above — yesterday's High, Low, Close will be fetched automatically.
+                  </div>
+                )}
+
+                {/* Today's Open — only user input needed */}
+                <div className="max-w-xs">
+                  <label className="block text-xs font-mono text-[#6b6b85] mb-1">Today's Open Price</label>
+                  <input
+                    type="number"
+                    value={todayOpen}
+                    onChange={e => setTodayOpen(e.target.value)}
+                    placeholder="e.g. 2525"
+                    className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#ff8c42]"
+                  />
+                  <p className="text-[10px] font-mono text-[#6b6b85] mt-1">Enter today's opening price for bias direction (optional)</p>
                 </div>
               </div>
             )}
@@ -1099,9 +1224,9 @@ export default function StockAnalysis() {
                 {loading ? '⏳ Analysing...' : optCsvData.length < 2 ? '⚛ Run God Particle Analysis (fetch options data first)' : `⚛ Run God Particle Analysis — ${stockName} ${optStrike} ${optType}`}
               </button>
             ) : (
-              <button onClick={runIntraday} disabled={loading || !prevHigh || !prevLow || !prevClose}
+              <button onClick={runIntraday} disabled={loading || !hlcFetched || hlcLoading}
                 className="w-full bg-[#ff8c42] text-black font-black py-3 rounded-xl text-sm hover:opacity-90 transition-all disabled:opacity-40">
-                {loading ? '⏳ Processing...' : `⚡ Calculate Pivot Levels${stockName ? ' — ' + stockName : ''} (5 credits)`}
+                {loading ? '⏳ Processing...' : hlcLoading ? '⏳ Fetching data...' : !hlcFetched ? 'Select a stock first' : `⚡ Calculate Pivot Levels — ${stockName} (5 credits)`}
               </button>
             )}
           </div>

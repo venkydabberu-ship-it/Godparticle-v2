@@ -57,7 +57,7 @@ async function saveMarketData(
 
     if (existing && existing.length > 0) return { status: 'duplicate' };
 
-    await supabase.from('market_data').insert({
+    const { error: insertErr } = await supabase.from('market_data').insert({
       index_name: indexName,
       expiry,
       trade_date: tradeDate,
@@ -67,6 +67,7 @@ async function saveMarketData(
       category
     });
 
+    if (insertErr) return { status: 'error', error: insertErr.message };
     return { status: 'saved' };
   } catch (err: any) {
     return { status: 'error', error: err.message };
@@ -406,13 +407,17 @@ async function loadConfig() {
       if (s.key === 'autofetch_indices') {
         try {
           const loaded = JSON.parse(s.value);
-          // Admin panel saves indices without edgeType — merge from DEFAULT_INDICES
-          const merged = loaded.map((idx: any) => {
-            if (idx.edgeType) return idx;
-            const def = DEFAULT_INDICES.find((d: any) => d.key === idx.key);
-            return { ...idx, edgeType: def?.edgeType };
-          }).filter((idx: any) => idx.edgeType);
-          if (merged.length) indices = merged;
+          // Always include ALL DEFAULT_INDICES; admin settings only override, never drop
+          const mergedMap = new Map(DEFAULT_INDICES.map((d: any) => [d.key, { ...d }]));
+          loaded.forEach((idx: any) => {
+            const def = mergedMap.get(idx.key);
+            if (def) {
+              mergedMap.set(idx.key, { ...def, ...idx, edgeType: def.edgeType });
+            } else if (idx.edgeType) {
+              mergedMap.set(idx.key, idx);
+            }
+          });
+          indices = Array.from(mergedMap.values());
         } catch {}
       }
       if (s.key === 'autofetch_sectors') {
