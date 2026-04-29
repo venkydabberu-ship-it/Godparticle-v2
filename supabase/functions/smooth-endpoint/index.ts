@@ -148,8 +148,9 @@ Deno.serve(async function(req) {
       var exchange = body.exchange || 'NSE';
       var suffix = exchange === 'BSE' ? '.BO' : '.NS';
       var yahooSymbols = symbols.map(function(s) { return s.replace(/&/g, '-') + suffix; }).join(',');
-      var url = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + yahooSymbols +
-        '&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketOpen,fiftyTwoWeekHigh,fiftyTwoWeekLow,longName,shortName,regularMarketVolume';
+      var yqBase = Deno.env.get('YAHOO_QUOTE_URL') || ('https://query1' + '.finance.yahoo.com/v7/finance/quote');
+      var yqFields = 'regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketOpen,fiftyTwoWeekHigh,fiftyTwoWeekLow,longName,shortName,regularMarketVolume';
+      var url = yqBase + '?symbols=' + yahooSymbols + '&fields=' + yqFields;
       var res = await fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
       });
