@@ -148,11 +148,26 @@ Deno.serve(async function(req) {
       var exchange = body.exchange || 'NSE';
       var suffix = exchange === 'BSE' ? '.BO' : '.NS';
       var yahooSymbols = symbols.map(function(s) { return s.replace(/&/g, '-') + suffix; }).join(',');
-      var yqBase = Deno.env.get('YAHOO_QUOTE_URL') || ('https://query1' + '.finance.yahoo.com/v7/finance/quote');
+
+      var browserUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+      // Get crumb — Yahoo Finance requires this since 2024
+      var crumb = '';
+      try {
+        var crumbUrl = Deno.env.get('YAHOO_CRUMB_URL') || '';
+        if (crumbUrl) {
+          var cr = await fetch(crumbUrl, {
+            headers: { 'User-Agent': browserUA, 'Accept': '*/*', 'Referer': 'https://finance.yahoo.com' },
+          });
+          if (cr.ok) crumb = (await cr.text()).trim();
+        }
+      } catch(_e) {}
+
+      var yqBase = Deno.env.get('YAHOO_QUOTE_URL') || '';
       var yqFields = 'regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketOpen,fiftyTwoWeekHigh,fiftyTwoWeekLow,longName,shortName,regularMarketVolume';
-      var url = yqBase + '?symbols=' + yahooSymbols + '&fields=' + yqFields;
+      var url = yqBase + '?symbols=' + yahooSymbols + '&fields=' + yqFields + (crumb ? '&crumb=' + encodeURIComponent(crumb) : '');
       var res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+        headers: { 'User-Agent': browserUA, 'Accept': 'application/json', 'Referer': 'https://finance.yahoo.com' },
       });
       if (!res.ok) throw new Error('Yahoo batch quote HTTP ' + res.status);
       var json = await res.json();
