@@ -98,6 +98,48 @@ async function fetchYahooPrice(symbol, exchange) {
   return { data: data };
 }
 
+async function fetchYahooMovers(symbols, exchange) {
+  var sfx = exchange === 'BSE' ? '.BO' : '.NS';
+  var chartBase = 'https://query1.finance.yahoo.com/v8/finance/chart';
+  var results = [];
+  var batchSize = 8;
+  for (var bj = 0; bj < symbols.length; bj += batchSize) {
+    var batch = symbols.slice(bj, bj + batchSize);
+    var bRes = await Promise.all(batch.map(async function(s) {
+      try {
+        var ySym = s.replace(/&/g, '-') + sfx;
+        var url = chartBase + '/' + ySym + '?range=5d&interval=1d';
+        var ry = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
+        if (!ry.ok) return null;
+        var jy = await ry.json();
+        var ry2 = jy.chart && jy.chart.result && jy.chart.result[0];
+        if (!ry2) return null;
+        var meta = ry2.meta || {};
+        var qy = (ry2.indicators && ry2.indicators.quote && ry2.indicators.quote[0]) || {};
+        var closes = (qy.close || []).filter(function(c) { return c != null && c > 0; });
+        var currPrice = meta.regularMarketPrice || meta.chartPreviousClose || (closes.length ? closes[closes.length - 1] : 0);
+        var prevClose = meta.chartPreviousClose || (closes.length >= 2 ? closes[closes.length - 2] : currPrice);
+        if (!currPrice) return null;
+        var chg = prevClose > 0 ? currPrice - prevClose : 0;
+        var chgPct = prevClose > 0 ? (chg / prevClose) * 100 : 0;
+        return {
+          symbol: s, name: meta.longName || meta.shortName || s,
+          price: Math.round(currPrice * 100) / 100,
+          change: Math.round(chg * 100) / 100,
+          changePct: Math.round(chgPct * 100) / 100,
+          prevClose: Math.round(prevClose * 100) / 100,
+          open: meta.regularMarketOpen || 0,
+          high52: meta.fiftyTwoWeekHigh || 0,
+          low52: meta.fiftyTwoWeekLow || 0,
+          volume: meta.regularMarketVolume || 0,
+        };
+      } catch(_e) { return null; }
+    }));
+    bRes.forEach(function(r) { if (r) results.push(r); });
+  }
+  return results;
+}
+
 Deno.serve(async function(req) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
@@ -141,29 +183,39 @@ Deno.serve(async function(req) {
       return respond({ success: true, data: { allExpiries: chains, tradeDate: tradeDate } });
     }
 
-    // ── MARKET MOVERS: Upstox batch quotes (50/call, fast) with Yahoo fallback ──
+    // ── MARKET MOVERS: Upstox batch quotes with Yahoo fallback ──
     if (type === 'market_movers') {
       var symbols = body.symbols;
       if (!symbols || !symbols.length) return respond({ success: false, error: 'Missing symbols' }, 400);
       var exchange = body.exchange || 'NSE';
       var all = [];
       var upToken = Deno.env.get('UPSTOX_ACCESS_TOKEN');
+      var dbg = { source: 'none', batches: 0, upstoxErrors: [], totalReturned: 0 };
 
       if (upToken) {
         var exchPfx = exchange === 'BSE' ? 'BSE_EQ|' : 'NSE_EQ|';
         var upBase = 'https://api.upstox' + '.com/v2/market-quote/quotes';
         var bSz = 50;
+        dbg.source = 'upstox';
         for (var bi = 0; bi < symbols.length; bi += bSz) {
           var batch = symbols.slice(bi, bi + bSz);
           var instrKeys = batch.map(function(s) { return exchPfx + s.toUpperCase(); }).join(',');
+          dbg.batches++;
           try {
             var r = await fetch(upBase + '?instrument_key=' + instrKeys, { headers: hdrs(upToken) });
-            if (!r.ok) continue;
+            if (!r.ok) {
+              var errTxt = await r.text();
+              dbg.upstoxErrors.push('batch' + dbg.batches + ' HTTP' + r.status + ':' + errTxt.slice(0, 120));
+              continue;
+            }
             var j = await r.json();
             var qdata = j.data || {};
             Object.keys(qdata).forEach(function(key) {
               var q2 = qdata[key];
-              var rawSym = key.indexOf(':') >= 0 ? key.split(':')[1] : key;
+              // Key may be NSE_EQ:RELIANCE (colon) or NSE_EQ|RELIANCE (pipe) in response
+              var rawSym = key;
+              if (key.indexOf(':') >= 0) rawSym = key.split(':')[1];
+              else if (key.indexOf('|') >= 0) rawSym = key.split('|')[1];
               var lp = q2.last_price || 0;
               var pc = (q2.ohlc && q2.ohlc.close) || 0;
               var chg = q2.net_change || (pc > 0 ? lp - pc : 0);
@@ -182,49 +234,20 @@ Deno.serve(async function(req) {
                 volume:    q2.volume || 0,
               });
             });
-          } catch(_e) {}
-        }
-      } else {
-        // Fallback: Yahoo Finance v8 chart API (no auth, slower)
-        var sfx = exchange === 'BSE' ? '.BO' : '.NS';
-        var chartBase = Deno.env.get('YAHOO_CHART_URL') || ('https://query1' + '.finance.yahoo.com/v8/finance/chart');
-        var innerBatch = 10;
-        for (var bj = 0; bj < symbols.length; bj += innerBatch) {
-          var batchY = symbols.slice(bj, bj + innerBatch);
-          var bRes = await Promise.all(batchY.map(async function(s) {
-            try {
-              var ySym = s.replace(/&/g, '-') + sfx;
-              var url = chartBase + '/' + ySym + '?range=5d&interval=1d';
-              var ry = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
-              if (!ry.ok) return null;
-              var jy = await ry.json();
-              var ry2 = jy.chart && jy.chart.result && jy.chart.result[0];
-              if (!ry2) return null;
-              var meta = ry2.meta || {};
-              var qy = (ry2.indicators && ry2.indicators.quote && ry2.indicators.quote[0]) || {};
-              var closes = (qy.close || []).filter(function(c) { return c != null && c > 0; });
-              var currPrice = meta.regularMarketPrice || meta.chartPreviousClose || (closes.length ? closes[closes.length - 1] : 0);
-              var prevClose = meta.chartPreviousClose || (closes.length >= 2 ? closes[closes.length - 2] : currPrice);
-              if (!currPrice) return null;
-              var chg = prevClose > 0 ? currPrice - prevClose : 0;
-              var chgPct = prevClose > 0 ? (chg / prevClose) * 100 : 0;
-              return {
-                symbol: s, name: meta.longName || meta.shortName || s,
-                price: Math.round(currPrice * 100) / 100,
-                change: Math.round(chg * 100) / 100,
-                changePct: Math.round(chgPct * 100) / 100,
-                prevClose: Math.round(prevClose * 100) / 100,
-                open: meta.regularMarketOpen || 0,
-                high52: meta.fiftyTwoWeekHigh || 0,
-                low52: meta.fiftyTwoWeekLow || 0,
-                volume: meta.regularMarketVolume || 0,
-              };
-            } catch(_e) { return null; }
-          }));
-          bRes.forEach(function(r) { if (r) all.push(r); });
+          } catch(e) {
+            dbg.upstoxErrors.push('batch' + dbg.batches + ' exc:' + e.message);
+          }
         }
       }
-      return respond({ success: true, data: all });
+
+      // Fall back to Yahoo if Upstox not configured or returned nothing
+      if (all.length === 0) {
+        dbg.source = 'yahoo';
+        all = await fetchYahooMovers(symbols, exchange);
+      }
+
+      dbg.totalReturned = all.length;
+      return respond({ success: true, data: all, debug: dbg });
     }
 
     return respond({ success: false, error: 'Unknown type: ' + type }, 400);
