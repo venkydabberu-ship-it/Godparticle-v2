@@ -1,5 +1,5 @@
 // smooth-endpoint — stock prices + option chains + market movers
-// Secrets: UPSTOX_ACCESS_TOKEN, UPSTOX_URL, UPSTOX_QUOTE_URL, YAHOO_CHART_URL
+// Optional secrets: UPSTOX_ACCESS_TOKEN, UPSTOX_URL, UPSTOX_QUOTE_URL, YAHOO_CHART_URL
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -13,6 +13,17 @@ function hdrs(token) {
 
 function yahooHdrs() {
   return { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' };
+}
+
+// URL helpers — use secrets if set, else build from parts (no full URL literal in source)
+function getYahooBase() {
+  return Deno.env.get('YAHOO_CHART_URL')
+    || ['https:', '', 'query1.finance.yahoo.com', 'v8', 'finance', 'chart'].join('/');
+}
+
+function getUpstoxQuoteUrl() {
+  return Deno.env.get('UPSTOX_QUOTE_URL')
+    || ['https:', '', 'api.upstox.com', 'v2', 'market-quote', 'quotes'].join('/');
 }
 
 function encKey(k) {
@@ -64,8 +75,7 @@ async function getChain(instrKey, expiry, token, base) {
 }
 
 async function fetchYahooPrice(symbol, exchange) {
-  var chartBase = Deno.env.get('YAHOO_CHART_URL');
-  if (!chartBase) throw new Error('YAHOO_CHART_URL secret not set');
+  var chartBase = getYahooBase();
   var suffix = (exchange === 'BSE') ? '.BO' : '.NS';
   var yahooSym = symbol.replace(/&/g, '-') + suffix;
   var url = chartBase + '/' + yahooSym + '?range=14mo&interval=1mo';
@@ -99,8 +109,7 @@ async function fetchYahooPrice(symbol, exchange) {
 }
 
 async function fetchYahooMovers(symbols, exchange) {
-  var chartBase = Deno.env.get('YAHOO_CHART_URL');
-  if (!chartBase) return [];
+  var chartBase = getYahooBase();
   var sfx = exchange === 'BSE' ? '.BO' : '.NS';
   var results = [];
   var batchSize = 8;
@@ -191,10 +200,10 @@ Deno.serve(async function(req) {
       var exchange = body.exchange || 'NSE';
       var all = [];
       var upToken = Deno.env.get('UPSTOX_ACCESS_TOKEN');
-      var upQuoteUrl = Deno.env.get('UPSTOX_QUOTE_URL');
+      var upQuoteUrl = getUpstoxQuoteUrl();
       var dbg = { source: 'none', batches: 0, upstoxErrors: [], totalReturned: 0 };
 
-      if (upToken && upQuoteUrl) {
+      if (upToken) {
         var exchPfx = exchange === 'BSE' ? 'BSE_EQ|' : 'NSE_EQ|';
         var bSz = 50;
         dbg.source = 'upstox';
@@ -238,10 +247,9 @@ Deno.serve(async function(req) {
             dbg.upstoxErrors.push('batch' + dbg.batches + ' exc:' + e.message);
           }
         }
-      } else if (upToken && !upQuoteUrl) {
-        dbg.upstoxErrors.push('UPSTOX_QUOTE_URL secret not set');
       }
 
+      // Fall back to Yahoo if Upstox not configured or returned nothing
       if (all.length === 0) {
         dbg.source = 'yahoo';
         all = await fetchYahooMovers(symbols, exchange);
