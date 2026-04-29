@@ -141,6 +141,40 @@ Deno.serve(async function(req) {
       return respond({ success: true, data: { allExpiries: chains, tradeDate: tradeDate } });
     }
 
+    // ── MARKET MOVERS: Yahoo Finance batch quote ──
+    if (type === 'market_movers') {
+      var symbols = body.symbols;
+      if (!symbols || !symbols.length) return respond({ success: false, error: 'Missing symbols' }, 400);
+      var exchange = body.exchange || 'NSE';
+      var suffix = exchange === 'BSE' ? '.BO' : '.NS';
+      var yahooSymbols = symbols.map(function(s) { return s.replace(/&/g, '-') + suffix; }).join(',');
+      var url = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + yahooSymbols +
+        '&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketOpen,fiftyTwoWeekHigh,fiftyTwoWeekLow,longName,shortName,regularMarketVolume';
+      var res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+      });
+      if (!res.ok) throw new Error('Yahoo batch quote HTTP ' + res.status);
+      var json = await res.json();
+      var quotes = (json.quoteResponse && json.quoteResponse.result) || [];
+      var data = quotes
+        .filter(function(q) { return q.regularMarketPrice > 0; })
+        .map(function(q) {
+          return {
+            symbol:    q.symbol.replace(suffix, ''),
+            name:      q.longName || q.shortName || q.symbol,
+            price:     q.regularMarketPrice,
+            change:    q.regularMarketChange || 0,
+            changePct: q.regularMarketChangePercent || 0,
+            prevClose: q.regularMarketPreviousClose || 0,
+            open:      q.regularMarketOpen || 0,
+            high52:    q.fiftyTwoWeekHigh || 0,
+            low52:     q.fiftyTwoWeekLow || 0,
+            volume:    q.regularMarketVolume || 0,
+          };
+        });
+      return respond({ success: true, data: data });
+    }
+
     return respond({ success: false, error: 'Unknown type: ' + type }, 400);
   } catch (err) {
     return respond({ success: false, error: err.message });

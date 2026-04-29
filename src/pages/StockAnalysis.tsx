@@ -63,6 +63,12 @@ export default function StockAnalysis() {
 
   const location = useLocation();
   useEffect(() => {
+    // Pre-fill symbol from Trending page
+    const prefill = (location.state as any)?.prefill;
+    if (prefill?.symbol) {
+      setStockName(prefill.symbol);
+      setAnalysisType('gct');
+    }
     const replay = (location.state as any)?.replay;
     if (!replay?.result) return;
     const r = replay.result;
