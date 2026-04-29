@@ -1,5 +1,5 @@
-// smooth-endpoint — stock prices (Yahoo Finance) + stock option chains (Upstox v2)
-// Secrets required: UPSTOX_ACCESS_TOKEN, UPSTOX_URL (for stock_chain only)
+// smooth-endpoint — stock prices + option chains + market movers
+// Secrets: UPSTOX_ACCESS_TOKEN, UPSTOX_URL, UPSTOX_QUOTE_URL, YAHOO_CHART_URL
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -11,7 +11,10 @@ function hdrs(token) {
   return { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' };
 }
 
-// Only encode characters that break query strings: space and &
+function yahooHdrs() {
+  return { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' };
+}
+
 function encKey(k) {
   return k.split(' ').join('%20').split('&').join('%26');
 }
@@ -61,23 +64,21 @@ async function getChain(instrKey, expiry, token, base) {
 }
 
 async function fetchYahooPrice(symbol, exchange) {
+  var chartBase = Deno.env.get('YAHOO_CHART_URL');
+  if (!chartBase) throw new Error('YAHOO_CHART_URL secret not set');
   var suffix = (exchange === 'BSE') ? '.BO' : '.NS';
   var yahooSym = symbol.replace(/&/g, '-') + suffix;
-  var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + yahooSym + '?range=14mo&interval=1mo';
-  var res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
-  });
+  var url = chartBase + '/' + yahooSym + '?range=14mo&interval=1mo';
+  var res = await fetch(url, { headers: yahooHdrs() });
   if (!res.ok) throw new Error('Yahoo ' + res.status + ' for ' + yahooSym);
   var json = await res.json();
   var result = json.chart && json.chart.result && json.chart.result[0];
   if (!result) throw new Error('No Yahoo data for ' + yahooSym);
-
   var meta = result.meta || {};
   var timestamps = result.timestamp || [];
   var q = (result.indicators && result.indicators.quote && result.indicators.quote[0]) || {};
   var w52h = String(meta.fiftyTwoWeekHigh || 0);
   var w52l = String(meta.fiftyTwoWeekLow || 0);
-
   var data = timestamps.map(function(ts, i) {
     var d = new Date(ts * 1000);
     var yyyy = d.getFullYear();
@@ -94,13 +95,13 @@ async function fetchYahooPrice(symbol, exchange) {
       CH_52WEEK_LOW_PRICE:  w52l,
     };
   }).filter(function(r) { return parseFloat(r.CH_CLOSING_PRICE) > 0; });
-
   return { data: data };
 }
 
 async function fetchYahooMovers(symbols, exchange) {
+  var chartBase = Deno.env.get('YAHOO_CHART_URL');
+  if (!chartBase) return [];
   var sfx = exchange === 'BSE' ? '.BO' : '.NS';
-  var chartBase = 'https://query1.finance.yahoo.com/v8/finance/chart';
   var results = [];
   var batchSize = 8;
   for (var bj = 0; bj < symbols.length; bj += batchSize) {
@@ -109,7 +110,7 @@ async function fetchYahooMovers(symbols, exchange) {
       try {
         var ySym = s.replace(/&/g, '-') + sfx;
         var url = chartBase + '/' + ySym + '?range=5d&interval=1d';
-        var ry = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
+        var ry = await fetch(url, { headers: yahooHdrs() });
         if (!ry.ok) return null;
         var jy = await ry.json();
         var ry2 = jy.chart && jy.chart.result && jy.chart.result[0];
@@ -157,14 +158,14 @@ Deno.serve(async function(req) {
 
     if (!type) return respond({ success: false, error: 'Missing type' }, 400);
 
-    // ── STOCK PRICE: Yahoo Finance (fast, no auth needed) ──
+    // ── STOCK PRICE ──
     if (type === 'stock_price') {
       if (!symbol) return respond({ success: false, error: 'Missing symbol' }, 400);
       var priceData = await fetchYahooPrice(symbol, body.exchange || 'NSE');
       return respond({ success: true, data: priceData });
     }
 
-    // ── STOCK OPTION CHAIN: Upstox v2 ──
+    // ── OPTION CHAIN ──
     if (type === 'stock_chain') {
       if (!symbol) return respond({ success: false, error: 'Missing symbol' }, 400);
       var token = Deno.env.get('UPSTOX_ACCESS_TOKEN');
@@ -183,18 +184,18 @@ Deno.serve(async function(req) {
       return respond({ success: true, data: { allExpiries: chains, tradeDate: tradeDate } });
     }
 
-    // ── MARKET MOVERS: Upstox batch quotes with Yahoo fallback ──
+    // ── MARKET MOVERS ──
     if (type === 'market_movers') {
       var symbols = body.symbols;
       if (!symbols || !symbols.length) return respond({ success: false, error: 'Missing symbols' }, 400);
       var exchange = body.exchange || 'NSE';
       var all = [];
       var upToken = Deno.env.get('UPSTOX_ACCESS_TOKEN');
+      var upQuoteUrl = Deno.env.get('UPSTOX_QUOTE_URL');
       var dbg = { source: 'none', batches: 0, upstoxErrors: [], totalReturned: 0 };
 
-      if (upToken) {
+      if (upToken && upQuoteUrl) {
         var exchPfx = exchange === 'BSE' ? 'BSE_EQ|' : 'NSE_EQ|';
-        var upBase = 'https://api.upstox' + '.com/v2/market-quote/quotes';
         var bSz = 50;
         dbg.source = 'upstox';
         for (var bi = 0; bi < symbols.length; bi += bSz) {
@@ -202,7 +203,7 @@ Deno.serve(async function(req) {
           var instrKeys = batch.map(function(s) { return exchPfx + s.toUpperCase(); }).join(',');
           dbg.batches++;
           try {
-            var r = await fetch(upBase + '?instrument_key=' + instrKeys, { headers: hdrs(upToken) });
+            var r = await fetch(upQuoteUrl + '?instrument_key=' + instrKeys, { headers: hdrs(upToken) });
             if (!r.ok) {
               var errTxt = await r.text();
               dbg.upstoxErrors.push('batch' + dbg.batches + ' HTTP' + r.status + ':' + errTxt.slice(0, 120));
@@ -212,7 +213,6 @@ Deno.serve(async function(req) {
             var qdata = j.data || {};
             Object.keys(qdata).forEach(function(key) {
               var q2 = qdata[key];
-              // Key may be NSE_EQ:RELIANCE (colon) or NSE_EQ|RELIANCE (pipe) in response
               var rawSym = key;
               if (key.indexOf(':') >= 0) rawSym = key.split(':')[1];
               else if (key.indexOf('|') >= 0) rawSym = key.split('|')[1];
@@ -238,9 +238,10 @@ Deno.serve(async function(req) {
             dbg.upstoxErrors.push('batch' + dbg.batches + ' exc:' + e.message);
           }
         }
+      } else if (upToken && !upQuoteUrl) {
+        dbg.upstoxErrors.push('UPSTOX_QUOTE_URL secret not set');
       }
 
-      // Fall back to Yahoo if Upstox not configured or returned nothing
       if (all.length === 0) {
         dbg.source = 'yahoo';
         all = await fetchYahooMovers(symbols, exchange);
