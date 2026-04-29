@@ -482,6 +482,11 @@ export default function StockAnalysis() {
         emoji: ['🟢','🔵','🟡','🟠','🔴'][n-1],
       }));
 
+      // ── Actionable upside targets (only levels still ABOVE current price) ──
+      const actionableTargets = upsideLevels.filter(u => u.price > Math.round(data[data.length - 1].close));
+      const firstTargetPrice = actionableTargets[0]?.price ?? Math.round(data[data.length - 1].close * 1.10);
+      const firstTargetLabel = actionableTargets[0] ? `U${actionableTargets[0].n}` : '+10%';
+
       // ── Current price & zone ──
       const currentPrice = data[data.length - 1].close;
       let zone: string, zoneDesc: string, zoneCol: string;
@@ -587,9 +592,11 @@ export default function StockAnalysis() {
         buyPlanLines = [
           `Price is above AL ₹${Math.round(al).toLocaleString()} — markup phase confirmed.`,
           `Entry: Buy now at market. Keep SL = MGC ₹${Math.round(mgc).toLocaleString()}.`,
-          `First target: U2 ₹${upsideLevels[1].price.toLocaleString()}.`,
-          `Final target: U5 ₹${upsideLevels[4].price.toLocaleString()} — exit 100% there.`,
-          `Trail SL up as price rises: at U2 move SL to U1, at U3 keep SL at U1, at U4 move SL to U2.`,
+          actionableTargets.length > 0
+            ? `Next target: ${firstTargetLabel} at ₹${firstTargetPrice.toLocaleString()}.`
+            : `Stock has moved above all GCT upside levels — consider booking partial profits.`,
+          `Final exit: U5 ₹${upsideLevels[4].price.toLocaleString()} — sell 100% there, no exceptions.`,
+          `Trail SL up as price rises — see Upside tab for the full ladder.`,
         ];
       } else if (zone === 'WATCH ZONE') {
         buyPlanTitle = 'WAIT FOR BREAKOUT ABOVE AL';
@@ -632,7 +639,10 @@ export default function StockAnalysis() {
         ' — weak fundamentals, trade carefully';
       let verdict = '';
       if (zone === 'BUY ZONE') {
-        verdict = `${stockName} is in markup phase at ₹${Math.round(currentPrice).toLocaleString()}${fssStr}${profGrowthStr} Breakout confirmed above AL ₹${Math.round(al).toLocaleString()}. Trail SL to MGC ₹${Math.round(mgc).toLocaleString()}. Final exit at U5 ₹${upsideLevels[4].price.toLocaleString()}.`;
+        const nextTargetStr = actionableTargets.length > 0
+          ? ` Next target: ${firstTargetLabel} ₹${firstTargetPrice.toLocaleString()}.`
+          : ` Above all GCT upside targets — consider partial profit booking.`;
+        verdict = `${stockName} is in markup phase at ₹${Math.round(currentPrice).toLocaleString()}${fssStr}${profGrowthStr} Breakout confirmed above AL ₹${Math.round(al).toLocaleString()}.${nextTargetStr} Trail SL to MGC ₹${Math.round(mgc).toLocaleString()}. Final exit at U5 ₹${upsideLevels[4].price.toLocaleString()}.`;
       } else if (zone === 'WATCH ZONE') {
         verdict = `${stockName} is above soul price at ₹${Math.round(currentPrice).toLocaleString()}${fssStr}. Wait for confirmed breakout above AL ₹${Math.round(al).toLocaleString()}. Real bull run only above that level.`;
       } else if (zone === 'DANGER ZONE') {
@@ -649,6 +659,7 @@ export default function StockAnalysis() {
         avgVms: parseFloat(avgVms.toFixed(2)), vmsLabel,
         zone, zoneDesc, zoneCol,
         crashLevels, upsideLevels,
+        actionableTargets, firstTargetPrice, firstTargetLabel,
         fssChecks, fssScore, fssTotal, fssVerdict, hasFundamentals,
         buyPlanTitle, buyPlanLines,
         verdict,
@@ -1602,20 +1613,41 @@ export default function StockAnalysis() {
 
                       {/* Upside breakout entry */}
                       <div className="mb-4 p-4 rounded-xl bg-[#39d98a]/08 border border-[#39d98a]/20">
-                        <div className="text-xs font-black text-[#39d98a] mb-2">IF STOCK GOES UP — Buy when it crosses {fmt(result.al)}</div>
-                        <div className="text-xs font-mono text-[#e8e8f0] leading-relaxed">
-                          Wait for the stock to close above {fmt(result.al)} for at least 3 days.
-                          Then put in <span className="font-black text-[#f0c040]">100% of your planned capital</span> for this stock.
-                          Keep a stop loss at {fmt(result.mgc)} — if it falls below that after you buy, sell everything.
-                        </div>
+                        {result.zone === 'BUY ZONE' ? (
+                          <>
+                            <div className="text-xs font-black text-[#39d98a] mb-2">
+                              {result.actionableTargets.length > 0
+                                ? `✅ ALREADY IN BUY ZONE — You are above AL. Next target: ${result.firstTargetLabel} ₹${result.firstTargetPrice.toLocaleString()}`
+                                : `✅ ABOVE ALL GCT TARGETS — Consider booking partial profits now`}
+                            </div>
+                            <div className="text-xs font-mono text-[#e8e8f0] leading-relaxed">
+                              Stock already broke out above AL {fmt(result.al)}.
+                              {result.actionableTargets.length > 0
+                                ? ` Hold and ride to ${result.firstTargetLabel} ₹${result.firstTargetPrice.toLocaleString()}.`
+                                : ` You are beyond the original targets — book 30–50% profits and trail the rest.`}
+                              {' '}SL at {fmt(result.mgc)} — monthly close below MGC = exit all.
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-xs font-black text-[#39d98a] mb-2">IF STOCK GOES UP — Buy when it crosses {fmt(result.al)}</div>
+                            <div className="text-xs font-mono text-[#e8e8f0] leading-relaxed">
+                              Wait for the stock to close above {fmt(result.al)} for at least 3 days.
+                              Then put in <span className="font-black text-[#f0c040]">100% of your planned capital</span> for this stock.
+                              Keep a stop loss at {fmt(result.mgc)} — if it falls below that after you buy, sell everything.
+                            </div>
+                          </>
+                        )}
                         <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs font-mono">
                           <div className="bg-[#16161f] rounded-lg p-2">
-                            <div className="text-[#6b6b85]">Buy at</div>
-                            <div className="font-black text-[#39d98a]">{fmt(result.al)}+</div>
+                            <div className="text-[#6b6b85]">{result.zone === 'BUY ZONE' ? 'Already at' : 'Buy at'}</div>
+                            <div className="font-black text-[#39d98a]">{result.zone === 'BUY ZONE' ? fmt(result.currentPrice) : `${fmt(result.al)}+`}</div>
                           </div>
                           <div className="bg-[#16161f] rounded-lg p-2">
-                            <div className="text-[#6b6b85]">First Target</div>
-                            <div className="font-black text-[#f0c040]">{fmt(result.upsideLevels[1].price)}</div>
+                            <div className="text-[#6b6b85]">Next Target</div>
+                            <div className="font-black text-[#f0c040]">
+                              {result.actionableTargets.length > 0 ? fmt(result.firstTargetPrice) : 'Book profits'}
+                            </div>
                           </div>
                           <div className="bg-[#16161f] rounded-lg p-2">
                             <div className="text-[#6b6b85]">Final Exit</div>
@@ -1678,19 +1710,37 @@ export default function StockAnalysis() {
                         <div className="p-4 rounded-xl bg-[#f0c040]/08 border border-[#f0c040]/20">
                           <div className="text-xs font-black text-[#f0c040] mb-2">🎯 SELL (Profit Target)</div>
                           <div className="space-y-1.5 text-xs font-mono text-[#e8e8f0]">
-                            <div>· At {fmt(result.upsideLevels[1].price)} → sell 30% of your shares and lock that profit</div>
-                            <div>· At {fmt(result.upsideLevels[3].price)} → sell another 40%. Keep 30% for the final run</div>
-                            <div>· At {fmt(result.upsideLevels[4].price)} → <span className="font-black text-[#f0c040]">SELL the remaining 30% immediately.</span> Do not be greedy.</div>
-                            {qty > 0 && <div className="mt-2 font-black text-[#39d98a]">At final target {fmt(result.upsideLevels[4].price)}, your {qty} shares would be worth {fmt(qty * result.upsideLevels[4].price)}</div>}
+                            {(() => {
+                              const t1 = result.actionableTargets[0]?.price ?? result.upsideLevels[1].price;
+                              const t2 = result.actionableTargets[2]?.price ?? result.upsideLevels[3].price;
+                              const t3 = result.upsideLevels[4].price;
+                              return (
+                                <>
+                                  <div>· At {fmt(t1)} → sell 30% of your shares and lock that profit</div>
+                                  <div>· At {fmt(t2)} → sell another 40%. Keep 30% for the final run</div>
+                                  <div>· At {fmt(t3)} → <span className="font-black text-[#f0c040]">SELL the remaining 30% immediately.</span> Do not be greedy.</div>
+                                  {qty > 0 && <div className="mt-2 font-black text-[#39d98a]">At final target {fmt(t3)}, your {qty} shares would be worth {fmt(qty * t3)}</div>}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                         <div className="p-4 rounded-xl bg-[#16161f] border border-[#1e1e2e]">
                           <div className="text-xs font-black text-[#f0c040] mb-2">🪜 AS STOCK RISES — Move your stop loss up</div>
                           <div className="text-xs font-mono text-[#6b6b85] mb-2">This protects your profit. If it falls back, you still exit with a gain.</div>
                           <div className="space-y-1.5 text-xs font-mono">
-                            <div className="flex justify-between"><span className="text-[#6b6b85]">When price reaches {fmt(result.upsideLevels[0].price)}</span><span className="font-bold text-[#f0c040]">→ set SL at {fmt(result.mgc)}</span></div>
-                            <div className="flex justify-between"><span className="text-[#6b6b85]">When price reaches {fmt(result.upsideLevels[1].price)}</span><span className="font-bold text-[#f0c040]">→ set SL at {fmt(result.upsideLevels[0].price)}</span></div>
-                            <div className="flex justify-between"><span className="text-[#6b6b85]">When price reaches {fmt(result.upsideLevels[3].price)}</span><span className="font-bold text-[#f0c040]">→ set SL at {fmt(result.upsideLevels[1].price)}</span></div>
+                            {result.upsideLevels.filter((_: any, i: number) => [0,1,3].includes(i) && result.upsideLevels[i].price > result.currentPrice).map((u: any, i: number, arr: any[]) => {
+                              const slPrice = u.n === 1 ? result.mgc : result.upsideLevels[u.n - 2].price;
+                              return (
+                                <div key={u.n} className="flex justify-between">
+                                  <span className="text-[#6b6b85]">When price reaches {fmt(u.price)}</span>
+                                  <span className="font-bold text-[#f0c040]">→ set SL at {fmt(slPrice)}</span>
+                                </div>
+                              );
+                            })}
+                            {result.actionableTargets.length === 0 && (
+                              <div className="text-[#f0c040]">Already above all GCT levels — trail SL at {fmt(result.upsideLevels[3].price)}</div>
+                            )}
                           </div>
                         </div>
                       </div>
