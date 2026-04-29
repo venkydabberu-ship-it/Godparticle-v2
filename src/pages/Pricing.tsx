@@ -9,90 +9,88 @@ export default function Pricing() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Handle return from Cashfree subscription flow (?sub_id=xxx)
+  // Handle return from Cashfree payment (?order_id=xxx)
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const subId  = params.get('sub_id');
+    const params  = new URLSearchParams(window.location.search);
     const orderId = params.get('order_id');
+    if (!orderId) return;
 
-    if (subId) {
-      setLoading('verifying');
-      window.history.replaceState({}, '', window.location.pathname);
-      supabase.functions
-        .invoke('activate-plan', { body: { action: 'verify_subscription', subscription_id: subId } })
-        .then(({ data, error: fnErr }) => {
-          if (fnErr || !data?.success) {
-            setError('Subscription pending. If you completed UPI setup, it activates within minutes. Sub ID: ' + subId);
-          } else {
-            setSuccess('Subscription activated! Welcome to God Particle ' + (profile?.subscription_plan ?? '') + '.');
-            refreshProfile();
-          }
-          setLoading('');
-        });
-      return;
-    }
+    const savedPlan    = localStorage.getItem('cf_plan')    || sessionStorage.getItem('cf_plan');
+    const savedCredits = localStorage.getItem('cf_credits') || sessionStorage.getItem('cf_credits');
 
-    if (orderId) {
-      const savedCredits = localStorage.getItem('cf_credits') || sessionStorage.getItem('cf_credits');
-      setLoading('credits');
-      window.history.replaceState({}, '', window.location.pathname);
-      supabase.functions
-        .invoke('activate-plan', { body: { action: 'verify_payment', order_id: orderId, credits: savedCredits ? parseInt(savedCredits) : 0 } })
-        .then(({ data, error: fnErr }) => {
-          localStorage.removeItem('cf_credits');
-          sessionStorage.removeItem('cf_credits');
-          if (fnErr || !data?.success) {
-            setError('Payment received but activation failed. Order ID: ' + orderId + '. Contact support.');
-          } else {
-            setSuccess((savedCredits ?? '?') + ' credits added to your account!');
-            refreshProfile();
-          }
-          setLoading('');
-        });
-    }
+    setLoading('verifying');
+    window.history.replaceState({}, '', window.location.pathname);
+
+    const verifyBody: any = { action: 'verify_payment', order_id: orderId };
+    if (savedPlan)    verifyBody.plan    = savedPlan;
+    if (savedCredits) verifyBody.credits = parseInt(savedCredits);
+
+    supabase.functions
+      .invoke('activate-plan', { body: verifyBody })
+      .then(({ data, error: fnErr }) => {
+        localStorage.removeItem('cf_plan');    sessionStorage.removeItem('cf_plan');
+        localStorage.removeItem('cf_credits'); sessionStorage.removeItem('cf_credits');
+        if (fnErr || !data?.success) {
+          setError('Payment received but activation failed. Order: ' + orderId + '. Contact support.');
+        } else if (savedPlan) {
+          setSuccess(savedPlan + ' plan activated! Valid for 28 days. Welcome to God Particle!');
+          refreshProfile();
+        } else {
+          setSuccess((savedCredits ?? '?') + ' credits added to your account!');
+          refreshProfile();
+        }
+        setLoading('');
+      });
   }, []);
 
-  // ── Subscribe to a plan (UPI AutoPay mandate) ──
-  async function handleSubscribe(plan: string) {
-    setLoading(plan);
+  // ── Buy a plan (one-time, 28 days) ──
+  async function handleBuyPlan(planKey: string, amount: number) {
+    setLoading(planKey);
     setError('');
     setSuccess('');
     try {
-      const returnUrl = window.location.origin + '/pricing';
-      const { data, error: fnErr } = await supabase.functions.invoke('activate-plan', {
+      const returnUrl = window.location.origin + '/pricing?order_id={order_id}';
+      const { data: orderData, error: orderErr } = await supabase.functions.invoke('activate-plan', {
         body: {
-          action:     'create_subscription',
-          plan,
+          action:     'create_order',
+          amount,
           email:      profile?.username ?? '',
           phone:      (profile as any)?.phone ?? '9999999999',
           return_url: returnUrl,
         },
       });
-      if (fnErr || !data?.subscribe_url) {
-        throw new Error(fnErr?.message || data?.error || 'Could not create subscription');
+      if (orderErr || !orderData?.payment_session_id) {
+        throw new Error(orderErr?.message || orderData?.error || 'Could not create payment order');
       }
-      // Redirect to Cashfree UPI mandate page
-      window.location.href = data.subscribe_url;
-    } catch (err: any) {
-      setError(err.message || 'Subscription failed. Please try again.');
-      setLoading('');
-    }
-  }
 
-  // ── Cancel subscription ──
-  async function handleCancel() {
-    if (!confirm('Cancel your subscription? You will lose access at end of current period.')) return;
-    setLoading('cancel');
-    setError('');
-    try {
-      const { data, error: fnErr } = await supabase.functions.invoke('activate-plan', {
-        body: { action: 'cancel_subscription' },
+      localStorage.setItem('cf_plan', planKey);
+      sessionStorage.setItem('cf_plan', planKey);
+
+      const cashfree = (window as any).Cashfree({ mode: 'production' });
+      const result = await cashfree.checkout({
+        paymentSessionId: orderData.payment_session_id,
+        redirectTarget:   '_modal',
       });
-      if (fnErr || !data?.success) throw new Error(fnErr?.message || data?.error || 'Cancel failed');
-      setSuccess('Subscription cancelled. Access continues until period end.');
-      refreshProfile();
+
+      if (result?.redirect) return;
+
+      if (result?.error) {
+        localStorage.removeItem('cf_plan'); sessionStorage.removeItem('cf_plan');
+        throw new Error(result.error.message || 'Payment was cancelled');
+      }
+
+      // Inline verification
+      const { data: verifyData, error: verifyErr } = await supabase.functions.invoke('activate-plan', {
+        body: { action: 'verify_payment', order_id: orderData.order_id, plan: planKey },
+      });
+      localStorage.removeItem('cf_plan'); sessionStorage.removeItem('cf_plan');
+      if (verifyErr || !verifyData?.success) {
+        throw new Error('Payment received but activation failed. Order: ' + orderData.order_id);
+      }
+      setSuccess(planKey + ' plan activated! Valid for 28 days.');
+      await refreshProfile();
     } catch (err: any) {
-      setError(err.message || 'Cancel failed. Please try again.');
+      setError(err.message || 'Payment failed. Please try again.');
     }
     setLoading('');
   }
@@ -126,21 +124,19 @@ export default function Pricing() {
         redirectTarget:   '_modal',
       });
 
-      if (result?.redirect) return; // UPI redirect → page reloads → useEffect handles verification
+      if (result?.redirect) return;
 
       if (result?.error) {
-        sessionStorage.removeItem('cf_credits');
+        localStorage.removeItem('cf_credits'); sessionStorage.removeItem('cf_credits');
         throw new Error(result.error.message || 'Payment was cancelled');
       }
 
-      // Inline verification (non-redirect flow)
       const { data: verifyData, error: verifyErr } = await supabase.functions.invoke('activate-plan', {
         body: { action: 'verify_payment', order_id: orderData.order_id, credits },
       });
-      localStorage.removeItem('cf_credits');
-      sessionStorage.removeItem('cf_credits');
+      localStorage.removeItem('cf_credits'); sessionStorage.removeItem('cf_credits');
       if (verifyErr || !verifyData?.success) {
-        throw new Error('Payment received but activation failed. Order ID: ' + orderData.order_id);
+        throw new Error('Payment received but activation failed. Order: ' + orderData.order_id);
       }
       setSuccess(credits + ' credits added to your account!');
       await refreshProfile();
@@ -150,7 +146,13 @@ export default function Pricing() {
     setLoading('');
   }
 
-  const isSubscribed = ['ACTIVE', 'INITIALIZED', 'ON_HOLD'].includes((profile as any)?.subscription_status ?? '');
+  const planExpiresAt = (profile as any)?.credits_reset_at
+    ? new Date((profile as any).credits_reset_at)
+    : null;
+  const planActive = planExpiresAt && planExpiresAt > new Date();
+  const daysLeft = planActive
+    ? Math.ceil((planExpiresAt!.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : 0;
 
   const plans = [
     {
@@ -163,8 +165,9 @@ export default function Pricing() {
       features: [
         '50 one-time credits on signup',
         'God Particle analysis (2 cr each)',
-        'Nifty 50 only',
-        'Scenario matrix',
+        'Intraday Pivot (5 cr each)',
+        'Nifty 50 index only',
+        'Scenario matrix included',
         'Zero to Hero — locked 🔒',
         'Stock Intelligence — locked 🔒',
       ],
@@ -175,41 +178,42 @@ export default function Pricing() {
     {
       name: 'Basic',
       price: '₹99',
-      period: 'per month',
-      credits: '100 credits / month',
+      period: '28 days',
+      credits: '150 credits on activation',
       color: '#f0c040',
       badge: 'POPULAR',
       features: [
-        '100 credits every month (auto-renewed)',
+        '150 credits valid for 28 days',
         'God Particle — 2 credits each',
         'All 7 indexes + Sensex',
+        'Intraday Pivot — 5 credits each',
         'Zero to Hero — morning FREE',
         'Zero to Hero — analysis 10 cr',
-        'Credits carry forward forever',
-        'Top-up anytime',
+        'Buy more credits anytime',
+        'One-time payment — no autopay',
       ],
-      current: profile?.role === 'basic',
+      current: profile?.role === 'basic' && planActive,
       planKey: 'Basic',
       amount: 99,
     },
     {
       name: 'Premium',
       price: '₹299',
-      period: 'per month',
+      period: '28 days',
       credits: 'Unlimited — no credits needed',
       color: '#39d98a',
       badge: 'BEST VALUE',
       features: [
-        'Everything unlimited — no limits',
+        'Everything unlimited for 28 days',
         'Zero to Hero — FREE always',
         'God Particle — FREE always',
         'Stock Intelligence — FREE',
+        'Intraday Pivot — FREE always',
         'All 7 indexes + all stocks',
-        'Admin pre-loads data for you',
+        'One-time payment — no autopay',
         'Priority support',
-        'Early access to new features',
       ],
-      current: profile?.role === 'premium' || profile?.role === 'pro',
+      current: (profile?.role === 'premium' || profile?.role === 'pro') && planActive,
       planKey: 'Premium',
       amount: 299,
     },
@@ -219,7 +223,6 @@ export default function Pricing() {
     <div className="min-h-screen bg-[#0a0a0f] text-[#e8e8f0]">
       <div className="fixed inset-0 bg-[linear-gradient(rgba(240,192,64,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(240,192,64,0.03)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none" />
 
-      {/* Navbar */}
       <nav className="relative z-10 flex items-center justify-between px-6 py-4 border-b border-[#1e1e2e]">
         <Link to="/dashboard" className="flex items-center gap-3">
           <div className="w-9 h-9 bg-[#f0c040] rounded-xl flex items-center justify-center text-lg">⚛</div>
@@ -231,63 +234,47 @@ export default function Pricing() {
             &nbsp;·&nbsp;
             Credits: <span className="text-[#f0c040] font-bold">{['premium','pro','admin'].includes(profile?.role ?? '') ? '∞' : profile?.credits ?? 0}</span>
           </div>
-          <Link to="/dashboard" className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040]">
-            ← Dashboard
-          </Link>
+          <Link to="/dashboard" className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040]">← Dashboard</Link>
         </div>
       </nav>
 
       <div className="relative z-10 max-w-6xl mx-auto px-6 py-10">
 
-        {/* Header */}
-        <div className="text-center mb-12">
+        <div className="text-center mb-10">
           <h1 className="text-4xl font-black tracking-tight mb-3">
             Choose Your <span className="text-[#f0c040]">Plan</span>
           </h1>
           <p className="text-sm font-mono text-[#6b6b85] max-w-xl mx-auto">
-            Start free with 50 credits. Upgrade anytime for more power, more data and more analyses.
+            Like a mobile recharge — pay once, use for 28 days. No autopay. No surprises.
           </p>
         </div>
 
         {loading === 'verifying' && (
           <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl px-4 py-3 text-sm font-mono text-[#f0c040] mb-6 text-center">
-            ⏳ Verifying subscription…
+            ⏳ Verifying payment…
           </div>
         )}
-
         {error && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm font-mono text-red-400 mb-6 text-center">
-            {error}
-          </div>
+          <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm font-mono text-red-400 mb-6 text-center">{error}</div>
         )}
-
         {success && (
-          <div className="bg-[#39d98a]/10 border border-[#39d98a]/30 rounded-xl px-4 py-3 text-sm font-mono text-[#39d98a] mb-6 text-center">
-            {success}
-          </div>
+          <div className="bg-[#39d98a]/10 border border-[#39d98a]/30 rounded-xl px-4 py-3 text-sm font-mono text-[#39d98a] mb-6 text-center">{success}</div>
         )}
 
-        {/* Active subscription banner */}
-        {isSubscribed && (
+        {/* Active plan banner */}
+        {planActive && profile?.role !== 'free' && (
           <div className="bg-[#39d98a]/10 border border-[#39d98a]/30 rounded-2xl px-5 py-4 mb-8 flex items-center justify-between flex-wrap gap-3">
             <div>
               <div className="text-sm font-bold text-[#39d98a]">
-                ✓ Active Subscription — {(profile as any)?.subscription_plan} Plan
+                ✓ Active — {profile?.role?.charAt(0).toUpperCase()}{profile?.role?.slice(1)} Plan
               </div>
               <div className="text-xs font-mono text-[#6b6b85] mt-0.5">
-                Status: {(profile as any)?.subscription_status}
-                {(profile as any)?.subscription_next_billing
-                  ? '  ·  Next billing: ' + new Date((profile as any).subscription_next_billing).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-                  : ''}
+                {daysLeft} day{daysLeft !== 1 ? 's' : ''} remaining · Expires {planExpiresAt!.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
               </div>
             </div>
-            <button
-              onClick={handleCancel}
-              disabled={loading === 'cancel'}
-              className="text-xs font-mono text-red-400 border border-red-500/30 rounded-lg px-3 py-1.5 hover:bg-red-500/10 transition-all disabled:opacity-40"
-            >
-              {loading === 'cancel' ? '⏳ Cancelling…' : 'Cancel Subscription'}
-            </button>
+            <div className="text-xs font-mono text-[#6b6b85] border border-[#1e1e2e] rounded-lg px-3 py-1.5">
+              Renew below when it expires
+            </div>
           </div>
         )}
 
@@ -297,16 +284,12 @@ export default function Pricing() {
             <div
               key={i}
               className={`bg-[#111118] border rounded-2xl p-6 flex flex-col relative ${
-                plan.name === 'Premium'
-                  ? 'border-[#39d98a] shadow-[0_0_30px_rgba(57,217,138,0.1)]'
-                  : 'border-[#1e1e2e]'
+                plan.name === 'Premium' ? 'border-[#39d98a] shadow-[0_0_30px_rgba(57,217,138,0.1)]' : 'border-[#1e1e2e]'
               }`}
             >
               {plan.badge && (
-                <div
-                  className="absolute -top-3 left-1/2 transform -translate-x-1/2 text-xs font-black px-3 py-1 rounded-full text-black"
-                  style={{ background: plan.color }}
-                >
+                <div className="absolute -top-3 left-1/2 transform -translate-x-1/2 text-xs font-black px-3 py-1 rounded-full text-black"
+                  style={{ background: plan.color }}>
                   {plan.badge}
                 </div>
               )}
@@ -327,22 +310,22 @@ export default function Pricing() {
 
               {plan.current ? (
                 <div className="w-full py-2.5 text-center text-xs font-bold border border-[#1e1e2e] rounded-xl text-[#6b6b85]">
-                  ✓ Current Plan
+                  ✓ Current Plan ({daysLeft}d left)
                 </div>
               ) : plan.planKey !== 'free' ? (
                 <button
-                  onClick={() => handleSubscribe(plan.planKey)}
-                  disabled={loading === plan.planKey}
-                  className="w-full py-2.5 text-xs font-black rounded-xl transition-all disabled:opacity-40 hover:opacity-90"
+                  onClick={() => handleBuyPlan(plan.planKey, plan.amount)}
+                  disabled={!!loading}
+                  className="w-full py-3 text-xs font-black rounded-xl transition-all disabled:opacity-40 hover:opacity-90"
                   style={{ background: plan.color, color: '#000' }}
                 >
-                  {loading === plan.planKey ? '⏳ Processing…' : `Subscribe — ${plan.price}/mo`}
+                  {loading === plan.planKey ? '⏳ Processing…' : `Buy ${plan.name} — ${plan.price} / 28 days`}
                 </button>
               ) : null}
 
               {plan.planKey !== 'free' && (
                 <div className="mt-2 text-[10px] font-mono text-[#6b6b85] text-center">
-                  Auto-deducted monthly via UPI AutoPay
+                  Pay via Google Pay / UPI / Card · No autopay
                 </div>
               )}
             </div>
@@ -357,24 +340,11 @@ export default function Pricing() {
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
-              {
-                action:  '⚛ God Particle Analysis',
-                free:    '2 credits',
-                basic:   '2 credits',
-                premium: '✅ FREE (unlimited)',
-              },
-              {
-                action:  '🚀 Z2H Morning Snapshot',
-                free:    '❌ Not available',
-                basic:   '✅ FREE always',
-                premium: '✅ FREE always',
-              },
-              {
-                action:  '📊 Z2H Analysis Snapshot',
-                free:    '❌ Not available',
-                basic:   '10 credits',
-                premium: '✅ FREE (unlimited)',
-              },
+              { action: '⚛ God Particle Analysis', free: '2 credits', basic: '2 credits', premium: '✅ FREE' },
+              { action: '⚡ Intraday Pivot Points',  free: '5 credits', basic: '5 credits', premium: '✅ FREE' },
+              { action: '🚀 Z2H Morning Snapshot',   free: '❌ Locked',  basic: '✅ FREE',   premium: '✅ FREE' },
+              { action: '📊 Z2H Analysis Snapshot',  free: '❌ Locked',  basic: '10 credits',premium: '✅ FREE' },
+              { action: '📈 Stock Intelligence',     free: '❌ Locked',  basic: '❌ Locked', premium: '✅ FREE' },
             ].map((item, i) => (
               <div key={i} className="bg-[#16161f] rounded-xl p-4">
                 <div className="text-sm font-bold mb-3 text-[#f0c040]">{item.action}</div>
@@ -397,14 +367,14 @@ export default function Pricing() {
           </div>
         </div>
 
-        {/* Buy Extra Credits — Basic users only */}
+        {/* Buy Extra Credits */}
         <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
           <h2 className="text-base font-black mb-2 flex items-center gap-2">
             <span className="w-1 h-4 bg-[#f0c040] rounded block" />
             Buy Extra Credits
           </h2>
           <p className="text-xs font-mono text-[#6b6b85] mb-6">
-            For Basic plan users · Credits never expire · Use across all analyses
+            For Free &amp; Basic users · Credits never expire · Use across all analyses
           </p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
@@ -415,7 +385,7 @@ export default function Pricing() {
               <button
                 key={i}
                 onClick={() => handleBuyCredits(pack.credits, pack.price)}
-                disabled={loading === 'credits'}
+                disabled={!!loading}
                 className={`relative bg-[#16161f] border rounded-xl p-5 hover:border-[#f0c040] transition-all text-left disabled:opacity-40 ${pack.popular ? 'border-[#f0c040]' : 'border-[#1e1e2e]'}`}
               >
                 {pack.popular && (
@@ -427,20 +397,19 @@ export default function Pricing() {
                 <div className="text-xs font-mono text-[#39d98a] mb-3">{pack.bonus}</div>
                 <div className="text-xl font-black">₹{pack.price}</div>
                 <div className="text-[10px] font-mono text-[#6b6b85] mt-1">
-                  = {Math.floor(pack.credits / 10)} Z2H analyses or {Math.floor(pack.credits / 2)} God Particle analyses
+                  {Math.floor(pack.credits / 10)} Z2H analyses or {Math.floor(pack.credits / 2)} God Particle analyses
                 </div>
               </button>
             ))}
           </div>
           <div className="mt-4 text-[10px] font-mono text-[#6b6b85] text-center">
-            💡 Upgrade to Premium (₹299/mo) for unlimited access — no credits needed ever
+            💡 Upgrade to Premium (₹299/28 days) for unlimited access — no credits needed
           </div>
         </div>
 
-        {/* Policy footer — required for Cashfree compliance */}
         <div className="mt-10 pt-6 border-t border-[#1e1e2e] text-center space-y-3">
           <div className="text-[10px] font-mono text-[#3a3a4a]">
-            Payments processed securely by Cashfree Payments · UPI AutoPay / eNACH
+            Payments processed securely by Cashfree Payments · UPI / Google Pay / Card
           </div>
           <div className="flex flex-wrap justify-center gap-4 text-[10px] font-mono text-[#3a3a4a]">
             <Link to="/terms" className="hover:text-[#6b6b85] transition-all">Terms &amp; Conditions</Link>
