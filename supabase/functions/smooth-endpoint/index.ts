@@ -149,40 +149,46 @@ Deno.serve(async function(req) {
       var sfx = exchange === 'BSE' ? '.BO' : '.NS';
       var chartBase = Deno.env.get('YAHOO_CHART_URL') || ('https://query1' + '.finance.yahoo.com/v8/finance/chart');
 
-      // Fetch each symbol individually in parallel (v8 chart needs no auth)
-      var results = await Promise.all(symbols.map(async function(s) {
-        try {
-          var ySym = s.replace(/&/g, '-') + sfx;
-          var url = chartBase + '/' + ySym + '?range=5d&interval=1d';
-          var r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
-          if (!r.ok) return null;
-          var j = await r.json();
-          var res = j.chart && j.chart.result && j.chart.result[0];
-          if (!res) return null;
-          var meta = res.meta || {};
-          var q = (res.indicators && res.indicators.quote && res.indicators.quote[0]) || {};
-          var closes = (q.close || []).filter(function(c) { return c != null; });
-          var prevClose = closes.length >= 2 ? closes[closes.length - 2] : 0;
-          var currPrice = meta.regularMarketPrice || (closes.length ? closes[closes.length - 1] : 0);
-          var chg = prevClose > 0 ? currPrice - prevClose : 0;
-          var chgPct = prevClose > 0 ? (chg / prevClose) * 100 : 0;
-          return {
-            symbol:    s,
-            name:      meta.longName || meta.shortName || s,
-            price:     Math.round(currPrice * 100) / 100,
-            change:    Math.round(chg * 100) / 100,
-            changePct: Math.round(chgPct * 100) / 100,
-            prevClose: Math.round(prevClose * 100) / 100,
-            open:      meta.regularMarketOpen || 0,
-            high52:    meta.fiftyTwoWeekHigh || 0,
-            low52:     meta.fiftyTwoWeekLow || 0,
-            volume:    meta.regularMarketVolume || 0,
-          };
-        } catch(_e) { return null; }
-      }));
-
-      var data = results.filter(function(r) { return r !== null; });
-      return respond({ success: true, data: data });
+      // Fetch in internal batches of 10 to avoid Yahoo rate-limiting
+      var all = [];
+      var innerBatch = 10;
+      for (var bi = 0; bi < symbols.length; bi += innerBatch) {
+        var batch = symbols.slice(bi, bi + innerBatch);
+        var batchRes = await Promise.all(batch.map(async function(s) {
+          try {
+            var ySym = s.replace(/&/g, '-') + sfx;
+            var url = chartBase + '/' + ySym + '?range=5d&interval=1d';
+            var r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
+            if (!r.ok) return null;
+            var j = await r.json();
+            var res = j.chart && j.chart.result && j.chart.result[0];
+            if (!res) return null;
+            var meta = res.meta || {};
+            var q2 = (res.indicators && res.indicators.quote && res.indicators.quote[0]) || {};
+            var closes = (q2.close || []).filter(function(c) { return c != null && c > 0; });
+            // Use multiple fallbacks for current price (works during + after market hours)
+            var currPrice = meta.regularMarketPrice || meta.chartPreviousClose || (closes.length ? closes[closes.length - 1] : 0);
+            var prevClose = meta.chartPreviousClose || (closes.length >= 2 ? closes[closes.length - 2] : currPrice);
+            if (!currPrice) return null;
+            var chg = prevClose > 0 ? currPrice - prevClose : 0;
+            var chgPct = prevClose > 0 ? (chg / prevClose) * 100 : 0;
+            return {
+              symbol:    s,
+              name:      meta.longName || meta.shortName || s,
+              price:     Math.round(currPrice * 100) / 100,
+              change:    Math.round(chg * 100) / 100,
+              changePct: Math.round(chgPct * 100) / 100,
+              prevClose: Math.round(prevClose * 100) / 100,
+              open:      meta.regularMarketOpen || 0,
+              high52:    meta.fiftyTwoWeekHigh || 0,
+              low52:     meta.fiftyTwoWeekLow || 0,
+              volume:    meta.regularMarketVolume || 0,
+            };
+          } catch(_e) { return null; }
+        }));
+        batchRes.forEach(function(r) { if (r) all.push(r); });
+      }
+      return respond({ success: true, data: all });
     }
 
     return respond({ success: false, error: 'Unknown type: ' + type }, 400);
