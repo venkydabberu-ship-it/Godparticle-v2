@@ -42,10 +42,10 @@ export default function Trending() {
     setProgress('');
 
     try {
-      const symbols = NSE_STOCKS.filter(s => !s.symbol.includes('&')).map(s => s.symbol);
+      // Limit to top 100 stocks to keep fetching fast
+      const symbols = NSE_STOCKS.filter(s => !s.symbol.includes('&')).map(s => s.symbol).slice(0, 100);
       const all: StockQuote[] = [];
 
-      // Fetch in batches to avoid URL length limits
       for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
         const batch = symbols.slice(i, i + BATCH_SIZE);
         setProgress(`Fetching ${Math.min(i + BATCH_SIZE, symbols.length)} / ${symbols.length} stocks…`);

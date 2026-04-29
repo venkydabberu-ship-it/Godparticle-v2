@@ -141,37 +141,47 @@ Deno.serve(async function(req) {
       return respond({ success: true, data: { allExpiries: chains, tradeDate: tradeDate } });
     }
 
-    // ── MARKET MOVERS: Yahoo Finance batch quote ──
+    // ── MARKET MOVERS: Yahoo Finance v8 chart API (no auth needed) ──
     if (type === 'market_movers') {
       var symbols = body.symbols;
       if (!symbols || !symbols.length) return respond({ success: false, error: 'Missing symbols' }, 400);
       var exchange = body.exchange || 'NSE';
-      var suffix = exchange === 'BSE' ? '.BO' : '.NS';
-      var yahooSymbols = symbols.map(function(s) { return s.replace(/&/g, '-') + suffix; }).join(',');
-      var url = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + yahooSymbols +
-        '&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketOpen,fiftyTwoWeekHigh,fiftyTwoWeekLow,longName,shortName,regularMarketVolume';
-      var res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
-      });
-      if (!res.ok) throw new Error('Yahoo batch quote HTTP ' + res.status);
-      var json = await res.json();
-      var quotes = (json.quoteResponse && json.quoteResponse.result) || [];
-      var data = quotes
-        .filter(function(q) { return q.regularMarketPrice > 0; })
-        .map(function(q) {
+      var sfx = exchange === 'BSE' ? '.BO' : '.NS';
+      var chartBase = Deno.env.get('YAHOO_CHART_URL') || ('https://query1' + '.finance.yahoo.com/v8/finance/chart');
+
+      // Fetch each symbol individually in parallel (v8 chart needs no auth)
+      var results = await Promise.all(symbols.map(async function(s) {
+        try {
+          var ySym = s.replace(/&/g, '-') + sfx;
+          var url = chartBase + '/' + ySym + '?range=5d&interval=1d';
+          var r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
+          if (!r.ok) return null;
+          var j = await r.json();
+          var res = j.chart && j.chart.result && j.chart.result[0];
+          if (!res) return null;
+          var meta = res.meta || {};
+          var q = (res.indicators && res.indicators.quote && res.indicators.quote[0]) || {};
+          var closes = (q.close || []).filter(function(c) { return c != null; });
+          var prevClose = closes.length >= 2 ? closes[closes.length - 2] : 0;
+          var currPrice = meta.regularMarketPrice || (closes.length ? closes[closes.length - 1] : 0);
+          var chg = prevClose > 0 ? currPrice - prevClose : 0;
+          var chgPct = prevClose > 0 ? (chg / prevClose) * 100 : 0;
           return {
-            symbol:    q.symbol.replace(suffix, ''),
-            name:      q.longName || q.shortName || q.symbol,
-            price:     q.regularMarketPrice,
-            change:    q.regularMarketChange || 0,
-            changePct: q.regularMarketChangePercent || 0,
-            prevClose: q.regularMarketPreviousClose || 0,
-            open:      q.regularMarketOpen || 0,
-            high52:    q.fiftyTwoWeekHigh || 0,
-            low52:     q.fiftyTwoWeekLow || 0,
-            volume:    q.regularMarketVolume || 0,
+            symbol:    s,
+            name:      meta.longName || meta.shortName || s,
+            price:     Math.round(currPrice * 100) / 100,
+            change:    Math.round(chg * 100) / 100,
+            changePct: Math.round(chgPct * 100) / 100,
+            prevClose: Math.round(prevClose * 100) / 100,
+            open:      meta.regularMarketOpen || 0,
+            high52:    meta.fiftyTwoWeekHigh || 0,
+            low52:     meta.fiftyTwoWeekLow || 0,
+            volume:    meta.regularMarketVolume || 0,
           };
-        });
+        } catch(_e) { return null; }
+      }));
+
+      var data = results.filter(function(r) { return r !== null; });
       return respond({ success: true, data: data });
     }
 
