@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
     // ── CREATE ORDER (plans + credit packs) ──
     if (action === 'create_order') {
       const amount    = Number(body['amount']);
-      const email     = String(body['email']  || 'user@godparticle.app');
+      const email     = String(body['email']  || 'user@godparticle.life');
       const rawPhone  = String(body['phone']  || '9999999999').replace(/\D/g, '').slice(0, 10);
       const phone     = rawPhone || '9999999999';
       const returnUrl = String(body['return_url'] || 'https://godparticle-v2-ivory.vercel.app/pricing');

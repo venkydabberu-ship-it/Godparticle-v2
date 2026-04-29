@@ -6,8 +6,8 @@ const CORS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const FROM = 'God Particle <noreply@godparticle.app>';
-const SUPPORT = 'support@godparticle.app';
+const FROM = 'God Particle <noreply@godparticle.life>';
+const SUPPORT = 'support@godparticle.life';
 
 function html(title: string, body: string): string {
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -27,7 +27,7 @@ function html(title: string, body: string): string {
   <h1>${title}</h1>
   ${body}
   <div class="footer">
-    God Particle Intelligence · <a href="https://godparticle.app">godparticle.app</a><br>
+    God Particle Intelligence · <a href="https://godparticle.life">godparticle.life</a><br>
     Questions? <a href="mailto:${SUPPORT}">${SUPPORT}</a>
   </div>
 </div></body></html>`;
@@ -43,7 +43,7 @@ const TEMPLATES: Record<string, (data: any) => { subject: string; html: string }
       <p>· Go to <strong>Zero to Hero</strong> on expiry day and fetch the 9:30 AM snapshot<br>
          · Try <strong>Stock Intelligence</strong> to find crash-buy levels for any large-cap<br>
          · Check <strong>Trending Stocks</strong> before market opens for momentum picks</p>
-      <a href="https://godparticle.app/dashboard" class="btn">Open Dashboard →</a>
+      <a href="https://godparticle.life/dashboard" class="btn">Open Dashboard →</a>
       <p>If you need anything, reply to this email or contact us at <a href="mailto:${SUPPORT}">${SUPPORT}</a>.</p>
     `),
   }),
@@ -74,7 +74,7 @@ const TEMPLATES: Record<string, (data: any) => { subject: string; html: string }
         Amount paid: <strong style="color:#e8e8f0">₹${d.amount || ''}</strong><br>
         Valid until: <strong style="color:#e8e8f0">${d.expires || '28 days from today'}</strong>
       </p>
-      <a href="https://godparticle.app/dashboard" class="btn">Go to Dashboard →</a>
+      <a href="https://godparticle.life/dashboard" class="btn">Go to Dashboard →</a>
       <p>For any billing questions, contact <a href="mailto:${SUPPORT}">${SUPPORT}</a>.</p>
     `),
   }),
