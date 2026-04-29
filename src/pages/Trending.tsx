@@ -29,6 +29,7 @@ export default function Trending() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
+  const [debugInfo, setDebugInfo] = useState('');
   const [fetched, setFetched] = useState(false);
 
   const cap = parseFloat(capital) || 0;
@@ -37,6 +38,7 @@ export default function Trending() {
   async function fetchTrending() {
     setLoading(true);
     setError('');
+    setDebugInfo('');
     setQuotes([]);
     setFetched(false);
     setProgress('');
@@ -52,6 +54,7 @@ export default function Trending() {
           body: { type: 'market_movers', symbols: batch, exchange: 'NSE' },
         });
         if (fnErr || !data?.success) throw new Error(data?.error || 'Fetch failed');
+        if (data.debug) setDebugInfo(JSON.stringify(data.debug));
         all.push(...(data.data as StockQuote[]));
       }
 
@@ -147,6 +150,9 @@ export default function Trending() {
 
           {error && (
             <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl px-4 py-3 text-xs font-mono text-[#ff4d6d]">{error}</div>
+          )}
+          {debugInfo && (
+            <div className="bg-[#16161f] border border-[#1e1e2e] rounded-xl px-4 py-3 text-[10px] font-mono text-[#6b6b85] break-all">{debugInfo}</div>
           )}
         </div>
 
