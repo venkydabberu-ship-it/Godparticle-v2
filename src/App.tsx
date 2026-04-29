@@ -34,6 +34,7 @@ const Pricing      = lazy(() => import('./pages/Pricing'));
 const Admin        = lazy(() => import('./pages/Admin'));
 const ZeroToHero   = lazy(() => import('./pages/ZeroToHero'));
 const StockAnalysis = lazy(() => import('./pages/StockAnalysis'));
+const Trending      = lazy(() => import('./pages/Trending'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const Terms        = lazy(() => import('./pages/Terms'));
 const Privacy      = lazy(() => import('./pages/Privacy'));
@@ -107,6 +108,9 @@ export default function App() {
             } />
             <Route path="/stock-analysis" element={
               <ProtectedRoute><StockAnalysis /></ProtectedRoute>
+            } />
+            <Route path="/trending" element={
+              <ProtectedRoute><Trending /></ProtectedRoute>
             } />
             <Route path="/terms"   element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />

@@ -13,6 +13,10 @@ export async function signUp(
     }
   });
   if (error) throw error;
+  // Send welcome email via Resend (fire-and-forget — don't block signup)
+  supabase.functions.invoke('send-email', {
+    body: { template: 'welcome', to: email, data: { username } },
+  }).catch(() => {});
   return data;
 }
 

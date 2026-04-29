@@ -50,6 +50,7 @@ export default function StockAnalysis() {
   const [hlcLoading, setHlcLoading] = useState(false);
   const [hlcFetched, setHlcFetched] = useState(false);
   const [hlcError, setHlcError] = useState('');
+  const [manualHLC, setManualHLC] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const sectorPE: Record<string, number> = {
@@ -63,6 +64,12 @@ export default function StockAnalysis() {
 
   const location = useLocation();
   useEffect(() => {
+    // Pre-fill symbol from Trending page
+    const prefill = (location.state as any)?.prefill;
+    if (prefill?.symbol) {
+      setStockName(prefill.symbol);
+      setAnalysisType('gct');
+    }
     const replay = (location.state as any)?.replay;
     if (!replay?.result) return;
     const r = replay.result;
@@ -723,6 +730,7 @@ export default function StockAnalysis() {
     setHlcLoading(true);
     setHlcError('');
     setHlcFetched(false);
+    setManualHLC(false);
     setPrevHigh('');
     setPrevLow('');
     setPrevClose('');
@@ -916,21 +924,37 @@ export default function StockAnalysis() {
                     </div>
                     {analysisType === 'intraday' ? (
                       <div className="relative flex-1" ref={dropdownRef}>
-                        <input
-                          type="text"
-                          value={stockSearch}
-                          onChange={e => {
-                            const v = e.target.value.toUpperCase();
-                            setStockSearch(v);
-                            setStockName(v);
-                            setShowDropdown(v.length > 0);
-                            setHlcFetched(false);
-                            setHlcError('');
-                          }}
-                          onFocus={() => stockSearch.length > 0 && setShowDropdown(true)}
-                          placeholder="Type stock name e.g. RELIANCE, HAL, SBI"
-                          className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#ff8c42]"
-                        />
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={stockSearch}
+                            onChange={e => {
+                              const v = e.target.value.toUpperCase();
+                              setStockSearch(v);
+                              setStockName(v);
+                              setShowDropdown(v.length > 0);
+                              setHlcFetched(false);
+                              setHlcError('');
+                              setManualHLC(false);
+                            }}
+                            onFocus={() => stockSearch.length > 0 && setShowDropdown(true)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && stockSearch.length > 0) {
+                                setShowDropdown(false);
+                                fetchStockHLC(stockSearch);
+                              }
+                            }}
+                            placeholder="Any NSE symbol e.g. GENUS, RELIANCE"
+                            className="flex-1 bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#ff8c42]"
+                          />
+                          {stockSearch.length > 0 && !hlcFetched && !hlcLoading && (
+                            <button
+                              onClick={() => { setShowDropdown(false); fetchStockHLC(stockSearch); }}
+                              className="shrink-0 bg-[#ff8c42] text-black font-black text-xs px-3 rounded-lg hover:opacity-90 transition-all">
+                              Fetch
+                            </button>
+                          )}
+                        </div>
                         {showDropdown && searchStocks(stockSearch, exchange).length > 0 && (
                           <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-[#16161f] border border-[#ff8c42]/40 rounded-xl shadow-xl max-h-56 overflow-y-auto">
                             {searchStocks(stockSearch, exchange).map(s => (
@@ -942,6 +966,7 @@ export default function StockAnalysis() {
                                   setStockName(s.symbol);
                                   setStockSearch(s.symbol);
                                   setShowDropdown(false);
+                                  setManualHLC(false);
                                   fetchStockHLC(s.symbol);
                                 }}
                                 className="w-full text-left px-4 py-3 hover:bg-[#ff8c42]/10 transition-colors border-b border-[#1e1e2e] last:border-0"
@@ -1121,10 +1146,45 @@ export default function StockAnalysis() {
                 )}
 
                 {/* Error state */}
-                {hlcError && !hlcLoading && (
+                {hlcError && !hlcLoading && !manualHLC && (
                   <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl p-3 mb-4 text-xs font-mono text-[#ff4d6d]">
                     {hlcError}
-                    <button onClick={() => fetchStockHLC(stockName)} className="ml-3 underline hover:text-[#ff8c42]">Retry</button>
+                    <div className="flex gap-3 mt-2">
+                      <button onClick={() => fetchStockHLC(stockName)} className="underline hover:text-[#ff8c42]">Retry</button>
+                      <button onClick={() => { setManualHLC(true); setHlcError(''); }} className="underline text-[#f0c040] hover:text-[#ffd060]">Enter H/L/C manually →</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Manual H/L/C entry fallback */}
+                {manualHLC && !hlcFetched && (
+                  <div className="bg-[#f0c040]/8 border border-[#f0c040]/25 rounded-xl p-4 mb-4">
+                    <div className="text-[10px] font-mono text-[#f0c040] mb-3 uppercase tracking-widest">Enter Previous Day's Data Manually</div>
+                    <div className="grid grid-cols-3 gap-3 mb-3">
+                      {[
+                        { label: 'Prev High', val: prevHigh, set: setPrevHigh },
+                        { label: 'Prev Low',  val: prevLow,  set: setPrevLow },
+                        { label: 'Prev Close',val: prevClose,set: setPrevClose },
+                      ].map(f => (
+                        <div key={f.label}>
+                          <label className="block text-[10px] font-mono text-[#6b6b85] mb-1">{f.label}</label>
+                          <input type="number" value={f.val} onChange={e => f.set(e.target.value)}
+                            placeholder="e.g. 540"
+                            className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-2 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (prevHigh && prevLow && prevClose) {
+                          setHlcFetched(true);
+                          setManualHLC(false);
+                        }
+                      }}
+                      disabled={!prevHigh || !prevLow || !prevClose}
+                      className="w-full py-2 bg-[#f0c040] text-black font-black text-xs rounded-lg disabled:opacity-40">
+                      Use These Values →
+                    </button>
                   </div>
                 )}
 
@@ -1148,9 +1208,9 @@ export default function StockAnalysis() {
                 )}
 
                 {/* No stock selected prompt */}
-                {!hlcFetched && !hlcLoading && !hlcError && (
+                {!hlcFetched && !hlcLoading && !hlcError && !manualHLC && (
                   <div className="bg-[#ff8c42]/8 border border-[#ff8c42]/25 rounded-xl p-3 mb-4 text-xs font-mono text-[#ff8c42]">
-                    ⚡ Select a stock from the dropdown above — yesterday's High, Low, Close will be fetched automatically.
+                    ⚡ Type any NSE symbol above and press <span className="font-black">Fetch</span> or <span className="font-black">Enter</span> — yesterday's H/L/C will be fetched automatically. If auto-fetch fails, you can enter values manually.
                   </div>
                 )}
 

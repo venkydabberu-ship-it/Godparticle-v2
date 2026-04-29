@@ -66,7 +66,7 @@ export default function Terms() {
               <li>· You may cancel your subscription at any time from the Pricing page. Cancellation stops future renewals.</li>
               <li>· <strong>No refund is issued for the current billing period</strong> once payment has been processed. Access continues until the period ends.</li>
               <li>· Credit pack purchases are final and non-refundable as they are consumed digitally.</li>
-              <li>· For billing disputes or technical failures, contact us at <a href="mailto:supportgodparticle.app@gmail.com" className="text-[#f0c040] underline">supportgodparticle.app@gmail.com</a> within 7 days of the charge.</li>
+              <li>· For billing disputes or technical failures, contact us at <a href="mailto:support@godparticle.life" className="text-[#f0c040] underline">support@godparticle.life</a> within 7 days of the charge.</li>
             </ul>
           </section>
 
@@ -104,7 +104,7 @@ export default function Terms() {
             <h2 className="text-base font-black text-[#f0c040] mb-3">12. Contact &amp; Grievance Officer</h2>
             <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 space-y-1">
               <div><span className="text-[#6b6b85]">Platform: </span>God Particle Intelligence</div>
-              <div><span className="text-[#6b6b85]">Email: </span><a href="mailto:supportgodparticle.app@gmail.com" className="text-[#f0c040] underline">supportgodparticle.app@gmail.com</a></div>
+              <div><span className="text-[#6b6b85]">Email: </span><a href="mailto:support@godparticle.life" className="text-[#f0c040] underline">support@godparticle.life</a></div>
               <div><span className="text-[#6b6b85]">Grievance response time: </span>Within 30 days of receipt</div>
             </div>
           </section>

@@ -290,6 +290,28 @@ export default function ZeroToHero() {
                 {error && (
                   <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#ff4d6d] mb-4">{error}</div>
                 )}
+                {/* Prev Day Close — auto-fetched by admin at previous day 3:30 PM */}
+                <div className={`rounded-xl p-4 border mb-4 ${snapDayBefore ? 'border-[#4d9fff]/30 bg-[#4d9fff]/05' : 'border-[#1e1e2e]/60 bg-[#16161f]/60'}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div>
+                      <div className="text-xs font-bold text-[#4d9fff]">Prev Day Close</div>
+                      <div className="text-[10px] font-mono text-[#6b6b85]">Auto-fetched from yesterday's 3:30 PM data · used for PCB (Force 3)</div>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#4d9fff]/10 text-[#4d9fff] border border-[#4d9fff]/20">AUTO</span>
+                  </div>
+                  {snapDayBefore ? (
+                    <div className="text-[10px] font-mono space-y-0.5">
+                      <div className="text-[#4d9fff]">✅ Available ({snapDayBefore.snapshot_type === 'DAY_BEFORE' ? 'prev day close' : 'expiry EOD close'})</div>
+                      <div className="text-[#6b6b85]">Spot: <span className="text-[#e8e8f0]">{snapDayBefore.spot_price?.toLocaleString()}</span> · MP: <span className="text-[#e8e8f0]">{snapDayBefore.max_pain?.toLocaleString()}</span></div>
+                    </div>
+                  ) : (
+                    <div className="text-[10px] font-mono text-[#6b6b85]">
+                      ⏳ Not yet available. This is auto-populated when admin runs auto-fetch on the day before expiry at 3:30 PM.
+                      The analysis still works without it — Force 3 (PCB) will give benefit of doubt.
+                    </div>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                   <div className={`rounded-xl p-4 border ${snap930 ? 'border-[#39d98a]/30 bg-[#39d98a]/5' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
                     <div className="flex items-center justify-between mb-2">

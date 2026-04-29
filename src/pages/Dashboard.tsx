@@ -282,7 +282,7 @@ export default function Dashboard() {
         </div>
 
         {/* QUICK ACTIONS */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Link to="/analysis"
             className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#f0c040] transition-all">
             <div className="text-2xl mb-2">⚛</div>
@@ -294,14 +294,21 @@ export default function Dashboard() {
             className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#4d9fff] transition-all">
             <div className="text-2xl mb-2">📊</div>
             <div className="font-black text-sm text-[#4d9fff] mb-1">Stock Intelligence</div>
-            <div className="text-xs font-mono text-[#6b6b85]">Gravitational levels for any large-cap stock</div>
+            <div className="text-xs font-mono text-[#6b6b85]">Gravitational crash levels for any large-cap stock</div>
+          </Link>
+
+          <Link to="/trending"
+            className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#ff8c42] transition-all">
+            <div className="text-2xl mb-2">🔥</div>
+            <div className="font-black text-sm text-[#ff8c42] mb-1">Trending Stocks</div>
+            <div className="text-xs font-mono text-[#6b6b85]">Top movers in your budget · Near breakout · Pre-market</div>
           </Link>
 
           <Link to="/pricing"
             className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#39d98a] transition-all">
             <div className="text-2xl mb-2">💳</div>
             <div className="font-black text-sm text-[#39d98a] mb-1">Upgrade Plan</div>
-            <div className="text-xs font-mono text-[#6b6b85]">Basic ₹99/month · Premium ₹299/month</div>
+            <div className="text-xs font-mono text-[#6b6b85]">Basic ₹99 / 28 days · Premium ₹299 / 28 days</div>
           </Link>
         </div>
 

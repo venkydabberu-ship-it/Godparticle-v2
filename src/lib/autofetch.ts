@@ -155,18 +155,20 @@ async function processIndex(
         strikes: strikeCount
       });
 
-      // Z2H snapshot for Nifty + Sensex
-      if (isZ2H && result.status === 'saved') {
+      // Z2H snapshot for ALL indices — save DAY_BEFORE (prev day) or EXPIRY_EOD (expiry day close)
+      // Always attempt even if market_data was already a duplicate (different table, always upsert)
+      if (isZ2H && strikeCount > 0) {
         const maxPain = calculateMaxPain(item.strikes);
-        const expiryDate = new Date(item.expiry);
-        const todayDate = new Date(tradeDate);
-        const dayBefore = new Date(expiryDate);
-        dayBefore.setDate(expiryDate.getDate() - 1);
+        // Compare as strings (YYYY-MM-DD) to avoid timezone off-by-one
+        const prevDay = new Date(item.expiry + 'T12:00:00'); // noon avoids DST edge cases
+        prevDay.setDate(prevDay.getDate() - 1);
+        const prevDayStr = prevDay.toISOString().split('T')[0];
+        const isExpiryDay = item.expiry === tradeDate;
+        const isDayBefore = prevDayStr === tradeDate;
 
-        // Use indexKey (e.g. 'NIFTY50') not indexName ('Nifty 50') so loadSnapshots can find it
-        if (expiryDate.toDateString() === todayDate.toDateString()) {
+        if (isExpiryDay) {
           await saveZ2HSnapshot(indexKey, item.expiry, 'EXPIRY_EOD', item.spotPrice || 0, maxPain, 0, item.strikes);
-        } else if (dayBefore.toDateString() === todayDate.toDateString()) {
+        } else if (isDayBefore) {
           await saveZ2HSnapshot(indexKey, item.expiry, 'DAY_BEFORE', item.spotPrice || 0, maxPain, 0, item.strikes);
         }
       }
@@ -479,8 +481,7 @@ export async function runDailyAutoFetch(adminUserId: string) {
   // ── STEP 1: ALL INDICES ──
   for (const idx of indices) {
     await new Promise(r => setTimeout(r, 500));
-    const isZ2H = idx.key === 'NIFTY50' || idx.key === 'SENSEX';
-    await processIndex(idx.key, idx.name, idx.edgeType, tradeDate, results, isZ2H);
+    await processIndex(idx.key, idx.name, idx.edgeType, tradeDate, results, true);
   }
 
   // ── STEP 2: ALL STOCKS (batched to avoid NSE rate-limiting) ──
@@ -560,8 +561,7 @@ export async function autoFetchAllIndices(): Promise<any[]> {
   const { indices } = await loadConfig();
   for (const idx of indices) {
     await new Promise(r => setTimeout(r, 800));
-    const isZ2H = idx.key === 'NIFTY50' || idx.key === 'SENSEX';
-    await processIndex(idx.key, idx.name, idx.edgeType, tradeDate, results, isZ2H);
+    await processIndex(idx.key, idx.name, idx.edgeType, tradeDate, results, true);
   }
 
   const saved = results.filter(r => r.status === 'saved').length;
