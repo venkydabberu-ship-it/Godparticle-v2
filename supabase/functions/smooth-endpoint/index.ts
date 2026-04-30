@@ -265,35 +265,44 @@ Deno.serve(async function(req) {
       var exch = body.exchange || 'NSE';
       var sfx2 = exch === 'BSE' ? '.BO' : '.NS';
       var ySym2 = symbol.replace(/&/g, '-').toUpperCase() + sfx2;
-      var modules = 'defaultKeyStatistics,financialData,incomeStatementHistory';
-      var qsUrl = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary/' + ySym2 + '?modules=' + modules;
-      var qsRes = await fetch(qsUrl, { headers: yahooHdrs() });
-      if (!qsRes.ok) throw new Error('Yahoo quoteSummary ' + qsRes.status + ' for ' + ySym2);
-      var qsJson = await qsRes.json();
-      var qsResult = qsJson.quoteSummary && qsJson.quoteSummary.result && qsJson.quoteSummary.result[0];
-      if (!qsResult) throw new Error('No fundamental data for ' + symbol);
-
-      var ks = qsResult.defaultKeyStatistics || {};
-      var fd = qsResult.financialData || {};
-      var ish = (qsResult.incomeStatementHistory && qsResult.incomeStatementHistory.incomeStatementHistory) || [];
-
+      var yHdrs2 = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15',
+        'Accept': 'application/json',
+        'Referer': 'https://finance.yahoo.com',
+      };
+      // v7 quote — no crumb needed for basic data
+      var v7Url = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + ySym2;
+      var v7Res = await fetch(v7Url, { headers: yHdrs2 });
+      if (!v7Res.ok) throw new Error('Yahoo quote ' + v7Res.status + ' for ' + ySym2);
+      var v7Json = await v7Res.json();
+      var q2 = (v7Json.quoteResponse && v7Json.quoteResponse.result && v7Json.quoteResponse.result[0]) || null;
+      if (!q2) throw new Error('No data found for ' + symbol + ' on ' + exch);
+      // Try crumb for income statement (best-effort)
+      var ish2 = [];
+      try {
+        var crumbRes = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: yHdrs2 });
+        if (crumbRes.ok) {
+          var crumb = (await crumbRes.text()).trim();
+          var qsUrl2 = 'https://query1.finance.yahoo.com/v10/finance/quoteSummary/' + ySym2
+            + '?modules=incomeStatementHistory&crumb=' + encodeURIComponent(crumb);
+          var qsRes2 = await fetch(qsUrl2, { headers: yHdrs2 });
+          if (qsRes2.ok) {
+            var qsJson2 = await qsRes2.json();
+            var qsr2 = qsJson2.quoteSummary && qsJson2.quoteSummary.result && qsJson2.quoteSummary.result[0];
+            ish2 = (qsr2 && qsr2.incomeStatementHistory && qsr2.incomeStatementHistory.incomeStatementHistory) || [];
+          }
+        }
+      } catch(_e2) {}
       var toCr = function(v) { return v ? Math.round(v / 10000000) : 0; };
-      var rev3Val  = ish[0] ? toCr(ish[0].totalRevenue && ish[0].totalRevenue.raw) : 0;
-      var rev2Val  = ish[1] ? toCr(ish[1].totalRevenue && ish[1].totalRevenue.raw) : 0;
-      var net3Val  = ish[0] ? toCr(ish[0].netIncome    && ish[0].netIncome.raw)    : 0;
-      var net2Val  = ish[1] ? toCr(ish[1].netIncome    && ish[1].netIncome.raw)    : 0;
-      var roeRaw   = fd.returnOnEquity && fd.returnOnEquity.raw;
-      var roceEst  = roeRaw ? Math.round(roeRaw * 100 * 10) / 10 : 0;
-
       return respond({ success: true, data: {
-        pe:       ks.trailingPE   && ks.trailingPE.raw   ? Math.round(ks.trailingPE.raw * 10) / 10   : 0,
-        eps:      ks.trailingEps  && ks.trailingEps.raw  ? Math.round(ks.trailingEps.raw * 100) / 100 : 0,
-        bookValue:ks.bookValue    && ks.bookValue.raw    ? Math.round(ks.bookValue.raw * 10) / 10     : 0,
-        roce:     roceEst,
-        rev2:     rev2Val,
-        rev3:     rev3Val,
-        profit2:  net2Val,
-        profit3:  net3Val,
+        pe:        q2.trailingPE              ? Math.round(q2.trailingPE * 10) / 10               : 0,
+        eps:       q2.epsTrailingTwelveMonths ? Math.round(q2.epsTrailingTwelveMonths * 100) / 100 : 0,
+        bookValue: q2.bookValue               ? Math.round(q2.bookValue * 10) / 10                : 0,
+        roce:      q2.returnOnEquity          ? Math.round(q2.returnOnEquity * 100 * 10) / 10     : 0,
+        rev2:      ish2[1] ? toCr(ish2[1].totalRevenue && ish2[1].totalRevenue.raw) : 0,
+        rev3:      ish2[0] ? toCr(ish2[0].totalRevenue && ish2[0].totalRevenue.raw) : 0,
+        profit2:   ish2[1] ? toCr(ish2[1].netIncome && ish2[1].netIncome.raw) : 0,
+        profit3:   ish2[0] ? toCr(ish2[0].netIncome && ish2[0].netIncome.raw) : 0,
       }});
     }
 
