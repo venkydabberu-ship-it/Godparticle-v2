@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { sendPasswordResetOTP, verifyPasswordResetOTP, updatePassword } from '../lib/auth';
 
@@ -13,8 +13,15 @@ export default function ForgotPassword() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const [error, setError] = useState('');
   const [resendMsg, setResendMsg] = useState('');
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -51,12 +58,14 @@ export default function ForgotPassword() {
   }
 
   async function handleResend() {
+    if (cooldown > 0) return;
     setResendMsg('');
     setError('');
     setResending(true);
     try {
       await sendPasswordResetOTP(email);
-      setResendMsg('New code sent! Check your inbox.');
+      setResendMsg('New code sent! Check your inbox (and spam folder).');
+      setCooldown(60);
     } catch (err: any) {
       setError(err.message || 'Could not resend code.');
     } finally {
@@ -190,10 +199,10 @@ export default function ForgotPassword() {
               Didn't receive the code?{' '}
               <button
                 onClick={handleResend}
-                disabled={resending}
+                disabled={resending || cooldown > 0}
                 className="text-[#f0c040] hover:underline disabled:opacity-40"
               >
-                {resending ? 'Sending...' : 'Resend code'}
+                {resending ? 'Sending...' : cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend code'}
               </button>
             </div>
 
