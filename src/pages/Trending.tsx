@@ -240,13 +240,13 @@ export default function Trending() {
                       <div className="mt-3 flex justify-end gap-2">
                         <button
                           onClick={() => navigate('/stock-analysis', { state: { prefill: { symbol: q.symbol, name: q.name, analysisType: 'intraday' } } })}
-                          className="text-[10px] font-black border border-[#4d9fff]/40 text-[#4d9fff] px-3 py-1.5 rounded-lg hover:bg-[#4d9fff]/10 transition-all">
-                          Intraday Pivot →
+                          className="text-[10px] font-black border border-[#ff8c42]/40 text-[#ff8c42] px-3 py-1.5 rounded-lg hover:bg-[#ff8c42]/10 transition-all">
+                          ⚡ Intraday Pivot
                         </button>
                         <button
                           onClick={() => navigate('/stock-analysis', { state: { prefill: { symbol: q.symbol, name: q.name } } })}
                           className="text-[10px] font-black border border-[#f0c040]/40 text-[#f0c040] px-3 py-1.5 rounded-lg hover:bg-[#f0c040]/10 transition-all">
-                          Analyse with GCT →
+                          📊 Long Term (GCT)
                         </button>
                       </div>
                     </div>

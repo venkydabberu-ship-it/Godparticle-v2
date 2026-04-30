@@ -889,14 +889,20 @@ export default function StockAnalysis() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <button onClick={() => setAnalysisType('gct')}
                   className={`p-4 rounded-xl text-left transition-all border ${analysisType === 'gct' ? 'border-[#f0c040] bg-[#f0c040]/10' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
-                  <div className="text-lg mb-1">📊</div>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-lg">📊</div>
+                    <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-[#f0c040]/20 text-[#f0c040]">LONG TERM INVESTMENT</span>
+                  </div>
                   <div className="font-black text-sm mb-1" style={{color: analysisType === 'gct' ? '#f0c040' : '#e8e8f0'}}>GCT — Price Analysis</div>
                   <div className="text-xs font-mono text-[#6b6b85]">Find crash buying levels using 12 months price data</div>
                   <div className="text-[10px] font-mono mt-2 text-[#6b6b85]">Premium: CSV upload · Pro/Admin: Auto fetch FREE</div>
                 </button>
                 <button onClick={() => setAnalysisType('options')}
                   className={`p-4 rounded-xl text-left transition-all border ${analysisType === 'options' ? 'border-[#4d9fff] bg-[#4d9fff]/10' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
-                  <div className="text-lg mb-1">⚛</div>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-lg">⚛</div>
+                    <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-[#4d9fff]/20 text-[#4d9fff]">OPTIONS TRADING</span>
+                  </div>
                   <div className="font-black text-sm mb-1" style={{color: analysisType === 'options' ? '#4d9fff' : '#e8e8f0'}}>
                     God Particle — Options Analysis
                   </div>
@@ -905,7 +911,10 @@ export default function StockAnalysis() {
                 </button>
                 <button onClick={() => setAnalysisType('intraday')}
                   className={`p-4 rounded-xl text-left transition-all border ${analysisType === 'intraday' ? 'border-[#ff8c42] bg-[#ff8c42]/10' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
-                  <div className="text-lg mb-1">⚡</div>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-lg">⚡</div>
+                    <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-[#ff8c42]/20 text-[#ff8c42]">INTRADAY ONLY</span>
+                  </div>
                   <div className="font-black text-sm mb-1" style={{color: analysisType === 'intraday' ? '#ff8c42' : '#e8e8f0'}}>Intraday — Pivot Points</div>
                   <div className="text-xs font-mono text-[#6b6b85]">Pivot, R1–R3, S1–S3 + Camarilla for day trading</div>
                   <div className="text-[10px] font-mono mt-2 text-[#6b6b85]">Select stock → auto-fetch H/L/C → enter today's open</div>
