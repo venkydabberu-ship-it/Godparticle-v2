@@ -90,8 +90,9 @@ export default function ZeroToHero() {
       if (md && md.length > 0) {
         const sd = md[0].strike_data || {};
         const spot = sd['_spot_close'] || 0;
-        const mp = calculateMaxPain(sd);
-        setPrevDaySnap({ index_name: index, expiry_date: expiry, snapshot_type: 'DAY_BEFORE', spot_price: spot, max_pain: mp, vix: 0, strike_data: sd } as Z2HSnapshot);
+        const strikesOnly = Object.fromEntries(Object.entries(sd).filter(([k]) => !k.startsWith('_')));
+        const mp = calculateMaxPain(strikesOnly);
+        setPrevDaySnap({ index_name: index, expiry_date: expiry, snapshot_type: 'DAY_BEFORE', spot_price: spot, max_pain: mp, vix: 0, strike_data: strikesOnly } as Z2HSnapshot);
       } else {
         setPrevDaySnap(null);
       }
