@@ -259,6 +259,44 @@ Deno.serve(async function(req) {
       return respond({ success: true, data: all, debug: dbg });
     }
 
+    // ── STOCK FUNDAMENTALS ──
+    if (type === 'stock_fundamentals') {
+      if (!symbol) return respond({ success: false, error: 'Missing symbol' }, 400);
+      var exch = body.exchange || 'NSE';
+      var sfx2 = exch === 'BSE' ? '.BO' : '.NS';
+      var ySym2 = symbol.replace(/&/g, '-').toUpperCase() + sfx2;
+      var modules = 'defaultKeyStatistics,financialData,incomeStatementHistory';
+      var qsUrl = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary/' + ySym2 + '?modules=' + modules;
+      var qsRes = await fetch(qsUrl, { headers: yahooHdrs() });
+      if (!qsRes.ok) throw new Error('Yahoo quoteSummary ' + qsRes.status + ' for ' + ySym2);
+      var qsJson = await qsRes.json();
+      var qsResult = qsJson.quoteSummary && qsJson.quoteSummary.result && qsJson.quoteSummary.result[0];
+      if (!qsResult) throw new Error('No fundamental data for ' + symbol);
+
+      var ks = qsResult.defaultKeyStatistics || {};
+      var fd = qsResult.financialData || {};
+      var ish = (qsResult.incomeStatementHistory && qsResult.incomeStatementHistory.incomeStatementHistory) || [];
+
+      var toCr = function(v) { return v ? Math.round(v / 10000000) : 0; };
+      var rev3Val  = ish[0] ? toCr(ish[0].totalRevenue && ish[0].totalRevenue.raw) : 0;
+      var rev2Val  = ish[1] ? toCr(ish[1].totalRevenue && ish[1].totalRevenue.raw) : 0;
+      var net3Val  = ish[0] ? toCr(ish[0].netIncome    && ish[0].netIncome.raw)    : 0;
+      var net2Val  = ish[1] ? toCr(ish[1].netIncome    && ish[1].netIncome.raw)    : 0;
+      var roeRaw   = fd.returnOnEquity && fd.returnOnEquity.raw;
+      var roceEst  = roeRaw ? Math.round(roeRaw * 100 * 10) / 10 : 0;
+
+      return respond({ success: true, data: {
+        pe:       ks.trailingPE   && ks.trailingPE.raw   ? Math.round(ks.trailingPE.raw * 10) / 10   : 0,
+        eps:      ks.trailingEps  && ks.trailingEps.raw  ? Math.round(ks.trailingEps.raw * 100) / 100 : 0,
+        bookValue:ks.bookValue    && ks.bookValue.raw    ? Math.round(ks.bookValue.raw * 10) / 10     : 0,
+        roce:     roceEst,
+        rev2:     rev2Val,
+        rev3:     rev3Val,
+        profit2:  net2Val,
+        profit3:  net3Val,
+      }});
+    }
+
     return respond({ success: false, error: 'Unknown type: ' + type }, 400);
   } catch (err) {
     return respond({ success: false, error: err.message });

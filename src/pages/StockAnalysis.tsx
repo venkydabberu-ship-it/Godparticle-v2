@@ -53,6 +53,8 @@ export default function StockAnalysis() {
   const [manualHLC, setManualHLC] = useState(false);
   const [autoFetchFailed, setAutoFetchFailed] = useState(false);
   const [autoRun, setAutoRun] = useState(false);
+  const [fundLoading, setFundLoading] = useState(false);
+  const [fundMsg, setFundMsg] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // After a successful auto-fetch, csvData updates asynchronously.
@@ -450,6 +452,33 @@ export default function StockAnalysis() {
       chng_oi: parseFloat(r['Chng in OI']?.replace(/,/g,'') || r.CHNG_OI?.replace(/,/g,'') || '0'),
     })).filter(r => r.close > 0);
     setOptCsvData(optData);
+  }
+
+  // ── AUTO FETCH FUNDAMENTALS ──
+  async function handleAutoFetchFundamentals() {
+    if (!stockName.trim()) { setError('Enter stock name first!'); return; }
+    setFundLoading(true);
+    setFundMsg('⏳ Fetching fundamentals from Yahoo Finance...');
+    try {
+      const { data, error: fnErr } = await supabase.functions.invoke('smooth-endpoint', {
+        body: { type: 'stock_fundamentals', symbol: stockName.toUpperCase(), exchange }
+      });
+      if (fnErr || !data?.success) throw new Error(data?.error || 'Fetch failed');
+      const d = data.data;
+      if (d.pe)       setPe(String(d.pe));
+      if (d.eps)      setEps(String(d.eps));
+      if (d.bookValue) setBookValue(String(d.bookValue));
+      if (d.roce)     setRoce(String(d.roce));
+      if (d.rev2)     setRev2(String(d.rev2));
+      if (d.rev3)     setRev3(String(d.rev3));
+      if (d.profit2)  setProfit2(String(d.profit2));
+      if (d.profit3)  setProfit3(String(d.profit3));
+      setFundMsg('✅ Fundamentals loaded! Review and adjust if needed.');
+    } catch (err: any) {
+      setFundMsg('❌ ' + (err.message || 'Could not fetch fundamentals. Enter manually.'));
+    } finally {
+      setFundLoading(false);
+    }
   }
 
   // ── RUN GCT v3.0 ──
@@ -1283,9 +1312,18 @@ export default function StockAnalysis() {
             {analysisType === 'gct' && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
                 <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-1">Step 4 — Fundamental Data (Optional but Powerful)</h2>
-                <div className="bg-[#f0c040]/8 border border-[#f0c040]/25 rounded-xl p-3 mb-4 text-xs font-mono text-[#f0c040]">
-                  💡 Analysis runs without fundamentals — but adding them unlocks the FSS score and gives you a full buy/avoid verdict. Get data from screener.in for best results.
+                <div className="bg-[#f0c040]/8 border border-[#f0c040]/25 rounded-xl p-3 mb-3 text-xs font-mono text-[#f0c040]">
+                  💡 Analysis runs without fundamentals — but adding them unlocks the FSS score and gives you a full buy/avoid verdict.
                 </div>
+                <button onClick={handleAutoFetchFundamentals} disabled={fundLoading || !stockName.trim()}
+                  className="w-full bg-[#4d9fff] text-black font-black py-2.5 rounded-xl text-sm hover:opacity-90 transition-all disabled:opacity-40 mb-3">
+                  {fundLoading ? '⏳ Fetching fundamentals...' : `🚀 Auto Fetch Fundamentals — ${stockName || 'Enter stock above'}`}
+                </button>
+                {fundMsg && (
+                  <div className={`text-xs font-mono px-3 py-2 rounded-lg mb-3 ${fundMsg.startsWith('✅') ? 'bg-[#39d98a]/10 text-[#39d98a] border border-[#39d98a]/20' : fundMsg.startsWith('❌') ? 'bg-[#ff4d6d]/10 text-[#ff4d6d] border border-[#ff4d6d]/20' : 'bg-[#4d9fff]/10 text-[#4d9fff] border border-[#4d9fff]/20'}`}>
+                    {fundMsg}
+                  </div>
+                )}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {[
                     { label: 'PE Ratio', val: pe, set: setPe, placeholder: 'e.g. 22.5' },
