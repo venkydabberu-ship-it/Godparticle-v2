@@ -51,7 +51,19 @@ export default function StockAnalysis() {
   const [hlcFetched, setHlcFetched] = useState(false);
   const [hlcError, setHlcError] = useState('');
   const [manualHLC, setManualHLC] = useState(false);
+  const [autoFetchFailed, setAutoFetchFailed] = useState(false);
+  const [autoRun, setAutoRun] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // After a successful auto-fetch, csvData updates asynchronously.
+  // This effect fires once csvData is ready and triggers GCT automatically.
+  useEffect(() => {
+    if (autoRun && csvData.length >= 6) {
+      setAutoRun(false);
+      runGCT();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [csvData, autoRun]);
 
   const sectorPE: Record<string, number> = {
     'Energy/Oil': 18, 'Banking': 20, 'IT': 28,
@@ -116,6 +128,7 @@ export default function StockAnalysis() {
     setFetchLoading(true);
     setFetchMsg('⏳ Checking database...');
     setError('');
+    setAutoFetchFailed(false);
 
     try {
       // Fetch all stored records (could be daily or monthly candles)
@@ -132,8 +145,9 @@ export default function StockAnalysis() {
       ).size;
 
       if (uniqueMonths >= 6) {
-        setFetchMsg(`✅ Found ${uniqueMonths} months in database!`);
+        setFetchMsg(`✅ Found ${uniqueMonths} months in database! Starting analysis...`);
         processMonthlyData(existing!);
+        setAutoRun(true);
         return;
       }
 
@@ -176,11 +190,13 @@ export default function StockAnalysis() {
 
       if (saveErr) console.warn('Data bank save warning:', saveErr.message);
 
-      setFetchMsg(`✅ Saved ${toSave.length} months for ${stockName.toUpperCase()} (${exchange})!`);
+      setFetchMsg(`✅ Fetched ${toSave.length} records for ${stockName.toUpperCase()}! Starting analysis...`);
       processMonthlyData(toSave);
+      setAutoRun(true);
 
     } catch (err: any) {
-      setError(err.message || 'Auto fetch failed! Upload CSV manually.');
+      setAutoFetchFailed(true);
+      setError('');
       setFetchMsg('');
     } finally {
       setFetchLoading(false);
@@ -1052,13 +1068,13 @@ export default function StockAnalysis() {
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
                 <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4">Step 3 — Price Data</h2>
                 <div className="flex gap-2 mb-4">
-                  <button onClick={() => setDataSource('upload')}
+                  <button onClick={() => { setDataSource('upload'); setAutoFetchFailed(false); }}
                     className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all ${dataSource === 'upload' ? 'bg-[#f0c040] text-black' : 'bg-[#16161f] text-[#6b6b85] border border-[#1e1e2e]'}`}>
                     📄 Upload CSV
                   </button>
-                  <button onClick={() => setDataSource('autofetch')}
-                    className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all ${dataSource === 'autofetch' ? 'bg-[#39d98a] text-black' : 'bg-[#16161f] text-[#6b6b85] border border-[#1e1e2e]'}`}>
-                    🤖 Auto Fetch {canAutoFetch ? '(FREE)' : '(2 credits)'}
+                  <button onClick={() => { setDataSource('autofetch'); setAutoFetchFailed(false); }}
+                    className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all ${dataSource === 'autofetch' ? 'bg-[#4d9fff] text-black' : 'bg-[#16161f] text-[#6b6b85] border border-[#1e1e2e]'}`}>
+                    🚀 Auto Fetch {canAutoFetch ? '(FREE)' : '(2 credits)'}
                   </button>
                 </div>
                 {dataSource === 'upload' && (
@@ -1077,22 +1093,41 @@ export default function StockAnalysis() {
                         ⚡ Costs 2 credits · You have {profile?.credits ?? 0} credits
                       </div>
                     )}
-                    {canAutoFetch && (
-                      <div className="bg-[#39d98a]/5 border border-[#39d98a]/20 rounded-xl p-3 mb-3 text-xs font-mono text-[#39d98a]">
-                        ✅ Pro/Admin — Auto fetch is FREE · Data fetched via secure server
+                    {canAutoFetch && !autoFetchFailed && (
+                      <div className="bg-[#4d9fff]/5 border border-[#4d9fff]/20 rounded-xl p-3 mb-3 text-xs font-mono text-[#4d9fff]">
+                        ✅ Pro/Admin — Auto fetch is FREE · Fetches 14 months + runs analysis automatically
                       </div>
                     )}
-                    <button onClick={handleAutoFetchPrice} disabled={fetchLoading || !stockName.trim()}
-                      className="w-full bg-[#39d98a] text-black font-black py-3 rounded-xl text-sm hover:opacity-90 transition-all disabled:opacity-40">
-                      {fetchLoading ? '⏳ Fetching...' : `🤖 Auto Fetch ${stockName || 'Stock'} Price Data`}
-                    </button>
-                    {fetchMsg && (
-                      <div className="mt-3 text-xs font-mono text-[#39d98a] bg-[#39d98a]/10 border border-[#39d98a]/20 rounded-lg px-4 py-2">
-                        {fetchMsg}
+                    {!autoFetchFailed ? (
+                      <>
+                        <button onClick={handleAutoFetchPrice} disabled={fetchLoading || !stockName.trim()}
+                          className="w-full bg-[#4d9fff] text-black font-black py-3 rounded-xl text-sm hover:opacity-90 transition-all disabled:opacity-40">
+                          {fetchLoading
+                            ? (autoRun ? '⏳ Starting analysis...' : '⏳ Fetching data...')
+                            : `🚀 Auto Fetch + Start Analysis — ${stockName || 'Enter stock above'}`}
+                        </button>
+                        {fetchMsg && (
+                          <div className="mt-3 text-xs font-mono text-[#4d9fff] bg-[#4d9fff]/10 border border-[#4d9fff]/20 rounded-lg px-4 py-2">
+                            {fetchMsg}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div>
+                        <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl px-4 py-3 mb-3 text-xs font-mono text-[#ff4d6d]">
+                          ❌ Data not found for <strong>{stockName}</strong> on {exchange}. Please upload a 14-month CSV from NSE below.
+                        </div>
+                        <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-8 cursor-pointer transition-all ${csvData.length > 0 ? 'border-[#39d98a]/50' : 'border-[#ff4d6d]/40 hover:border-[#f0c040]'}`}>
+                          <input type="file" accept=".csv" className="hidden" onChange={handlePriceCSV} />
+                          <div className="text-3xl mb-2">{csvData.length > 0 ? '✅' : '📄'}</div>
+                          <div className="text-sm font-mono text-[#6b6b85]">
+                            {csvData.length > 0 ? `✅ ${csvData.length} months loaded` : 'Upload NSE Historical Data CSV (14 months)'}
+                          </div>
+                          {csvData.length === 0 && (
+                            <div className="text-[10px] font-mono text-[#6b6b85] mt-1">Get it from NSE → Historical Data → Equity</div>
+                          )}
+                        </label>
                       </div>
-                    )}
-                    {csvData.length > 0 && (
-                      <div className="mt-2 text-xs font-mono text-[#39d98a] text-center">✅ {csvData.length} months ready!</div>
                     )}
                   </div>
                 )}
