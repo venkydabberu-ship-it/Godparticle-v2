@@ -94,8 +94,6 @@ async function saveZ2HSnapshot(
       spot_price: spotPrice,
       max_pain: maxPain,
       vix,
-      fetched_by: 'auto-fetch',
-      fetched_at: new Date().toISOString(),
     };
     if (strikeData) payload.strike_data = strikeData;
 
@@ -778,8 +776,6 @@ export async function fetchAndSaveZ2HSnapshot(
     max_pain: maxPain,
     vix,
     strike_data: strikes,
-    fetched_by: fetchedBy,
-    fetched_at: new Date().toISOString(),
   };
 
   // Upsert: overwrite if same (index, expiry, type) already exists for today
