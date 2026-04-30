@@ -227,8 +227,72 @@ export default function Analysis() {
   }
   const reversalRisk = computeReversalRisk();
 
+  function computeGhostMode() {
+    if (!rowsData.length) return null;
+    const spots = rowsData.map((r: any) => r.strike_data?._spot_close || 0).filter((s: number) => s > 0);
+    if (spots.length < 2) return null;
+    const currentSpot = spots[0];
+    const maxSpot = Math.max(...spots);
+    const minSpot = Math.min(...spots);
+    const positionPct = maxSpot > minSpot ? ((currentSpot - minSpot) / (maxSpot - minSpot)) * 100 : 50;
+    const reverseZone: 'TOP' | 'BOTTOM' | 'MIDDLE' = positionPct >= 80 ? 'TOP' : positionPct <= 20 ? 'BOTTOM' : 'MIDDLE';
+    const suggestedSide: 'PE' | 'CE' | null = reverseZone === 'TOP' ? 'PE' : reverseZone === 'BOTTOM' ? 'CE' : null;
+
+    const latestSD = rowsData[0]?.strike_data || {};
+    const prevSD = rowsData[1]?.strike_data || {};
+
+    const candidates: {
+      strike: number; type: 'CE' | 'PE'; ltp: number; otmDist: number;
+      oiTrend: string; pts5x: number; pts10x: number; viability: 'HIGH' | 'MEDIUM' | 'LOW'; oi: number;
+    }[] = [];
+
+    Object.keys(latestSD).forEach(k => {
+      const sk = parseFloat(k);
+      if (isNaN(sk)) return;
+      const row = latestSD[k] as any;
+      const prevRow = prevSD[k] as any;
+
+      const ceLTP = row?.ce_ltp || 0;
+      if (sk > currentSpot && ceLTP >= 5 && ceLTP <= 50) {
+        const otmDist = Math.round(sk - currentSpot);
+        const ceOI = row?.ce_oi || 0;
+        const prevCeOI = prevRow?.ce_oi || 0;
+        const oiTrend = ceOI > prevCeOI * 1.02 ? 'RISING' : ceOI < prevCeOI * 0.98 ? 'FALLING' : 'FLAT';
+        const pts5x = Math.round(otmDist * 1.4);
+        const pts10x = Math.round(otmDist * 2.3);
+        const viability: 'HIGH' | 'MEDIUM' | 'LOW' = otmDist <= 200 && ceLTP >= 15 ? 'HIGH' : otmDist <= 300 && ceLTP >= 8 ? 'MEDIUM' : 'LOW';
+        candidates.push({ strike: sk, type: 'CE', ltp: ceLTP, otmDist, oiTrend, pts5x, pts10x, viability, oi: ceOI });
+      }
+
+      const peLTP = row?.pe_ltp || 0;
+      if (sk < currentSpot && peLTP >= 5 && peLTP <= 50) {
+        const otmDist = Math.round(currentSpot - sk);
+        const peOI = row?.pe_oi || 0;
+        const prevPeOI = prevRow?.pe_oi || 0;
+        const oiTrend = peOI > prevPeOI * 1.02 ? 'RISING' : peOI < prevPeOI * 0.98 ? 'FALLING' : 'FLAT';
+        const pts5x = Math.round(otmDist * 1.4);
+        const pts10x = Math.round(otmDist * 2.3);
+        const viability: 'HIGH' | 'MEDIUM' | 'LOW' = otmDist <= 200 && peLTP >= 15 ? 'HIGH' : otmDist <= 300 && peLTP >= 8 ? 'MEDIUM' : 'LOW';
+        candidates.push({ strike: sk, type: 'PE', ltp: peLTP, otmDist, oiTrend, pts5x, pts10x, viability, oi: peOI });
+      }
+    });
+
+    const viabilityOrder = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+    candidates.sort((a, b) => {
+      const v = viabilityOrder[a.viability] - viabilityOrder[b.viability];
+      if (v !== 0) return v;
+      return a.otmDist - b.otmDist;
+    });
+
+    const bestCE = candidates.find(c => c.type === 'CE' && c.otmDist >= 100 && c.otmDist <= 300) || null;
+    const bestPE = candidates.find(c => c.type === 'PE' && c.otmDist >= 100 && c.otmDist <= 300) || null;
+    return { currentSpot, maxSpot, minSpot, positionPct, reverseZone, suggestedSide, candidates: candidates.slice(0, 24), bestCE, bestPE };
+  }
+  const ghostMode = computeGhostMode();
+
   const TABS = [
     { id: 'verdict', label: '⚡ Verdict' },
+    { id: 'ghost', label: '👻 Ghost Mode' },
     { id: 'raw', label: '📊 Raw Data' },
     ...(isAdmin ? [{ id: 'decomp', label: '🔀 Decomp' }] : []),
     { id: 'gp', label: '⚛ God Particle' },
@@ -592,6 +656,136 @@ export default function Analysis() {
 
                   <div className="text-center text-[10px] font-mono text-[#6b6b85]">
                     Not Financial Advice · God Particle ⚛ · Based on {result.data?.length} sessions of data
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Ghost Mode */}
+            {activeTab === 'ghost' && (() => {
+              if (!ghostMode) return (
+                <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-8 text-center">
+                  <div className="text-3xl mb-3">👻</div>
+                  <div className="text-sm font-black text-[#6b6b85]">Run analysis first to unlock Ghost Mode</div>
+                </div>
+              );
+              const { currentSpot, maxSpot, minSpot, positionPct, reverseZone, suggestedSide, candidates, bestCE, bestPE } = ghostMode;
+              const zoneColor = reverseZone === 'TOP' ? '#ff4d6d' : reverseZone === 'BOTTOM' ? '#39d98a' : '#f0c040';
+              const zoneLabel = reverseZone === 'TOP' ? '🔴 NEAR TOP — Buy PE reversal' : reverseZone === 'BOTTOM' ? '🟢 NEAR BOTTOM — Buy CE reversal' : '⏳ MID-RANGE — No ghost trade yet';
+              const viabilityColor = (v: string) => v === 'HIGH' ? '#39d98a' : v === 'MEDIUM' ? '#f0c040' : '#6b6b85';
+              const oiTrendIcon = (t: string) => t === 'RISING' ? '↑' : t === 'FALLING' ? '↓' : '→';
+              const focusCandidates = suggestedSide ? candidates.filter(c => c.type === suggestedSide) : candidates;
+
+              return (
+                <div className="space-y-4">
+                  {/* Range Meter */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest">📍 Range Position ({rowsData.length} Sessions)</div>
+                      <span className="text-xs font-black px-2 py-0.5 rounded-full border" style={{ color: zoneColor, borderColor: zoneColor + '40', background: zoneColor + '18' }}>
+                        {positionPct.toFixed(0)}% of range
+                      </span>
+                    </div>
+                    <div className="relative w-full h-6 bg-[#16161f] rounded-full overflow-hidden mb-2">
+                      <div className="absolute inset-y-0 left-0 w-[20%] bg-[#39d98a]/20 rounded-l-full" />
+                      <div className="absolute inset-y-0 right-0 w-[20%] bg-[#ff4d6d]/20 rounded-r-full" />
+                      <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-white shadow-lg transition-all"
+                        style={{ left: `calc(${Math.min(Math.max(positionPct, 3), 97)}% - 6px)`, background: zoneColor }} />
+                    </div>
+                    <div className="flex justify-between text-[10px] font-mono text-[#6b6b85] mb-3">
+                      <span>↓ CE Zone (≤20%)<br />Low {minSpot.toLocaleString()}</span>
+                      <span className="text-center">Mid Range<br />No Trade</span>
+                      <span className="text-right">PE Zone (≥80%) ↑<br />High {maxSpot.toLocaleString()}</span>
+                    </div>
+                    <div className="rounded-xl px-4 py-2.5 text-xs font-black text-center" style={{ background: zoneColor + '15', color: zoneColor, border: `1px solid ${zoneColor}30` }}>
+                      {zoneLabel}
+                    </div>
+                  </div>
+
+                  {/* Best Picks */}
+                  {(bestCE || bestPE) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {[bestCE, bestPE].filter(Boolean).map((c) => c && (
+                        <div key={`${c.strike}-${c.type}`} className={`rounded-2xl p-4 border ${c.type === 'CE' ? 'border-[#4d9fff]/40 bg-[#4d9fff]/5' : 'border-[#39d98a]/40 bg-[#39d98a]/5'}`}>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="text-[10px] font-mono text-[#6b6b85] uppercase">⭐ Best {c.type} Ghost Pick</div>
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full" style={{ color: viabilityColor(c.viability), background: viabilityColor(c.viability) + '20' }}>{c.viability}</span>
+                          </div>
+                          <div className="text-2xl font-black" style={{ color: c.type === 'CE' ? '#4d9fff' : '#39d98a' }}>
+                            {c.strike} {c.type}
+                          </div>
+                          <div className="text-sm font-black text-[#f0c040]">₹{c.ltp.toFixed(1)} <span className="text-xs text-[#6b6b85] font-normal">LTP · {c.otmDist} pts OTM</span></div>
+                          <div className="mt-2 space-y-1 text-[10px] font-mono">
+                            <div className="flex justify-between"><span className="text-[#6b6b85]">5x target (₹{(c.ltp * 5).toFixed(0)})</span><span className="text-[#f0c040]">needs ~{c.pts5x} pt move</span></div>
+                            <div className="flex justify-between"><span className="text-[#6b6b85]">10x target (₹{(c.ltp * 10).toFixed(0)})</span><span className="text-[#f0c040]">needs ~{c.pts10x} pt move</span></div>
+                            <div className="flex justify-between"><span className="text-[#6b6b85]">OI trend</span><span className={c.oiTrend === 'RISING' ? 'text-[#39d98a]' : c.oiTrend === 'FALLING' ? 'text-[#ff4d6d]' : 'text-[#f0c040]'}>{oiTrendIcon(c.oiTrend)} {c.oiTrend} ({(c.oi / 100000).toFixed(1)}L)</span></div>
+                            <div className="flex justify-between"><span className="text-[#6b6b85]">Hard SL</span><span className="text-[#ff4d6d]">₹{(c.ltp * 0.6).toFixed(0)} (40% loss)</span></div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Entry checklist */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-4">
+                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">✅ Ghost Mode Entry Checklist</div>
+                    <div className="space-y-2">
+                      {[
+                        { label: 'Condition 1 — Range Extreme', check: reverseZone !== 'MIDDLE', note: reverseZone !== 'MIDDLE' ? `Spot at ${positionPct.toFixed(0)}% of range` : `Spot at ${positionPct.toFixed(0)}% — needs ≥80% or ≤20%` },
+                        { label: 'Condition 2 — Active Option vs PCB', check: result ? result.lc > result.pcb * 1.3 : false, note: result ? `LTP ₹${result.lc.toFixed(1)} vs PCB ₹${result.pcb.toFixed(1)}` : '—' },
+                        { label: 'Condition 3 — OI Divergence', check: false, note: 'Check manually: price vs OI direction' },
+                        { label: 'Condition 4 — 15-min Candle Trigger', check: false, note: 'Wait for reversal candle at range extreme' },
+                        { label: 'Condition 5 — Time Window', check: false, note: '10:00–11:30 AM or 1:15–2:00 PM only' },
+                      ].map((item, i) => (
+                        <div key={i} className="flex items-start gap-3">
+                          <div className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center text-[10px] shrink-0 ${item.check ? 'bg-[#39d98a]/20 text-[#39d98a]' : 'bg-[#16161f] text-[#6b6b85]'}`}>
+                            {item.check ? '✓' : i + 1}
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-[#e8e8f0]">{item.label}</div>
+                            <div className="text-[10px] font-mono text-[#6b6b85]">{item.note}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Full candidates table */}
+                  {focusCandidates.length > 0 && (
+                    <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
+                      <div className="px-4 py-3 border-b border-[#1e1e2e] text-xs font-mono text-[#6b6b85] uppercase tracking-widest">
+                        All Sub-₹50 OTM Candidates {suggestedSide ? `(${suggestedSide} — reversal side)` : '(both sides)'}
+                      </div>
+                      <table className="w-full text-xs font-mono">
+                        <thead><tr className="border-b border-[#1e1e2e]">
+                          {['Strike', 'Type', 'LTP', 'OTM Dist', 'OI Trend', 'Pts for 5x', 'Pts for 10x', 'Grade'].map(h => (
+                            <th key={h} className="text-left px-3 py-2.5 text-[#6b6b85] font-normal">{h}</th>
+                          ))}
+                        </tr></thead>
+                        <tbody>
+                          {focusCandidates.map((c, i) => (
+                            <tr key={i} className={`border-b border-[#1e1e2e]/50 hover:bg-[#f0c040]/5 ${c.viability === 'HIGH' ? 'bg-[#39d98a]/5' : ''}`}>
+                              <td className="px-3 py-2.5 font-bold">{c.strike}</td>
+                              <td className="px-3 py-2.5" style={{ color: c.type === 'CE' ? '#4d9fff' : '#39d98a' }}>{c.type}</td>
+                              <td className="px-3 py-2.5 text-[#f0c040] font-bold">₹{c.ltp.toFixed(1)}</td>
+                              <td className="px-3 py-2.5 text-[#e8e8f0]">{c.otmDist} pts</td>
+                              <td className="px-3 py-2.5" style={{ color: c.oiTrend === 'RISING' ? '#39d98a' : c.oiTrend === 'FALLING' ? '#ff4d6d' : '#f0c040' }}>
+                                {oiTrendIcon(c.oiTrend)} {c.oiTrend}
+                              </td>
+                              <td className="px-3 py-2.5 text-[#e8e8f0]">{c.pts5x} pts</td>
+                              <td className="px-3 py-2.5 text-[#6b6b85]">{c.pts10x} pts</td>
+                              <td className="px-3 py-2.5">
+                                <span className="px-2 py-0.5 rounded text-[10px] font-black" style={{ color: viabilityColor(c.viability), background: viabilityColor(c.viability) + '20' }}>{c.viability}</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/20 rounded-xl px-4 py-3 text-[10px] font-mono text-[#ff4d6d]">
+                    ⚠️ Ghost Mode: Max 2 lots · Hard SL at 40% loss · Exit by 12:30 PM if ≤2 days to expiry · Win rate ~30% — sizing and discipline are everything.
                   </div>
                 </div>
               );
