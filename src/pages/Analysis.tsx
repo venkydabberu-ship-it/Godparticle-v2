@@ -47,6 +47,7 @@ export default function Analysis() {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('raw');
   const [planBGap, setPlanBGap] = useState(0);
+  const [rowsData, setRowsData] = useState<any[]>([]);
 
   const location = useLocation();
 
@@ -174,6 +175,7 @@ export default function Analysis() {
       const matrix = generateScenarioMatrix(computed, indexName);
       await saveAnalysis(user.id, indexName, strikeNum, optType, expiry, computed);
 
+      setRowsData(rows);
       setResult(computed);
       setScenarios(matrix);
       setActiveTab('verdict');
@@ -185,6 +187,45 @@ export default function Analysis() {
   }
 
   const isAdmin = profile?.role === 'admin';
+
+  function computeReversalRisk() {
+    if (!rowsData.length || !result) return null;
+    const sd = rowsData[0]?.strike_data || {};
+    const spots = rowsData.map((r: any) => r.strike_data?._spot_close || 0).filter((s: number) => s > 0);
+    const currentSpot = spots[0] || 0;
+    if (!currentSpot) return null;
+    const maxSpot = Math.max(...spots), minSpot = Math.min(...spots);
+    const rangePct = minSpot > 0 ? ((maxSpot - minSpot) / minSpot) * 100 : 0;
+    const mktType = rangePct < 1.5 ? 'RANGE_BOUND' : rangePct < 3.5 ? 'SIDEWAYS' : 'TRENDING';
+    let totalCE = 0, totalPE = 0, maxCEOI = 0, maxPEOI = 0, resistance = 0, support = 0;
+    let cheapPE = { strike: 0, ltp: 0 }, cheapCE = { strike: 0, ltp: 0 };
+    Object.keys(sd).forEach(k => {
+      const sk = parseFloat(k); if (isNaN(sk)) return;
+      const row = sd[k] as any;
+      const ceOI = row?.ce_oi || 0, peOI = row?.pe_oi || 0;
+      totalCE += ceOI; totalPE += peOI;
+      if (sk > currentSpot && ceOI > maxCEOI) { maxCEOI = ceOI; resistance = sk; }
+      if (sk < currentSpot && peOI > maxPEOI) { maxPEOI = peOI; support = sk; }
+      const peLTP = row?.pe_ltp || 0, ceLTP = row?.ce_ltp || 0;
+      if (sk < currentSpot && peLTP > 5 && peOI > 5000 && (!cheapPE.strike || peLTP < cheapPE.ltp))
+        cheapPE = { strike: sk, ltp: peLTP };
+      if (sk > currentSpot && ceLTP > 5 && ceOI > 5000 && (!cheapCE.strike || ceLTP < cheapCE.ltp))
+        cheapCE = { strike: sk, ltp: ceLTP };
+    });
+    const pcr = totalCE > 0 ? totalPE / totalCE : 1;
+    const strikeNum = parseFloat(strike);
+    const nearWall = optType === 'CE'
+      ? (resistance > 0 && (resistance - strikeNum) / currentSpot < 0.008)
+      : (support > 0 && (strikeNum - support) / currentSpot < 0.008);
+    let risk: 'HIGH' | 'MEDIUM' | 'LOW' = 'LOW';
+    if (nearWall && mktType !== 'TRENDING') risk = 'HIGH';
+    else if (mktType === 'RANGE_BOUND') risk = 'MEDIUM';
+    else if (mktType === 'SIDEWAYS' && nearWall) risk = 'MEDIUM';
+    const counter = optType === 'CE' ? cheapPE : cheapCE;
+    const counterType = optType === 'CE' ? 'PE' : 'CE';
+    return { mktType, rangePct, pcr, resistance, support, risk, nearWall, counter, counterType, currentSpot, maxCEOI, maxPEOI };
+  }
+  const reversalRisk = computeReversalRisk();
 
   const TABS = [
     { id: 'verdict', label: '⚡ Verdict' },
@@ -484,6 +525,70 @@ export default function Analysis() {
                       </div>
                     ))}
                   </div>
+
+                  {/* ── REVERSAL RISK PANEL ── */}
+                  {reversalRisk && (() => {
+                    const { mktType, rangePct, pcr, resistance, support, risk, nearWall, counter, counterType, currentSpot, maxCEOI, maxPEOI } = reversalRisk;
+                    const riskColor = risk === 'HIGH' ? '#ff4d6d' : risk === 'MEDIUM' ? '#ff8c42' : '#39d98a';
+                    const mktLabel = mktType === 'RANGE_BOUND' ? '⛓ Range-Bound' : mktType === 'SIDEWAYS' ? '↔ Sideways' : '🚀 Trending';
+                    return (
+                      <div className={`rounded-2xl p-5 border ${risk === 'HIGH' ? 'border-[#ff4d6d]/40 bg-[#ff4d6d]/5' : risk === 'MEDIUM' ? 'border-[#ff8c42]/40 bg-[#ff8c42]/5' : 'border-[#39d98a]/30 bg-[#39d98a]/5'}`}>
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest">🔄 Reversal Risk Check</div>
+                          <span className="text-xs font-black px-2 py-0.5 rounded-full border" style={{ color: riskColor, borderColor: riskColor + '40', background: riskColor + '15' }}>
+                            {risk} RISK
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 mb-4">
+                          <div className="bg-[#111118] rounded-xl p-3">
+                            <div className="text-[10px] font-mono text-[#6b6b85] mb-1">Market Character</div>
+                            <div className="text-sm font-black" style={{ color: riskColor }}>{mktLabel}</div>
+                            <div className="text-[10px] font-mono text-[#6b6b85] mt-1">Spot range {rangePct.toFixed(1)}% over {rowsData.length} sessions</div>
+                          </div>
+                          <div className="bg-[#111118] rounded-xl p-3">
+                            <div className="text-[10px] font-mono text-[#6b6b85] mb-1">Put/Call Ratio</div>
+                            <div className={`text-sm font-black ${pcr > 1.3 ? 'text-[#39d98a]' : pcr < 0.8 ? 'text-[#ff4d6d]' : 'text-[#e8e8f0]'}`}>{pcr.toFixed(2)}</div>
+                            <div className="text-[10px] font-mono text-[#6b6b85] mt-1">{pcr > 1.3 ? 'PE heavy — support likely' : pcr < 0.8 ? 'CE heavy — resistance likely' : 'Balanced'}</div>
+                          </div>
+                          <div className="bg-[#111118] rounded-xl p-3">
+                            <div className="text-[10px] font-mono text-[#6b6b85] mb-1">Resistance (CE Wall)</div>
+                            <div className="text-sm font-black text-[#ff4d6d]">{resistance > 0 ? resistance.toLocaleString() : '—'}</div>
+                            <div className="text-[10px] font-mono text-[#6b6b85] mt-1">OI: {resistance > 0 ? (maxCEOI / 100000).toFixed(1) + 'L' : '—'}</div>
+                          </div>
+                          <div className="bg-[#111118] rounded-xl p-3">
+                            <div className="text-[10px] font-mono text-[#6b6b85] mb-1">Support (PE Wall)</div>
+                            <div className="text-sm font-black text-[#39d98a]">{support > 0 ? support.toLocaleString() : '—'}</div>
+                            <div className="text-[10px] font-mono text-[#6b6b85] mt-1">OI: {support > 0 ? (maxPEOI / 100000).toFixed(1) + 'L' : '—'}</div>
+                          </div>
+                        </div>
+                        {nearWall && (
+                          <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl px-4 py-3 mb-3 text-xs font-mono text-[#ff4d6d]">
+                            ⚠️ Your {optType} strike {strike} is near the {optType === 'CE' ? 'resistance' : 'support'} wall — premium may reverse before hitting target.
+                          </div>
+                        )}
+                        {risk !== 'LOW' && counter.strike > 0 && (
+                          <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4">
+                            <div className="text-[10px] font-mono text-[#6b6b85] uppercase mb-2">Counter Option — If Reversal Occurs</div>
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <span className="text-lg font-black" style={{ color: counterType === 'PE' ? '#39d98a' : '#4d9fff' }}>{counter.strike} {counterType}</span>
+                                <span className="text-xs font-mono text-[#6b6b85] ml-2">LTP ₹{counter.ltp.toFixed(1)} — low base, big potential</span>
+                              </div>
+                              <div className="text-[10px] font-mono text-[#6b6b85]">
+                                {mktType === 'RANGE_BOUND' ? 'Enter on confirmation' : 'Wait for reversal candle'}
+                              </div>
+                            </div>
+                            <div className="mt-2 text-[10px] font-mono text-[#6b6b85]">
+                              Confirmation: {counterType === 'PE' ? 'Spot fails to break resistance + PE LTP starts rising + PCR rising' : 'Spot bounces off support + CE LTP starts rising + PCR falling'}
+                            </div>
+                          </div>
+                        )}
+                        {risk === 'LOW' && (
+                          <div className="text-[10px] font-mono text-[#39d98a]">✅ Market is trending — OI walls are not a threat. Ride the GCT signal.</div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div className="text-center text-[10px] font-mono text-[#6b6b85]">
                     Not Financial Advice · God Particle ⚛ · Based on {result.data?.length} sessions of data
