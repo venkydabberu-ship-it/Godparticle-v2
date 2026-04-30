@@ -573,3 +573,132 @@ export function fmtOI(oi: number): string {
 export function fmtPct(pct: number): string {
   return (pct >= 0 ? '+' : '') + pct.toFixed(0) + '%';
 }
+
+// ── REVERSAL ANALYSIS ──
+export interface ReversalAnalysis {
+  marketType: 'TRENDING' | 'SIDEWAYS' | 'RANGE_BOUND';
+  spotMove: number;          // points moved 9:30 → 11:15
+  pcr930: number;
+  pcr1115: number;
+  pcrShift: 'RISING' | 'FALLING' | 'FLAT';
+  resistanceStrike: number;  // highest CE OI above ATM
+  supportStrike: number;     // highest PE OI below ATM
+  distToResistance: number;  // % from spot to resistance
+  distToSupport: number;     // % from spot to support
+  signal: 'BUY_PE_REVERSAL' | 'BUY_CE_REVERSAL' | 'NONE';
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  counterStrike: number;
+  counterLTP: number;
+  confirmations: string[];
+  warnings: string[];
+}
+
+export function analyzeReversal(
+  snap930: Z2HSnapshot,
+  snap1115: Z2HSnapshot,
+  indexKey: string
+): ReversalAnalysis {
+  const s930 = snap930.strike_data || {};
+  const s1115 = snap1115.strike_data || {};
+  const spot930 = snap930.spot_price;
+  const spot1115 = snap1115.spot_price;
+  const gap = INDEX_CONFIG[indexKey]?.strikeGap ?? 100;
+  const atm = Math.round(spot1115 / gap) * gap;
+  const searchRange = gap * 15;
+
+  // PCR at both times
+  let ceTot930 = 0, peTot930 = 0, ceTot1115 = 0, peTot1115 = 0;
+  Object.keys(s930).forEach(k => {
+    const sk = parseFloat(k); if (isNaN(sk)) return;
+    ceTot930 += (s930[k] as any)?.ce_oi || 0;
+    peTot930 += (s930[k] as any)?.pe_oi || 0;
+  });
+  Object.keys(s1115).forEach(k => {
+    const sk = parseFloat(k); if (isNaN(sk)) return;
+    ceTot1115 += (s1115[k] as any)?.ce_oi || 0;
+    peTot1115 += (s1115[k] as any)?.pe_oi || 0;
+  });
+  const pcr930 = ceTot930 > 0 ? peTot930 / ceTot930 : 1;
+  const pcr1115 = ceTot1115 > 0 ? peTot1115 / ceTot1115 : 1;
+  const pcrShift: ReversalAnalysis['pcrShift'] =
+    pcr1115 > pcr930 * 1.05 ? 'RISING' : pcr1115 < pcr930 * 0.95 ? 'FALLING' : 'FLAT';
+
+  // Find resistance (highest CE OI above ATM) and support (highest PE OI below ATM)
+  let maxCEOI = 0, maxPEOI = 0, resistanceStrike = 0, supportStrike = 0;
+  let bestCounterPE = { strike: 0, ltp: 0, oi: 0 };
+  let bestCounterCE = { strike: 0, ltp: 0, oi: 0 };
+
+  Object.keys(s1115).forEach(k => {
+    const sk = parseFloat(k);
+    if (isNaN(sk) || Math.abs(sk - atm) > searchRange) return;
+    const row = s1115[k] as any;
+    const ceOI = row?.ce_oi || 0;
+    const peOI = row?.pe_oi || 0;
+    const ceLTP = row?.ce_ltp || 0;
+    const peLTP = row?.pe_ltp || 0;
+
+    if (sk > atm && ceOI > maxCEOI) { maxCEOI = ceOI; resistanceStrike = sk; }
+    if (sk < atm && peOI > maxPEOI) { maxPEOI = peOI; supportStrike = sk; }
+
+    // Find cheapest liquid PE below ATM (for buying at resistance)
+    if (sk <= atm && sk >= atm - gap * 5 && peLTP > 5 && peOI > 5000) {
+      if (bestCounterPE.strike === 0 || peLTP < bestCounterPE.ltp) {
+        bestCounterPE = { strike: sk, ltp: peLTP, oi: peOI };
+      }
+    }
+    // Find cheapest liquid CE above ATM (for buying at support)
+    if (sk >= atm && sk <= atm + gap * 5 && ceLTP > 5 && ceOI > 5000) {
+      if (bestCounterCE.strike === 0 || ceLTP < bestCounterCE.ltp) {
+        bestCounterCE = { strike: sk, ltp: ceLTP, oi: ceOI };
+      }
+    }
+  });
+
+  const spotMove = spot1115 - spot930;
+  const absMove = Math.abs(spotMove);
+  const distToRes = resistanceStrike > 0
+    ? ((resistanceStrike - spot1115) / spot1115) * 100 : 999;
+  const distToSup = supportStrike > 0
+    ? ((spot1115 - supportStrike) / spot1115) * 100 : 999;
+
+  const marketType: ReversalAnalysis['marketType'] =
+    absMove < gap * 1.5 ? 'RANGE_BOUND' : absMove < gap * 2.5 ? 'SIDEWAYS' : 'TRENDING';
+
+  // Reversal logic
+  let signal: ReversalAnalysis['signal'] = 'NONE';
+  let confidence: ReversalAnalysis['confidence'] = 'LOW';
+  const confirmations: string[] = [];
+  const warnings: string[] = [];
+
+  const nearRes = distToRes >= 0 && distToRes < 0.6;
+  const nearSup = distToSup >= 0 && distToSup < 0.6;
+
+  if (nearRes) {
+    signal = 'BUY_PE_REVERSAL';
+    confirmations.push(`Spot ₹${spot1115} is ${distToRes.toFixed(2)}% away from CE wall at ${resistanceStrike}`);
+    if (pcrShift === 'RISING') { confirmations.push('PCR rising — PE demand increasing'); confidence = 'HIGH'; }
+    else if (pcr1115 < 0.8) { confirmations.push(`Low PCR ${pcr1115.toFixed(2)} — CE side crowded, reversal likely`); confidence = 'MEDIUM'; }
+    else { warnings.push('PCR not yet confirming — wait for PE OI to build'); confidence = 'LOW'; }
+    if (marketType === 'RANGE_BOUND') confirmations.push('Range-bound market — OI walls likely to hold');
+  } else if (nearSup) {
+    signal = 'BUY_CE_REVERSAL';
+    confirmations.push(`Spot ₹${spot1115} is ${distToSup.toFixed(2)}% away from PE wall at ${supportStrike}`);
+    if (pcrShift === 'FALLING') { confirmations.push('PCR falling — CE demand increasing'); confidence = 'HIGH'; }
+    else if (pcr1115 > 1.5) { confirmations.push(`High PCR ${pcr1115.toFixed(2)} — PE side crowded, reversal likely`); confidence = 'MEDIUM'; }
+    else { warnings.push('PCR not yet confirming — wait for CE OI to build'); confidence = 'LOW'; }
+    if (marketType === 'RANGE_BOUND') confirmations.push('Range-bound market — OI walls likely to hold');
+  }
+
+  if (marketType === 'TRENDING' && signal !== 'NONE') {
+    warnings.push('Market is trending — reversal signal is weaker. Use tight SL.');
+  }
+
+  const counterStrike = signal === 'BUY_PE_REVERSAL' ? bestCounterPE.strike : bestCounterCE.strike;
+  const counterLTP = signal === 'BUY_PE_REVERSAL' ? bestCounterPE.ltp : bestCounterCE.ltp;
+
+  return {
+    marketType, spotMove, pcr930, pcr1115, pcrShift,
+    resistanceStrike, supportStrike, distToResistance: distToRes, distToSupport: distToSup,
+    signal, confidence, counterStrike, counterLTP, confirmations, warnings,
+  };
+}
