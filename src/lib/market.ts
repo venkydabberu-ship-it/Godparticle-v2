@@ -74,6 +74,28 @@ function bsOpenEstimate(
   return Math.max(price, intrinsic, 0.5);
 }
 
+// Returns the IV (in %, e.g. 13.5) of the strike nearest to spotAtGap in the chain.
+// This gives us the actual market vol-skew for each gap scenario instead of a crude linear estimate.
+function getChainIVForSpot(
+  chainData: Record<string, any>,
+  spotAtGap: number,
+  optType: 'CE' | 'PE',
+  fallback: number
+): number {
+  let bestStrike = -1;
+  let bestDist = Infinity;
+  for (const k of Object.keys(chainData)) {
+    const sk = parseFloat(k);
+    if (isNaN(sk)) continue;
+    const dist = Math.abs(sk - spotAtGap);
+    if (dist < bestDist) { bestDist = dist; bestStrike = sk; }
+  }
+  if (bestStrike < 0) return fallback;
+  const row = chainData[String(bestStrike)] as any;
+  const iv = optType === 'CE' ? (row?.ce_iv ?? 0) : (row?.pe_iv ?? 0);
+  return iv > 0 ? iv : fallback;
+}
+
 
 export const INDEX_DISPLAY: Record<string, string> = {
   'NIFTY50': 'Nifty 50',
@@ -577,7 +599,8 @@ export function getDTE(expiry: string): number {
 //
 export function generateScenarioMatrix(
   result: any,
-  indexName: string
+  indexName: string,
+  chainData?: Record<string, any>
 ): any[] {
   const lc             = result.lc;
   const pcb            = result.pcb;
@@ -655,18 +678,31 @@ export function generateScenarioMatrix(
     const avoid     = isAdv && absGap >= avoidLimit;
 
     // ── Open Estimate ──
-    // If we have spot close + IV: use Black-Scholes (Delta + Gamma + Theta + IV crush)
-    // Otherwise: fall back to proportional theta-adjusted formula
+    // Priority 1 (chain data available): BS with actual vol-skew IV from the chain.
+    //   We look up the IV of the strike currently nearest to the gap-adjusted spot.
+    //   This accounts for vol skew naturally — no crude linear IV-change estimate needed.
+    // Priority 2 (no chain data): BS with selected-strike IV + gap-direction adjustment.
+    // Fallback: theta-adjusted thetaBase formula (when no spot/IV available).
     let openEst: number;
     if (useBSModel) {
       const openSpot = spotClose + gap;
-      const raw = bsOpenEstimate(
-        spotClose, openSpot, strike,
-        isCE ? 'CE' : 'PE', dte,
-        latestIV / 100,  // convert % to decimal
-        Math.max(daysSinceClose, 1)
-      );
-      openEst = Math.max(Math.round(raw), 1);
+      let ivDecimal: number;
+      if (chainData && Object.keys(chainData).length > 0) {
+        const ivPct = getChainIVForSpot(chainData, openSpot, isCE ? 'CE' : 'PE', latestIV);
+        ivDecimal = Math.max(0.05, ivPct / 100);
+        const T = Math.max(dte, 0.1) / 365;
+        const raw = bsPrice(openSpot, strike, T, ivDecimal, isCE ? 'CE' : 'PE');
+        const intrinsic = isCE ? Math.max(0, openSpot - strike) : Math.max(0, strike - openSpot);
+        openEst = Math.max(Math.round(Math.max(raw, intrinsic, 0.5)), 1);
+      } else {
+        const raw = bsOpenEstimate(
+          spotClose, openSpot, strike,
+          isCE ? 'CE' : 'PE', dte,
+          latestIV / 100,
+          Math.max(daysSinceClose, 1)
+        );
+        openEst = Math.max(Math.round(raw), 1);
+      }
     } else if (isFav) {
       openEst = Math.round(thetaBase * (1 + (absGap / maxGap) * 0.85));
     } else if (isNeutral) {

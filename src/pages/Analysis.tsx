@@ -172,7 +172,7 @@ export default function Analysis() {
       }
 
       const computed = computeGodParticle(data, strikeNum, optType, expiry);
-      const matrix = generateScenarioMatrix(computed, indexName);
+      const matrix = generateScenarioMatrix(computed, indexName, rows[0]?.strike_data);
       await saveAnalysis(user.id, indexName, strikeNum, optType, expiry, computed);
 
       setRowsData(rows);
@@ -241,9 +241,23 @@ export default function Analysis() {
     const latestSD = rowsData[0]?.strike_data || {};
     const prevSD = rowsData[1]?.strike_data || {};
 
+    // OI-WAP floor: weighted average LTP across all days (weighted by OI).
+    // This is the "trapped money" level — where the option tends to stop falling and bounce.
+    function strikeFloor(sk: number, type: 'CE' | 'PE'): number {
+      let sumLtpOI = 0, sumOI = 0;
+      rowsData.forEach((r: any) => {
+        const row = r.strike_data?.[sk] as any;
+        if (!row) return;
+        const ltp = type === 'CE' ? (row.ce_ltp || 0) : (row.pe_ltp || 0);
+        const oi  = type === 'CE' ? (row.ce_oi  || 0) : (row.pe_oi  || 0);
+        if (ltp > 0 && oi > 0) { sumLtpOI += ltp * oi; sumOI += oi; }
+      });
+      return sumOI > 0 ? Math.round((sumLtpOI / sumOI) * 10) / 10 : 0;
+    }
+
     const candidates: {
       strike: number; type: 'CE' | 'PE'; ltp: number; otmDist: number;
-      oiTrend: string; pts5x: number; pts10x: number; viability: 'HIGH' | 'MEDIUM' | 'LOW'; oi: number;
+      oiTrend: string; pts5x: number; pts10x: number; viability: 'HIGH' | 'MEDIUM' | 'LOW'; oi: number; floor: number;
     }[] = [];
 
     Object.keys(latestSD).forEach(k => {
@@ -261,7 +275,8 @@ export default function Analysis() {
         const pts5x = Math.round(otmDist * 1.4);
         const pts10x = Math.round(otmDist * 2.3);
         const viability: 'HIGH' | 'MEDIUM' | 'LOW' = otmDist <= 200 && ceLTP >= 15 ? 'HIGH' : otmDist <= 300 && ceLTP >= 8 ? 'MEDIUM' : 'LOW';
-        candidates.push({ strike: sk, type: 'CE', ltp: ceLTP, otmDist, oiTrend, pts5x, pts10x, viability, oi: ceOI });
+        const floor = strikeFloor(sk, 'CE');
+        candidates.push({ strike: sk, type: 'CE', ltp: ceLTP, otmDist, oiTrend, pts5x, pts10x, viability, oi: ceOI, floor });
       }
 
       const peLTP = row?.pe_ltp || 0;
@@ -273,7 +288,8 @@ export default function Analysis() {
         const pts5x = Math.round(otmDist * 1.4);
         const pts10x = Math.round(otmDist * 2.3);
         const viability: 'HIGH' | 'MEDIUM' | 'LOW' = otmDist <= 200 && peLTP >= 15 ? 'HIGH' : otmDist <= 300 && peLTP >= 8 ? 'MEDIUM' : 'LOW';
-        candidates.push({ strike: sk, type: 'PE', ltp: peLTP, otmDist, oiTrend, pts5x, pts10x, viability, oi: peOI });
+        const floor = strikeFloor(sk, 'PE');
+        candidates.push({ strike: sk, type: 'PE', ltp: peLTP, otmDist, oiTrend, pts5x, pts10x, viability, oi: peOI, floor });
       }
     });
 
@@ -716,6 +732,14 @@ export default function Analysis() {
                           </div>
                           <div className="text-sm font-black text-[#f0c040]">₹{c.ltp.toFixed(1)} <span className="text-xs text-[#6b6b85] font-normal">LTP · {c.otmDist} pts OTM</span></div>
                           <div className="mt-2 space-y-1 text-[10px] font-mono">
+                            {c.floor > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-[#6b6b85]">Reversal Floor (OI-WAP)</span>
+                                <span className={c.ltp <= c.floor * 1.05 ? 'text-[#39d98a] font-black' : 'text-[#a78bfa]'}>
+                                  ₹{c.floor.toFixed(1)}{c.ltp <= c.floor * 1.05 ? ' ← AT FLOOR 🎯' : ` (${((c.ltp / c.floor - 1) * 100).toFixed(0)}% above)`}
+                                </span>
+                              </div>
+                            )}
                             <div className="flex justify-between"><span className="text-[#6b6b85]">5x target (₹{(c.ltp * 5).toFixed(0)})</span><span className="text-[#f0c040]">needs ~{c.pts5x} pt move</span></div>
                             <div className="flex justify-between"><span className="text-[#6b6b85]">10x target (₹{(c.ltp * 10).toFixed(0)})</span><span className="text-[#f0c040]">needs ~{c.pts10x} pt move</span></div>
                             <div className="flex justify-between"><span className="text-[#6b6b85]">OI trend</span><span className={c.oiTrend === 'RISING' ? 'text-[#39d98a]' : c.oiTrend === 'FALLING' ? 'text-[#ff4d6d]' : 'text-[#f0c040]'}>{oiTrendIcon(c.oiTrend)} {c.oiTrend} ({(c.oi / 100000).toFixed(1)}L)</span></div>
@@ -758,27 +782,38 @@ export default function Analysis() {
                       </div>
                       <table className="w-full text-xs font-mono">
                         <thead><tr className="border-b border-[#1e1e2e]">
-                          {['Strike', 'Type', 'LTP', 'OTM Dist', 'OI Trend', 'Pts for 5x', 'Pts for 10x', 'Grade'].map(h => (
+                          {['Strike', 'Type', 'LTP', 'Floor', 'OTM', 'OI Trend', '5x pts', '10x pts', 'Grade'].map(h => (
                             <th key={h} className="text-left px-3 py-2.5 text-[#6b6b85] font-normal">{h}</th>
                           ))}
                         </tr></thead>
                         <tbody>
-                          {focusCandidates.map((c, i) => (
-                            <tr key={i} className={`border-b border-[#1e1e2e]/50 hover:bg-[#f0c040]/5 ${c.viability === 'HIGH' ? 'bg-[#39d98a]/5' : ''}`}>
+                          {focusCandidates.map((c, i) => {
+                            const atFloor = c.floor > 0 && c.ltp <= c.floor * 1.05;
+                            const aboveFloorPct = c.floor > 0 ? ((c.ltp / c.floor - 1) * 100) : null;
+                            return (
+                            <tr key={i} className={`border-b border-[#1e1e2e]/50 hover:bg-[#f0c040]/5 ${atFloor ? 'bg-[#39d98a]/8' : c.viability === 'HIGH' ? 'bg-[#39d98a]/3' : ''}`}>
                               <td className="px-3 py-2.5 font-bold">{c.strike}</td>
                               <td className="px-3 py-2.5" style={{ color: c.type === 'CE' ? '#4d9fff' : '#39d98a' }}>{c.type}</td>
                               <td className="px-3 py-2.5 text-[#f0c040] font-bold">₹{c.ltp.toFixed(1)}</td>
-                              <td className="px-3 py-2.5 text-[#e8e8f0]">{c.otmDist} pts</td>
+                              <td className="px-3 py-2.5">
+                                {c.floor > 0
+                                  ? <span className={atFloor ? 'text-[#39d98a] font-black' : 'text-[#a78bfa]'}>
+                                      ₹{c.floor.toFixed(1)}{atFloor ? ' 🎯' : aboveFloorPct !== null ? ` +${aboveFloorPct.toFixed(0)}%` : ''}
+                                    </span>
+                                  : <span className="text-[#6b6b85]">—</span>}
+                              </td>
+                              <td className="px-3 py-2.5 text-[#e8e8f0]">{c.otmDist}</td>
                               <td className="px-3 py-2.5" style={{ color: c.oiTrend === 'RISING' ? '#39d98a' : c.oiTrend === 'FALLING' ? '#ff4d6d' : '#f0c040' }}>
                                 {oiTrendIcon(c.oiTrend)} {c.oiTrend}
                               </td>
-                              <td className="px-3 py-2.5 text-[#e8e8f0]">{c.pts5x} pts</td>
-                              <td className="px-3 py-2.5 text-[#6b6b85]">{c.pts10x} pts</td>
+                              <td className="px-3 py-2.5 text-[#e8e8f0]">{c.pts5x}</td>
+                              <td className="px-3 py-2.5 text-[#6b6b85]">{c.pts10x}</td>
                               <td className="px-3 py-2.5">
                                 <span className="px-2 py-0.5 rounded text-[10px] font-black" style={{ color: viabilityColor(c.viability), background: viabilityColor(c.viability) + '20' }}>{c.viability}</span>
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
