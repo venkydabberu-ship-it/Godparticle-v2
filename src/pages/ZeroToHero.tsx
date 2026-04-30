@@ -5,8 +5,8 @@ import { supabase } from '../lib/supabase';
 import {
   INDEX_CONFIG, ALL_Z2H_INDICES,
   getExpiryDates, isExpiryDay, getExpiriesForMonth,
-  computeZ2H, calculateMaxPain,
-  type Z2HSnapshot, type SnapshotType,
+  computeZ2H, calculateMaxPain, analyzeReversal,
+  type Z2HSnapshot, type SnapshotType, type ReversalAnalysis,
 } from '../lib/z2h';
 import { fetchAndSaveZ2HSnapshot } from '../lib/autofetch';
 
@@ -29,6 +29,7 @@ export default function ZeroToHero() {
   const [snapshots, setSnapshots] = useState<any[]>([]);
   const [prevDaySnap, setPrevDaySnap] = useState<Z2HSnapshot | null>(null);
   const [result, setResult] = useState<any>(null);
+  const [reversal, setReversal] = useState<ReversalAnalysis | null>(null);
   const [fetchingMorning, setFetchingMorning] = useState(false);
   const [fetchingAnalysis, setFetchingAnalysis] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
