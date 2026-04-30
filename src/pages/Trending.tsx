@@ -241,7 +241,7 @@ export default function Trending() {
                         <button
                           onClick={() => navigate('/analysis', { state: { prefill: { symbol: q.symbol, tab: 'stock' } } })}
                           className="text-[10px] font-black border border-[#4d9fff]/40 text-[#4d9fff] px-3 py-1.5 rounded-lg hover:bg-[#4d9fff]/10 transition-all">
-                          Analyse with Pivot →
+                          Intraday Pivot →
                         </button>
                         <button
                           onClick={() => navigate('/stock-analysis', { state: { prefill: { symbol: q.symbol, name: q.name } } })}

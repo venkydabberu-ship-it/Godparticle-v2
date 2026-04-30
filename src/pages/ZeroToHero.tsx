@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase';
 import {
   INDEX_CONFIG, ALL_Z2H_INDICES,
   getExpiryDates, isExpiryDay, getExpiriesForMonth,
-  SNAPSHOT_META, computeZ2H,
+  computeZ2H, calculateMaxPain,
   type Z2HSnapshot, type SnapshotType,
 } from '../lib/z2h';
 import { fetchAndSaveZ2HSnapshot } from '../lib/autofetch';
@@ -27,6 +27,7 @@ export default function ZeroToHero() {
   const [calYear, setCalYear] = useState(new Date().getFullYear());
   const [calMonth, setCalMonth] = useState(new Date().getMonth());
   const [snapshots, setSnapshots] = useState<any[]>([]);
+  const [prevDaySnap, setPrevDaySnap] = useState<Z2HSnapshot | null>(null);
   const [result, setResult] = useState<any>(null);
   const [fetchingMorning, setFetchingMorning] = useState(false);
   const [fetchingAnalysis, setFetchingAnalysis] = useState(false);
@@ -52,6 +53,7 @@ export default function ZeroToHero() {
     }
     setResult(null);
     setSnapshots([]);
+    setPrevDaySnap(null);
   }, [index]);
 
   useEffect(() => {
@@ -69,13 +71,40 @@ export default function ZeroToHero() {
       .eq('expiry_date', expiry)
       .order('snapshot_type');
     setSnapshots(data || []);
+
+    // If no DAY_BEFORE in z2h_snapshots, load from market_data (saved by admin auto-fetch)
+    const hasDayBefore = (data || []).some((s: any) =>
+      s.snapshot_type === 'DAY_BEFORE' || s.snapshot_type === 'EXPIRY_EOD'
+    );
+    if (!hasDayBefore) {
+      const prevDay = new Date(expiry + 'T12:00:00');
+      prevDay.setDate(prevDay.getDate() - 1);
+      const prevDayStr = prevDay.toISOString().split('T')[0];
+      const { data: md } = await supabase
+        .from('market_data')
+        .select('strike_data')
+        .eq('index_name', index)
+        .eq('expiry', expiry)
+        .eq('trade_date', prevDayStr)
+        .limit(1);
+      if (md && md.length > 0) {
+        const sd = md[0].strike_data || {};
+        const spot = sd['_spot_close'] || 0;
+        const mp = calculateMaxPain(sd);
+        setPrevDaySnap({ index_name: index, expiry_date: expiry, snapshot_type: 'DAY_BEFORE', spot_price: spot, max_pain: mp, vix: 0, strike_data: sd } as Z2HSnapshot);
+      } else {
+        setPrevDaySnap(null);
+      }
+    } else {
+      setPrevDaySnap(null);
+    }
   }
 
   const getSnap = (type: SnapshotType) => snapshots.find(s => s.snapshot_type === type) ?? null;
   const snap930 = getSnap('EXPIRY_930');
   const snap1115 = getSnap('EXPIRY_1115');
-  // DAY_BEFORE is saved by auto-fetch (prev day). EXPIRY_EOD is saved on expiry day itself. Use whichever exists.
-  const snapDayBefore = getSnap('DAY_BEFORE') ?? getSnap('EXPIRY_EOD');
+  // DAY_BEFORE: from z2h_snapshots first, then market_data fallback (prevDaySnap)
+  const snapDayBefore = getSnap('DAY_BEFORE') ?? getSnap('EXPIRY_EOD') ?? prevDaySnap;
 
   function buildCalCells(): (string | null)[] {
     const firstDow = new Date(calYear, calMonth, 1).getDay();
@@ -283,34 +312,36 @@ export default function ZeroToHero() {
                 {error && (
                   <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#ff4d6d] mb-4">{error}</div>
                 )}
-                {/* Prev Day Close — auto-fetched by admin at previous day 3:30 PM */}
-                <div className={`rounded-xl p-4 border mb-4 ${snapDayBefore ? 'border-[#4d9fff]/30 bg-[#4d9fff]/05' : 'border-[#1e1e2e]/60 bg-[#16161f]/60'}`}>
+
+                {/* Prev Day Close — loaded from database by admin auto-fetch */}
+                <div className={`rounded-xl p-4 border mb-4 ${snapDayBefore ? 'border-[#4d9fff]/30 bg-[#4d9fff]/5' : 'border-[#1e1e2e]/60 bg-[#16161f]/60'}`}>
                   <div className="flex items-center justify-between mb-1">
                     <div>
                       <div className="text-xs font-bold text-[#4d9fff]">Prev Day Close</div>
-                      <div className="text-[10px] font-mono text-[#6b6b85]">Auto-fetched from yesterday's 3:30 PM data · used for PCB (Force 3)</div>
+                      <div className="text-[10px] font-mono text-[#6b6b85]">Loaded from database · used for PCB (Force 3)</div>
                     </div>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#4d9fff]/10 text-[#4d9fff] border border-[#4d9fff]/20">AUTO</span>
                   </div>
                   {snapDayBefore ? (
                     <div className="text-[10px] font-mono space-y-0.5">
-                      <div className="text-[#4d9fff]">✅ Available ({snapDayBefore.snapshot_type === 'DAY_BEFORE' ? 'prev day close' : 'expiry EOD close'})</div>
-                      <div className="text-[#6b6b85]">Spot: <span className="text-[#e8e8f0]">{snapDayBefore.spot_price?.toLocaleString()}</span> · MP: <span className="text-[#e8e8f0]">{snapDayBefore.max_pain?.toLocaleString()}</span></div>
+                      <div className="text-[#4d9fff]">✅ Loaded from database</div>
+                      <div className="text-[#6b6b85]">Spot: <span className="text-[#e8e8f0]">{snapDayBefore.spot_price?.toLocaleString()}</span> · Max Pain: <span className="text-[#e8e8f0]">{snapDayBefore.max_pain?.toLocaleString()}</span></div>
                     </div>
                   ) : (
                     <div className="text-[10px] font-mono text-[#6b6b85]">
-                      ⏳ Not yet available. This is auto-populated when admin runs auto-fetch on the day before expiry at 3:30 PM.
-                      The analysis still works without it — Force 3 (PCB) will give benefit of doubt.
+                      ⏳ Not yet available. Admin auto-fetch will populate this. Analysis still works without it — Force 3 (PCB) gives benefit of doubt.
                     </div>
                   )}
                 </div>
 
+                {/* Opening CSV + Analysis CSV */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                  {/* Opening CSV */}
                   <div className={`rounded-xl p-4 border ${snap930 ? 'border-[#39d98a]/30 bg-[#39d98a]/5' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
                     <div className="flex items-center justify-between mb-2">
                       <div>
                         <div className="text-xs font-bold">Opening CSV</div>
-                        <div className="text-[10px] font-mono text-[#6b6b85]">Fetch at 9:30 AM · Free for all</div>
+                        <div className="text-[10px] font-mono text-[#6b6b85]">Recommended: 9:30 AM · Free for all</div>
                       </div>
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#39d98a]/10 text-[#39d98a] border border-[#39d98a]/20">FREE</span>
                     </div>
@@ -325,7 +356,7 @@ export default function ZeroToHero() {
                       </div>
                     ) : (
                       <>
-                        <div className="text-[10px] font-mono text-[#6b6b85] mb-3">⏳ Not fetched yet. Fetch after market opens at 9:30 AM.</div>
+                        <div className="text-[10px] font-mono text-[#6b6b85] mb-3">⏳ Not fetched yet. Fetch anytime after market opens.</div>
                         <button onClick={fetchMorning} disabled={fetchingMorning}
                           className="w-full py-2 rounded-lg text-xs font-black bg-[#39d98a]/20 text-[#39d98a] border border-[#39d98a]/30 hover:bg-[#39d98a]/30 disabled:opacity-40 transition-all">
                           {fetchingMorning ? '⏳ Fetching...' : '📡 Fetch Opening CSV (Free)'}
@@ -334,11 +365,12 @@ export default function ZeroToHero() {
                     )}
                   </div>
 
+                  {/* Analysis CSV */}
                   <div className={`rounded-xl p-4 border ${snap1115 ? 'border-[#f0c040]/30 bg-[#f0c040]/5' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
                     <div className="flex items-center justify-between mb-2">
                       <div>
                         <div className="text-xs font-bold">Analysis CSV</div>
-                        <div className="text-[10px] font-mono text-[#6b6b85]">Fetch after 11:15 AM</div>
+                        <div className="text-[10px] font-mono text-[#6b6b85]">Recommended: 11:15 AM · Fetch anytime</div>
                       </div>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                         isPremiumPlus ? 'bg-[#f0c040]/10 text-[#f0c040] border-[#f0c040]/20' : 'bg-[#ff8c42]/10 text-[#ff8c42] border-[#ff8c42]/20'
@@ -355,11 +387,8 @@ export default function ZeroToHero() {
                       </div>
                     ) : (
                       <>
-                        <div className="text-[10px] font-mono text-[#6b6b85] mb-3">
-                          ⏳ Not fetched yet. Fetch after 11:15 AM.
-                          {!snap930 && <span className="text-[#ff4d6d]"> Fetch Opening CSV first!</span>}
-                        </div>
-                        <button onClick={fetchAnalysis} disabled={fetchingAnalysis || !snap930}
+                        <div className="text-[10px] font-mono text-[#6b6b85] mb-3">⏳ Not fetched yet. Fetch anytime after market opens.</div>
+                        <button onClick={fetchAnalysis} disabled={fetchingAnalysis}
                           className="w-full py-2 rounded-lg text-xs font-black bg-[#f0c040]/20 text-[#f0c040] border border-[#f0c040]/30 hover:bg-[#f0c040]/30 disabled:opacity-40 transition-all">
                           {fetchingAnalysis ? '⏳ Fetching...' : `📊 Fetch Analysis CSV${isPremiumPlus ? ' (Free)' : ' — 5 Credits'}`}
                         </button>
@@ -367,39 +396,18 @@ export default function ZeroToHero() {
                     )}
                   </div>
                 </div>
-
-                {isAdmin && (
-                  <div className="mt-2">
-                    <div className="text-[10px] font-mono text-[#f0c040] font-bold mb-2 uppercase tracking-widest">Admin · All Snapshots</div>
-                    <div className="grid grid-cols-4 gap-2">
-                      {(['DAY_BEFORE','EXPIRY_EOD','EXPIRY_930','EXPIRY_1115'] as SnapshotType[]).map(type => {
-                        const s = getSnap(type);
-                        const meta = SNAPSHOT_META[type];
-                        return (
-                          <div key={type} className={`rounded-xl p-3 text-center border ${s ? 'border-[#39d98a]/30 bg-[#39d98a]/5' : 'border-[#1e1e2e] bg-[#16161f]'}`}>
-                            <div className="text-sm mb-1">{s ? '✅' : '⏳'}</div>
-                            <div className="text-[9px] font-mono text-[#6b6b85] leading-tight">{meta.label}</div>
-                            <div className="text-[9px] font-mono text-[#444]">{meta.time}</div>
-                            {s && <div className="text-[9px] font-mono text-[#39d98a] mt-1">{s.spot_price?.toLocaleString()}</div>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
-            {/* STEP 4 — Run Analysis */}
+            {/* STEP 4 — Get Z2H Trade */}
             {selectedIsExpiry && snap930 && snap1115 && !result && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6 mb-4">
-                <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-4">Step 4 · Run Analysis</div>
                 {error && (
                   <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#ff4d6d] mb-4">{error}</div>
                 )}
                 <button onClick={runAnalysis} disabled={analyzing}
                   className="w-full bg-[#f0c040] text-black font-black py-3 rounded-xl text-sm hover:bg-[#ffd060] transition-all disabled:opacity-40">
-                  {analyzing ? '⏳ Computing 5 Forces...' : '🚀 Run Zero to Hero Analysis'}
+                  {analyzing ? '⏳ Computing 5 Forces...' : '🚀 Get Z2H Trade'}
                 </button>
               </div>
             )}
