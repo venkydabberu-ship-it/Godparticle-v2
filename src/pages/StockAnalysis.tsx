@@ -67,8 +67,14 @@ export default function StockAnalysis() {
     // Pre-fill symbol from Trending page
     const prefill = (location.state as any)?.prefill;
     if (prefill?.symbol) {
-      setStockName(prefill.symbol);
-      setAnalysisType(prefill.analysisType || 'gct');
+      const sym = prefill.symbol.toUpperCase();
+      const type = prefill.analysisType || 'gct';
+      setAnalysisType(type);
+      if (type === 'intraday') {
+        setStockSearch(sym);
+      } else {
+        setStockName(sym);
+      }
     }
     const replay = (location.state as any)?.replay;
     if (!replay?.result) return;
