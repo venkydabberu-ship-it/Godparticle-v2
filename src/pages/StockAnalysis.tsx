@@ -68,7 +68,7 @@ export default function StockAnalysis() {
     const prefill = (location.state as any)?.prefill;
     if (prefill?.symbol) {
       setStockName(prefill.symbol);
-      setAnalysisType('gct');
+      setAnalysisType(prefill.analysisType || 'gct');
     }
     const replay = (location.state as any)?.replay;
     if (!replay?.result) return;
