@@ -265,12 +265,9 @@ Deno.serve(async function(req) {
       var exch = body.exchange || 'NSE';
       var sfx2 = exch === 'BSE' ? '.BO' : '.NS';
       var ySym2 = symbol.replace(/&/g, '-').toUpperCase() + sfx2;
-      var yq1 = ['https:', '', 'query1.finance.yahoo.com'].join('/');
-      var yHdrs2 = {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15',
-        'Accept': 'application/json',
-        'Referer': ['https:', '', 'finance.yahoo.com'].join('/'),
-      };
+      // Reuse YAHOO_CHART_URL secret (same host) — strip path to get base
+      var yq1 = getYahooBase().split('/v8')[0];
+      var yHdrs2 = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' };
       var v7Res = await fetch(yq1 + '/v7/finance/quote?symbols=' + ySym2, { headers: yHdrs2 });
       if (!v7Res.ok) throw new Error('Yahoo quote ' + v7Res.status + ' for ' + ySym2);
       var v7Json = await v7Res.json();
