@@ -687,131 +687,163 @@ export default function Analysis() {
               );
               const { currentSpot, maxSpot, minSpot, positionPct, reverseZone, suggestedSide, candidates, bestCE, bestPE } = ghostMode;
               const zoneColor = reverseZone === 'TOP' ? '#ff4d6d' : reverseZone === 'BOTTOM' ? '#39d98a' : '#f0c040';
-              const zoneLabel = reverseZone === 'TOP' ? '🔴 NEAR TOP — Buy PE reversal' : reverseZone === 'BOTTOM' ? '🟢 NEAR BOTTOM — Buy CE reversal' : '⏳ MID-RANGE — No ghost trade yet';
               const viabilityColor = (v: string) => v === 'HIGH' ? '#39d98a' : v === 'MEDIUM' ? '#f0c040' : '#6b6b85';
-              const oiTrendIcon = (t: string) => t === 'RISING' ? '↑' : t === 'FALLING' ? '↓' : '→';
               const focusCandidates = suggestedSide ? candidates.filter(c => c.type === suggestedSide) : candidates;
+              const bestPick = suggestedSide === 'CE' ? bestCE : suggestedSide === 'PE' ? bestPE : (bestCE || bestPE);
+
+              // Plain-English status
+              const statusMsg = reverseZone === 'TOP'
+                ? { emoji: '🔴', title: 'Market near TOP', action: 'Buy PE — bet it will fall', color: '#ff4d6d' }
+                : reverseZone === 'BOTTOM'
+                ? { emoji: '🟢', title: 'Market near BOTTOM', action: 'Buy CE — bet it will rise', color: '#39d98a' }
+                : { emoji: '⏳', title: 'Market in middle', action: 'Wait — no trade yet', color: '#f0c040' };
 
               return (
                 <div className="space-y-4">
-                  {/* Range Meter */}
-                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest">📍 Range Position ({rowsData.length} Sessions)</div>
-                      <span className="text-xs font-black px-2 py-0.5 rounded-full border" style={{ color: zoneColor, borderColor: zoneColor + '40', background: zoneColor + '18' }}>
-                        {positionPct.toFixed(0)}% of range
-                      </span>
-                    </div>
-                    <div className="relative w-full h-6 bg-[#16161f] rounded-full overflow-hidden mb-2">
-                      <div className="absolute inset-y-0 left-0 w-[20%] bg-[#39d98a]/20 rounded-l-full" />
-                      <div className="absolute inset-y-0 right-0 w-[20%] bg-[#ff4d6d]/20 rounded-r-full" />
-                      <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-white shadow-lg transition-all"
-                        style={{ left: `calc(${Math.min(Math.max(positionPct, 3), 97)}% - 6px)`, background: zoneColor }} />
-                    </div>
-                    <div className="flex justify-between text-[10px] font-mono text-[#6b6b85] mb-3">
-                      <span>↓ CE Zone (≤20%)<br />Low {minSpot.toLocaleString()}</span>
-                      <span className="text-center">Mid Range<br />No Trade</span>
-                      <span className="text-right">PE Zone (≥80%) ↑<br />High {maxSpot.toLocaleString()}</span>
-                    </div>
-                    <div className="rounded-xl px-4 py-2.5 text-xs font-black text-center" style={{ background: zoneColor + '15', color: zoneColor, border: `1px solid ${zoneColor}30` }}>
-                      {zoneLabel}
+
+                  {/* What is Ghost Mode — newbie intro */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-4">
+                    <div className="text-xs font-black text-[#f0c040] mb-1">👻 What is Ghost Mode?</div>
+                    <div className="text-xs font-mono text-[#6b6b85] leading-relaxed">
+                      Buy cheap options (under ₹50) when the market is near the top or bottom of its recent range.
+                      These options can give <span className="text-[#f0c040] font-black">5x–10x returns</span> if the market reverses.
+                      High risk — only bet what you can afford to lose fully.
                     </div>
                   </div>
 
-                  {/* Best Picks */}
-                  {(bestCE || bestPE) && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {[bestCE, bestPE].filter(Boolean).map((c) => c && (
-                        <div key={`${c.strike}-${c.type}`} className={`rounded-2xl p-4 border ${c.type === 'CE' ? 'border-[#4d9fff]/40 bg-[#4d9fff]/5' : 'border-[#39d98a]/40 bg-[#39d98a]/5'}`}>
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="text-[10px] font-mono text-[#6b6b85] uppercase">⭐ Best {c.type} Ghost Pick</div>
-                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full" style={{ color: viabilityColor(c.viability), background: viabilityColor(c.viability) + '20' }}>{c.viability}</span>
+                  {/* Step 1 — Where is market now */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">Step 1 — Where is the market now?</div>
+
+                    {/* Meter */}
+                    <div className="relative w-full h-7 bg-[#16161f] rounded-full overflow-hidden mb-2">
+                      <div className="absolute inset-y-0 left-0 w-[20%] bg-[#39d98a]/25 rounded-l-full flex items-center justify-center">
+                        <span className="text-[9px] font-black text-[#39d98a]">BUY CE</span>
+                      </div>
+                      <div className="absolute inset-y-0 right-0 w-[20%] bg-[#ff4d6d]/25 rounded-r-full flex items-center justify-center">
+                        <span className="text-[9px] font-black text-[#ff4d6d]">BUY PE</span>
+                      </div>
+                      <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white shadow-lg transition-all"
+                        style={{ left: `calc(${Math.min(Math.max(positionPct, 4), 96)}% - 8px)`, background: zoneColor }} />
+                    </div>
+                    <div className="flex justify-between text-[10px] font-mono text-[#6b6b85] mb-4">
+                      <span>Low: {minSpot.toLocaleString()}</span>
+                      <span>Current: {currentSpot.toLocaleString()} ({positionPct.toFixed(0)}%)</span>
+                      <span>High: {maxSpot.toLocaleString()}</span>
+                    </div>
+
+                    {/* Status banner */}
+                    <div className="rounded-xl px-4 py-3 text-center" style={{ background: statusMsg.color + '15', border: `1px solid ${statusMsg.color}35` }}>
+                      <div className="text-xl mb-0.5">{statusMsg.emoji}</div>
+                      <div className="text-sm font-black" style={{ color: statusMsg.color }}>{statusMsg.title}</div>
+                      <div className="text-xs font-mono text-[#e8e8f0] mt-0.5">{statusMsg.action}</div>
+                    </div>
+                  </div>
+
+                  {/* Step 2 — Best option to buy */}
+                  {bestPick && reverseZone !== 'MIDDLE' && (
+                    <div className="rounded-2xl p-5 border-2" style={{ borderColor: bestPick.type === 'CE' ? '#4d9fff' : '#39d98a', background: (bestPick.type === 'CE' ? '#4d9fff' : '#39d98a') + '08' }}>
+                      <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-2">Step 2 — Best option to buy right now</div>
+
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <div className="text-2xl font-black" style={{ color: bestPick.type === 'CE' ? '#4d9fff' : '#39d98a' }}>
+                            {bestPick.strike} {bestPick.type}
                           </div>
-                          <div className="text-2xl font-black" style={{ color: c.type === 'CE' ? '#4d9fff' : '#39d98a' }}>
-                            {c.strike} {c.type}
-                          </div>
-                          <div className="text-sm font-black text-[#f0c040]">₹{c.ltp.toFixed(1)} <span className="text-xs text-[#6b6b85] font-normal">LTP · {c.otmDist} pts OTM</span></div>
-                          <div className="mt-2 space-y-1 text-[10px] font-mono">
-                            {c.floor > 0 && (
-                              <div className="flex justify-between">
-                                <span className="text-[#6b6b85]">Reversal Floor (OI-WAP)</span>
-                                <span className={c.ltp <= c.floor * 1.05 ? 'text-[#39d98a] font-black' : 'text-[#a78bfa]'}>
-                                  ₹{c.floor.toFixed(1)}{c.ltp <= c.floor * 1.05 ? ' ← AT FLOOR 🎯' : ` (${((c.ltp / c.floor - 1) * 100).toFixed(0)}% above)`}
-                                </span>
-                              </div>
-                            )}
-                            <div className="flex justify-between"><span className="text-[#6b6b85]">5x target (₹{(c.ltp * 5).toFixed(0)})</span><span className="text-[#f0c040]">needs ~{c.pts5x} pt move</span></div>
-                            <div className="flex justify-between"><span className="text-[#6b6b85]">10x target (₹{(c.ltp * 10).toFixed(0)})</span><span className="text-[#f0c040]">needs ~{c.pts10x} pt move</span></div>
-                            <div className="flex justify-between"><span className="text-[#6b6b85]">OI trend</span><span className={c.oiTrend === 'RISING' ? 'text-[#39d98a]' : c.oiTrend === 'FALLING' ? 'text-[#ff4d6d]' : 'text-[#f0c040]'}>{oiTrendIcon(c.oiTrend)} {c.oiTrend} ({(c.oi / 100000).toFixed(1)}L)</span></div>
-                            <div className="flex justify-between"><span className="text-[#6b6b85]">Hard SL</span><span className="text-[#ff4d6d]">₹{(c.ltp * 0.6).toFixed(0)} (40% loss)</span></div>
+                          <div className="text-xs font-mono text-[#6b6b85]">
+                            {bestPick.type === 'CE' ? 'Call option — profits when market goes UP' : 'Put option — profits when market goes DOWN'}
                           </div>
                         </div>
-                      ))}
+                        <div className="text-right">
+                          <div className="text-2xl font-black text-[#f0c040]">₹{bestPick.ltp.toFixed(1)}</div>
+                          <div className="text-[10px] font-mono text-[#6b6b85]">buy price per unit</div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 text-xs font-mono">
+                        {bestPick.floor > 0 && (
+                          <div className={`rounded-lg px-3 py-2 flex justify-between ${bestPick.ltp <= bestPick.floor * 1.05 ? 'bg-[#39d98a]/15 text-[#39d98a]' : 'bg-[#16161f] text-[#a78bfa]'}`}>
+                            <span>{bestPick.ltp <= bestPick.floor * 1.05 ? '🎯 AT FLOOR — good entry zone' : 'Price floor (where it stops falling)'}</span>
+                            <span className="font-black">₹{bestPick.floor.toFixed(1)}</span>
+                          </div>
+                        )}
+                        <div className="bg-[#16161f] rounded-lg px-3 py-2 flex justify-between">
+                          <span className="text-[#6b6b85]">If you invest ₹{bestPick.ltp.toFixed(0)}, a 5x win gives you</span>
+                          <span className="text-[#39d98a] font-black">₹{(bestPick.ltp * 5).toFixed(0)} (need {bestPick.pts5x} pt move)</span>
+                        </div>
+                        <div className="bg-[#16161f] rounded-lg px-3 py-2 flex justify-between">
+                          <span className="text-[#6b6b85]">10x win gives you</span>
+                          <span className="text-[#f0c040] font-black">₹{(bestPick.ltp * 10).toFixed(0)} (need {bestPick.pts10x} pt move)</span>
+                        </div>
+                        <div className="bg-[#ff4d6d]/10 rounded-lg px-3 py-2 flex justify-between">
+                          <span className="text-[#6b6b85]">Exit immediately if price falls to</span>
+                          <span className="text-[#ff4d6d] font-black">₹{(bestPick.ltp * 0.6).toFixed(0)} (stop loss)</span>
+                        </div>
+                      </div>
                     </div>
                   )}
 
-                  {/* Entry checklist */}
+                  {/* Step 3 — When to enter */}
                   <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-4">
-                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">✅ Ghost Mode Entry Checklist</div>
+                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">Step 3 — When to enter</div>
                     <div className="space-y-2">
                       {[
-                        { label: 'Condition 1 — Range Extreme', check: reverseZone !== 'MIDDLE', note: reverseZone !== 'MIDDLE' ? `Spot at ${positionPct.toFixed(0)}% of range` : `Spot at ${positionPct.toFixed(0)}% — needs ≥80% or ≤20%` },
-                        { label: 'Condition 2 — Active Option vs PCB', check: result ? result.lc > result.pcb * 1.3 : false, note: result ? `LTP ₹${result.lc.toFixed(1)} vs PCB ₹${result.pcb.toFixed(1)}` : '—' },
-                        { label: 'Condition 3 — OI Divergence', check: false, note: 'Check manually: price vs OI direction' },
-                        { label: 'Condition 4 — 15-min Candle Trigger', check: false, note: 'Wait for reversal candle at range extreme' },
-                        { label: 'Condition 5 — Time Window', check: false, note: '10:00–11:30 AM or 1:15–2:00 PM only' },
-                      ].map((item, i) => (
+                        {
+                          icon: reverseZone !== 'MIDDLE' ? '✅' : '⏳',
+                          ok: reverseZone !== 'MIDDLE',
+                          title: 'Market must be near top or bottom',
+                          note: reverseZone !== 'MIDDLE' ? `Currently at ${positionPct.toFixed(0)}% — zone is active` : `Currently at ${positionPct.toFixed(0)}% — wait for it to reach green or red zone`,
+                        },
+                        { icon: '🕐', ok: false, title: 'Enter only during these times', note: '10:00–11:30 AM  or  1:15–2:00 PM' },
+                        { icon: '🕯️', ok: false, title: 'Wait for a reversal signal candle', note: 'On a 15-min chart, look for a green candle at bottom or red candle at top' },
+                        { icon: '🚫', ok: false, title: 'Exit immediately if option drops 40%', note: `That means exit if price falls below ₹${bestPick ? (bestPick.ltp * 0.6).toFixed(0) : '—'} — no second chances` },
+                      ].map((step, i) => (
                         <div key={i} className="flex items-start gap-3">
-                          <div className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center text-[10px] shrink-0 ${item.check ? 'bg-[#39d98a]/20 text-[#39d98a]' : 'bg-[#16161f] text-[#6b6b85]'}`}>
-                            {item.check ? '✓' : i + 1}
+                          <div className={`mt-0.5 w-6 h-6 rounded-lg flex items-center justify-center text-xs shrink-0 ${step.ok ? 'bg-[#39d98a]/20' : 'bg-[#16161f]'}`}>
+                            {step.icon}
                           </div>
                           <div>
-                            <div className="text-xs font-bold text-[#e8e8f0]">{item.label}</div>
-                            <div className="text-[10px] font-mono text-[#6b6b85]">{item.note}</div>
+                            <div className={`text-xs font-bold ${step.ok ? 'text-[#39d98a]' : 'text-[#e8e8f0]'}`}>{step.title}</div>
+                            <div className="text-[10px] font-mono text-[#6b6b85]">{step.note}</div>
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Full candidates table */}
+                  {/* Step 4 — All options table (simplified) */}
                   {focusCandidates.length > 0 && (
                     <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
-                      <div className="px-4 py-3 border-b border-[#1e1e2e] text-xs font-mono text-[#6b6b85] uppercase tracking-widest">
-                        All Sub-₹50 OTM Candidates {suggestedSide ? `(${suggestedSide} — reversal side)` : '(both sides)'}
+                      <div className="px-4 py-3 border-b border-[#1e1e2e]">
+                        <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest">Step 4 — All cheap options under ₹50</div>
+                        <div className="text-[10px] font-mono text-[#6b6b85] mt-0.5">Sorted by signal strength. Buy price shown.</div>
                       </div>
                       <table className="w-full text-xs font-mono">
                         <thead><tr className="border-b border-[#1e1e2e]">
-                          {['Strike', 'Type', 'LTP', 'Floor', 'OTM', 'OI Trend', '5x pts', '10x pts', 'Grade'].map(h => (
-                            <th key={h} className="text-left px-3 py-2.5 text-[#6b6b85] font-normal">{h}</th>
+                          {['Strike', 'CE/PE', 'Buy at', 'Floor', '5x at', '10x at', 'Signal'].map(h => (
+                            <th key={h} className="text-left px-3 py-2 text-[#6b6b85] font-normal text-[10px]">{h}</th>
                           ))}
                         </tr></thead>
                         <tbody>
                           {focusCandidates.map((c, i) => {
                             const atFloor = c.floor > 0 && c.ltp <= c.floor * 1.05;
-                            const aboveFloorPct = c.floor > 0 ? ((c.ltp / c.floor - 1) * 100) : null;
+                            const signalEmoji = c.viability === 'HIGH' ? '🟢' : c.viability === 'MEDIUM' ? '🟡' : '⚪';
                             return (
-                            <tr key={i} className={`border-b border-[#1e1e2e]/50 hover:bg-[#f0c040]/5 ${atFloor ? 'bg-[#39d98a]/8' : c.viability === 'HIGH' ? 'bg-[#39d98a]/3' : ''}`}>
-                              <td className="px-3 py-2.5 font-bold">{c.strike}</td>
-                              <td className="px-3 py-2.5" style={{ color: c.type === 'CE' ? '#4d9fff' : '#39d98a' }}>{c.type}</td>
-                              <td className="px-3 py-2.5 text-[#f0c040] font-bold">₹{c.ltp.toFixed(1)}</td>
-                              <td className="px-3 py-2.5">
-                                {c.floor > 0
-                                  ? <span className={atFloor ? 'text-[#39d98a] font-black' : 'text-[#a78bfa]'}>
-                                      ₹{c.floor.toFixed(1)}{atFloor ? ' 🎯' : aboveFloorPct !== null ? ` +${aboveFloorPct.toFixed(0)}%` : ''}
-                                    </span>
-                                  : <span className="text-[#6b6b85]">—</span>}
-                              </td>
-                              <td className="px-3 py-2.5 text-[#e8e8f0]">{c.otmDist}</td>
-                              <td className="px-3 py-2.5" style={{ color: c.oiTrend === 'RISING' ? '#39d98a' : c.oiTrend === 'FALLING' ? '#ff4d6d' : '#f0c040' }}>
-                                {oiTrendIcon(c.oiTrend)} {c.oiTrend}
-                              </td>
-                              <td className="px-3 py-2.5 text-[#e8e8f0]">{c.pts5x}</td>
-                              <td className="px-3 py-2.5 text-[#6b6b85]">{c.pts10x}</td>
-                              <td className="px-3 py-2.5">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-black" style={{ color: viabilityColor(c.viability), background: viabilityColor(c.viability) + '20' }}>{c.viability}</span>
-                              </td>
-                            </tr>
+                              <tr key={i} className={`border-b border-[#1e1e2e]/50 hover:bg-[#f0c040]/5 ${atFloor ? 'bg-[#39d98a]/5' : ''}`}>
+                                <td className="px-3 py-2.5 font-bold text-[#e8e8f0]">{c.strike}</td>
+                                <td className="px-3 py-2.5 font-black" style={{ color: c.type === 'CE' ? '#4d9fff' : '#39d98a' }}>{c.type}</td>
+                                <td className="px-3 py-2.5 text-[#f0c040] font-bold">₹{c.ltp.toFixed(1)}</td>
+                                <td className="px-3 py-2.5">
+                                  {c.floor > 0
+                                    ? <span className={atFloor ? 'text-[#39d98a] font-black' : 'text-[#a78bfa]'}>₹{c.floor.toFixed(1)}{atFloor ? ' 🎯' : ''}</span>
+                                    : <span className="text-[#6b6b85]">—</span>}
+                                </td>
+                                <td className="px-3 py-2.5 text-[#39d98a]">₹{(c.ltp * 5).toFixed(0)}</td>
+                                <td className="px-3 py-2.5 text-[#f0c040]">₹{(c.ltp * 10).toFixed(0)}</td>
+                                <td className="px-3 py-2.5">
+                                  <span className="font-black" style={{ color: viabilityColor(c.viability) }}>{signalEmoji} {c.viability}</span>
+                                </td>
+                              </tr>
                             );
                           })}
                         </tbody>
@@ -820,7 +852,7 @@ export default function Analysis() {
                   )}
 
                   <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/20 rounded-xl px-4 py-3 text-[10px] font-mono text-[#ff4d6d]">
-                    ⚠️ Ghost Mode: Max 2 lots · Hard SL at 40% loss · Exit by 12:30 PM if ≤2 days to expiry · Win rate ~30% — sizing and discipline are everything.
+                    ⚠️ Risk warning: Max 2 lots only · Win rate is ~30% — most trades will lose · Never invest money you can't afford to lose fully · This is for experienced traders only.
                   </div>
                 </div>
               );
