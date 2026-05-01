@@ -15,7 +15,8 @@ export default function StockAnalysis() {
   const [exchange, setExchange] = useState<'NSE' | 'BSE'>('NSE');
   const [sector, setSector] = useState('Default');
   const [csvData, setCsvData] = useState<any[]>([]);
-  const [dataSource, setDataSource] = useState<'upload' | 'autofetch'>('upload');
+  const [dataSource, setDataSource] = useState<'upload' | 'autofetch'>('autofetch');
+  const [stockSuggestions, setStockSuggestions] = useState<{symbol:string;name:string}[]>([]);
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchMsg, setFetchMsg] = useState('');
   const [optExpiry, setOptExpiry] = useState('');
@@ -1039,10 +1040,29 @@ export default function StockAnalysis() {
                         )}
                       </div>
                     ) : (
-                      <input type="text" value={stockName}
-                        onChange={e => setStockName(e.target.value.toUpperCase())}
-                        placeholder="e.g. RELIANCE, SBI, TCS"
-                        className="flex-1 bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                      <div className="flex-1 relative">
+                        <input type="text" value={stockName}
+                          onChange={e => {
+                            const v = e.target.value.toUpperCase();
+                            setStockName(v);
+                            setStockSuggestions(v.length >= 1 ? searchStocks(v, exchange).slice(0, 6) : []);
+                          }}
+                          onBlur={() => setTimeout(() => setStockSuggestions([]), 150)}
+                          placeholder="e.g. RELIANCE, SBI, TCS"
+                          className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                        {stockSuggestions.length > 0 && (
+                          <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-[#16161f] border border-[#1e1e2e] rounded-lg overflow-hidden shadow-xl">
+                            {stockSuggestions.map(s => (
+                              <button key={s.symbol} type="button"
+                                onMouseDown={() => { setStockName(s.symbol); setStockSuggestions([]); }}
+                                className="w-full text-left px-3 py-2 hover:bg-[#f0c040]/10 border-b border-[#1e1e2e]/50 last:border-0">
+                                <span className="text-xs font-black text-[#f0c040]">{s.symbol}</span>
+                                <span className="text-[10px] font-mono text-[#6b6b85] ml-2 truncate">{s.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
