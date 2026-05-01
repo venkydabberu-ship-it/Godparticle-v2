@@ -207,18 +207,17 @@ Deno.serve(async function(req) {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return respond({ success: false, error: 'Unauthorized' }, 401);
   }
-  var userId: string;
+  var userId;
   try {
-    var sbClient = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
+    var sbUrl  = Deno.env.get('SUPABASE_URL');
+    var sbAnon = Deno.env.get('SUPABASE_ANON_KEY');
+    var sbClient = createClient(sbUrl, sbAnon, { global: { headers: { Authorization: authHeader } } });
     var authResult = await sbClient.auth.getUser();
-    if (authResult.error || !authResult.data.user) {
+    var authedUser = authResult && authResult.data && authResult.data.user;
+    if (authResult.error || !authedUser) {
       return respond({ success: false, error: 'Unauthorized' }, 401);
     }
-    userId = authResult.data.user.id;
+    userId = authedUser['id'];
   } catch(_authErr) {
     return respond({ success: false, error: 'Unauthorized' }, 401);
   }
@@ -243,10 +242,9 @@ Deno.serve(async function(req) {
     // ── SERVER-SIDE CREDIT CHECK ──
     var cost = CREDIT_COST[type] ?? 0;
     if (cost > 0) {
-      var sbAdmin = createClient(
-        Deno.env.get('SUPABASE_URL')!,
-        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-      );
+      var sbUrl3  = Deno.env.get('SUPABASE_URL');
+      var sbSvcKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      var sbAdmin = createClient(sbUrl3, sbSvcKey);
       var { data: creditResult } = await sbAdmin.rpc('consume_credits', {
         p_user_id: userId,
         p_amount:  cost,
