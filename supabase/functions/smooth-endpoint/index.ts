@@ -1,11 +1,23 @@
 // smooth-endpoint — stock prices + option chains + market movers
 // Optional secrets: UPSTOX_ACCESS_TOKEN, UPSTOX_URL, UPSTOX_QUOTE_URL, YAHOO_CHART_URL
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const ALLOWED_ORIGINS = [
+  'https://godparticle.life',
+  'https://www.godparticle.life',
+  'http://localhost:5173',
+  'http://localhost:3000',
+];
+
+function corsHeaders(origin) {
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowed,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  };
+}
 
 function hdrs(token) {
   return { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' };
@@ -151,6 +163,9 @@ async function fetchYahooMovers(symbols, exchange) {
 }
 
 Deno.serve(async function(req) {
+  var origin = req.headers.get('Origin') || '';
+  var CORS = corsHeaders(origin);
+
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
   var respond = function(body, status) {
@@ -159,6 +174,25 @@ Deno.serve(async function(req) {
       headers: Object.assign({}, CORS, { 'Content-Type': 'application/json' }),
     });
   };
+
+  // ── AUTH CHECK — require valid Supabase session ──
+  var authHeader = req.headers.get('Authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return respond({ success: false, error: 'Unauthorized' }, 401);
+  }
+  try {
+    var sbClient = createClient(
+      Deno.env.get('SUPABASE_URL'),
+      Deno.env.get('SUPABASE_ANON_KEY'),
+      { global: { headers: { Authorization: authHeader } } }
+    );
+    var authResult = await sbClient.auth.getUser();
+    if (authResult.error || !authResult.data.user) {
+      return respond({ success: false, error: 'Unauthorized' }, 401);
+    }
+  } catch(_authErr) {
+    return respond({ success: false, error: 'Unauthorized' }, 401);
+  }
 
   try {
     var body = await req.json();
