@@ -3,6 +3,33 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// Credit cost per operation (0 = always free)
+const CREDIT_COST: Record<string, number> = {
+  stock_price:        2,
+  stock_chain:        2,
+  market_movers:      0,
+  stock_fundamentals: 0,
+};
+
+// Simple in-memory rate limiter: max 20 requests per user per 60s
+const rateLimitMap = new Map<string, { count: number; reset: number }>();
+function checkRateLimit(userId: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(userId);
+  if (!entry || now > entry.reset) {
+    rateLimitMap.set(userId, { count: 1, reset: now + 60_000 });
+    return true;
+  }
+  if (entry.count >= 20) return false;
+  entry.count++;
+  return true;
+}
+
+// Strict symbol validation — only NSE/BSE symbols allowed
+function validSymbol(s: string): boolean {
+  return /^[A-Z0-9&\-]{1,20}$/.test(s);
+}
+
 const ALLOWED_ORIGINS = [
   'https://godparticle.life',
   'https://www.godparticle.life',
@@ -175,23 +202,30 @@ Deno.serve(async function(req) {
     });
   };
 
-  // ── AUTH CHECK — require valid Supabase session ──
+  // ── AUTH CHECK ──
   var authHeader = req.headers.get('Authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return respond({ success: false, error: 'Unauthorized' }, 401);
   }
+  var userId: string;
   try {
     var sbClient = createClient(
-      Deno.env.get('SUPABASE_URL'),
-      Deno.env.get('SUPABASE_ANON_KEY'),
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
       { global: { headers: { Authorization: authHeader } } }
     );
     var authResult = await sbClient.auth.getUser();
     if (authResult.error || !authResult.data.user) {
       return respond({ success: false, error: 'Unauthorized' }, 401);
     }
+    userId = authResult.data.user.id;
   } catch(_authErr) {
     return respond({ success: false, error: 'Unauthorized' }, 401);
+  }
+
+  // ── RATE LIMIT ──
+  if (!checkRateLimit(userId)) {
+    return respond({ success: false, error: 'Too many requests — slow down' }, 429);
   }
 
   try {
@@ -200,6 +234,27 @@ Deno.serve(async function(req) {
     var symbol = body.symbol;
 
     if (!type) return respond({ success: false, error: 'Missing type' }, 400);
+
+    // ── INPUT VALIDATION ──
+    if (symbol && !validSymbol(symbol.toUpperCase())) {
+      return respond({ success: false, error: 'Invalid symbol' }, 400);
+    }
+
+    // ── SERVER-SIDE CREDIT CHECK ──
+    var cost = CREDIT_COST[type] ?? 0;
+    if (cost > 0) {
+      var sbAdmin = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      );
+      var { data: creditResult } = await sbAdmin.rpc('consume_credits', {
+        p_user_id: userId,
+        p_amount:  cost,
+      });
+      if (!creditResult?.ok) {
+        return respond({ success: false, error: creditResult?.error || 'Not enough credits' }, 402);
+      }
+    }
 
     // ── STOCK PRICE ──
     if (type === 'stock_price') {
