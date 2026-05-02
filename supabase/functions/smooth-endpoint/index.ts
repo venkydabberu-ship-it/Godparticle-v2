@@ -216,8 +216,9 @@ Deno.serve(async function(req) {
     });
     if (!authRes.ok) return respond({ success: false, error: 'Unauthorized' }, 401);
     var authJson = await authRes.json();
-    if (!authJson.id) return respond({ success: false, error: 'Unauthorized' }, 401);
-    userId = authJson.id;
+    var uid = authJson['id'];
+    if (!uid) return respond({ success: false, error: 'Unauthorized' }, 401);
+    userId = uid;
   } catch(_authErr) {
     return respond({ success: false, error: 'Unauthorized' }, 401);
   }
