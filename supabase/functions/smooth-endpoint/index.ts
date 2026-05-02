@@ -1,7 +1,6 @@
 // smooth-endpoint — stock prices + option chains + market movers
 // Optional secrets: UPSTOX_ACCESS_TOKEN, UPSTOX_URL, UPSTOX_QUOTE_URL, YAHOO_CHART_URL
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 // Credit cost per operation (0 = always free)
 const CREDIT_COST: Record<string, number> = {
@@ -212,13 +211,13 @@ Deno.serve(async function(req) {
   try {
     var sbUrl  = Deno.env.get('SUPABASE_URL');
     var sbAnon = Deno.env.get('SUPABASE_ANON_KEY');
-    var sbClient = createClient(sbUrl, sbAnon, { global: { headers: { Authorization: authHeader } } });
-    var authResult = await sbClient.auth.getUser();
-    var authedUser = authResult && authResult.data && authResult.data.user;
-    if (authResult.error || !authedUser) {
-      return respond({ success: false, error: 'Unauthorized' }, 401);
-    }
-    userId = authedUser['id'];
+    var authRes = await fetch(sbUrl + '/auth/v1/user', {
+      headers: { 'Authorization': authHeader, 'apikey': sbAnon }
+    });
+    if (!authRes.ok) return respond({ success: false, error: 'Unauthorized' }, 401);
+    var authJson = await authRes.json();
+    if (!authJson.id) return respond({ success: false, error: 'Unauthorized' }, 401);
+    userId = authJson.id;
   } catch(_authErr) {
     return respond({ success: false, error: 'Unauthorized' }, 401);
   }
@@ -243,15 +242,19 @@ Deno.serve(async function(req) {
     // ── SERVER-SIDE CREDIT CHECK ──
     var cost = CREDIT_COST[type] ?? 0;
     if (cost > 0) {
-      var sbUrl3  = Deno.env.get('SUPABASE_URL');
       var sbSvcKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-      var sbAdmin = createClient(sbUrl3, sbSvcKey);
-      var { data: creditResult } = await sbAdmin.rpc('consume_credits', {
-        p_user_id: userId,
-        p_amount:  cost,
+      var rpcRes = await fetch(sbUrl + '/rest/v1/rpc/consume_credits', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + sbSvcKey,
+          'apikey': sbSvcKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ p_user_id: userId, p_amount: cost }),
       });
-      if (!creditResult?.ok) {
-        return respond({ success: false, error: creditResult?.error || 'Not enough credits' }, 402);
+      var creditResult = await rpcRes.json();
+      if (!creditResult || !creditResult.ok) {
+        return respond({ success: false, error: (creditResult && creditResult.error) || 'Not enough credits' }, 402);
       }
     }
 
