@@ -1,11 +1,50 @@
 // smooth-endpoint — stock prices + option chains + market movers
 // Optional secrets: UPSTOX_ACCESS_TOKEN, UPSTOX_URL, UPSTOX_QUOTE_URL, YAHOO_CHART_URL
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+
+// Credit cost per operation (0 = always free)
+const CREDIT_COST: Record<string, number> = {
+  stock_price:        2,
+  stock_chain:        2,
+  market_movers:      0,
+  stock_fundamentals: 0,
+  sector_rr:          0,
 };
+
+// Simple in-memory rate limiter: max 20 requests per user per 60s
+const rateLimitMap = new Map<string, { count: number; reset: number }>();
+function checkRateLimit(userId: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(userId);
+  if (!entry || now > entry.reset) {
+    rateLimitMap.set(userId, { count: 1, reset: now + 60_000 });
+    return true;
+  }
+  if (entry.count >= 20) return false;
+  entry.count++;
+  return true;
+}
+
+// Strict symbol validation — only NSE/BSE symbols allowed
+function validSymbol(s: string): boolean {
+  return /^[A-Z0-9&\-]{1,20}$/.test(s);
+}
+
+const ALLOWED_ORIGINS = [
+  'https://godparticle.life',
+  'https://www.godparticle.life',
+  'http://localhost:5173',
+  'http://localhost:3000',
+];
+
+function corsHeaders(origin) {
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowed,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  };
+}
 
 function hdrs(token) {
   return { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' };
@@ -151,6 +190,9 @@ async function fetchYahooMovers(symbols, exchange) {
 }
 
 Deno.serve(async function(req) {
+  var origin = req.headers.get('Origin') || '';
+  var CORS = corsHeaders(origin);
+
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
   var respond = function(body, status) {
@@ -160,12 +202,62 @@ Deno.serve(async function(req) {
     });
   };
 
+  // ── AUTH CHECK ──
+  var authHeader = req.headers.get('Authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return respond({ success: false, error: 'Unauthorized' }, 401);
+  }
+  var userId;
+  try {
+    var sbUrl  = Deno.env.get('SUPABASE_URL');
+    var sbAnon = Deno.env.get('SUPABASE_ANON_KEY');
+    var authRes = await fetch(sbUrl + '/auth/v1/user', {
+      headers: { 'Authorization': authHeader, 'apikey': sbAnon }
+    });
+    if (!authRes.ok) return respond({ success: false, error: 'Unauthorized' }, 401);
+    var authJson = await authRes.json();
+    var uid = authJson['id'];
+    if (!uid) return respond({ success: false, error: 'Unauthorized' }, 401);
+    userId = uid;
+  } catch(_authErr) {
+    return respond({ success: false, error: 'Unauthorized' }, 401);
+  }
+
+  // ── RATE LIMIT ──
+  if (!checkRateLimit(userId)) {
+    return respond({ success: false, error: 'Too many requests — slow down' }, 429);
+  }
+
   try {
     var body = await req.json();
     var type = body.type;
     var symbol = body.symbol;
 
     if (!type) return respond({ success: false, error: 'Missing type' }, 400);
+
+    // ── INPUT VALIDATION ──
+    if (symbol && !validSymbol(symbol.toUpperCase())) {
+      return respond({ success: false, error: 'Invalid symbol' }, 400);
+    }
+
+    // ── SERVER-SIDE CREDIT CHECK ──
+    var cost = CREDIT_COST[type] ?? 0;
+    if (cost > 0) {
+      var sbSvcKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      var rpcRes = await fetch(sbUrl + '/rest/v1/rpc/consume_credits', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + sbSvcKey,
+          'apikey': sbSvcKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ p_user_id: userId, p_amount: cost }),
+      });
+      var creditResult = await rpcRes.json();
+      if (!creditResult || !creditResult.ok) {
+        return respond({ success: false, error: (creditResult && creditResult.error) || 'Not enough credits' }, 402);
+      }
+    }
 
     // ── STOCK PRICE ──
     if (type === 'stock_price') {
@@ -297,6 +389,43 @@ Deno.serve(async function(req) {
         profit2:   ish2[1] ? toCr(ish2[1].netIncome && ish2[1].netIncome.raw) : 0,
         profit3:   ish2[0] ? toCr(ish2[0].netIncome && ish2[0].netIncome.raw) : 0,
       }});
+    }
+
+    // ── SECTOR ROTATION DATA ──
+    if (type === 'sector_rr') {
+      var sectorList = [
+        { name: 'NIFTY 50',  sym: '^NSEI'      },
+        { name: 'Bank',      sym: '^NSEBANK'    },
+        { name: 'IT',        sym: '^CNXIT'      },
+        { name: 'Pharma',    sym: '^CNXPHARMA'  },
+        { name: 'Auto',      sym: '^CNXAUTO'    },
+        { name: 'Metal',     sym: '^CNXMETAL'   },
+        { name: 'FMCG',      sym: '^CNXFMCG'    },
+        { name: 'Realty',    sym: '^CNXREALTY'  },
+        { name: 'Energy',    sym: '^CNXENERGY'  },
+        { name: 'Financial', sym: '^CNXFINANCE' },
+      ];
+      var chartBase2 = getYahooBase();
+      var sectorResults = await Promise.all(sectorList.map(async function(s) {
+        try {
+          var url2 = chartBase2 + '/' + encodeURIComponent(s.sym) + '?range=3mo&interval=1wk';
+          var r2 = await fetch(url2, { headers: yahooHdrs() });
+          if (!r2.ok) return { name: s.name, sym: s.sym, closes: [], changePct: 0 };
+          var j2 = await r2.json();
+          var res2 = j2.chart && j2.chart.result && j2.chart.result[0];
+          if (!res2) return { name: s.name, sym: s.sym, closes: [], changePct: 0 };
+          var qq = (res2.indicators && res2.indicators.quote && res2.indicators.quote[0]) || {};
+          var closes2 = (qq.close || []).filter(function(c) { return c != null && c > 0; });
+          var meta2 = res2.meta || {};
+          var curr2 = meta2.regularMarketPrice || (closes2.length ? closes2[closes2.length - 1] : 0);
+          var prev2 = meta2.chartPreviousClose || (closes2.length >= 2 ? closes2[closes2.length - 2] : curr2);
+          var chgPct2 = prev2 > 0 ? (curr2 - prev2) / prev2 * 100 : 0;
+          return { name: s.name, sym: s.sym, closes: closes2, changePct: Math.round(chgPct2 * 100) / 100, currentPrice: Math.round(curr2) };
+        } catch(_e3) {
+          return { name: s.name, sym: s.sym, closes: [], changePct: 0 };
+        }
+      }));
+      return respond({ success: true, data: sectorResults });
     }
 
     return respond({ success: false, error: 'Unknown type: ' + type }, 400);

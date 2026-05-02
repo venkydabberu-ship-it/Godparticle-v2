@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { supabase, callEdge } from '../lib/supabase';
 import { NSE_STOCKS } from '../lib/stockList';
 
 interface StockQuote {
@@ -50,10 +50,8 @@ export default function Trending() {
       for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
         const batch = symbols.slice(i, i + BATCH_SIZE);
         setProgress(`Fetching ${Math.min(i + BATCH_SIZE, symbols.length)} / ${symbols.length} stocks…`);
-        const { data, error: fnErr } = await supabase.functions.invoke('smooth-endpoint', {
-          body: { type: 'market_movers', symbols: batch, exchange: 'NSE' },
-        });
-        if (fnErr || !data?.success) throw new Error(data?.error || 'Fetch failed');
+        const data = await callEdge('smooth-endpoint', { type: 'market_movers', symbols: batch, exchange: 'NSE' });
+        if (!data?.success) throw new Error(data?.error || 'Fetch failed');
         if (data.debug) setDebugInfo(JSON.stringify(data.debug));
         all.push(...(data.data as StockQuote[]));
       }

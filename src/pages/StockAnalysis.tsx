@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabase';
+import { supabase, callEdge } from '../lib/supabase';
 import { computeGodParticle, generateScenarioMatrix, saveAnalysis } from '../lib/market';
 import { searchStocks } from '../lib/stockList';
 
@@ -15,7 +15,8 @@ export default function StockAnalysis() {
   const [exchange, setExchange] = useState<'NSE' | 'BSE'>('NSE');
   const [sector, setSector] = useState('Default');
   const [csvData, setCsvData] = useState<any[]>([]);
-  const [dataSource, setDataSource] = useState<'upload' | 'autofetch'>('upload');
+  const [dataSource, setDataSource] = useState<'upload' | 'autofetch'>('autofetch');
+  const [stockSuggestions, setStockSuggestions] = useState<{symbol:string;name:string}[]>([]);
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchMsg, setFetchMsg] = useState('');
   const [optExpiry, setOptExpiry] = useState('');
@@ -156,13 +157,7 @@ export default function StockAnalysis() {
       setFetchMsg(`⏳ Fetching 14 months from ${exchange} via server...`);
 
       // Use smooth-endpoint directly (routes stock_price to Yahoo Finance)
-      const { data, error: fnError } = await supabase.functions.invoke('smooth-endpoint', {
-        body: { type: 'stock_price', symbol: stockName.toUpperCase(), exchange }
-      });
-
-      if (fnError) throw new Error(fnError.message.includes('non-2xx')
-        ? `Edge function error — if using BSE, run: supabase functions deploy smooth-endpoint`
-        : fnError.message);
+      const data = await callEdge('smooth-endpoint', { type: 'stock_price', symbol: stockName.toUpperCase(), exchange });
       if (!data?.success) throw new Error(data?.error || 'Fetch failed');
 
       const records: any[] = data.data?.data || [];
@@ -247,11 +242,7 @@ export default function StockAnalysis() {
       setOptFetchMsg('⏳ Fetching stock option chain via server...');
 
       // Use smooth-endpoint directly (routes stock_chain to Upstox v2)
-      const { data, error: fnError } = await supabase.functions.invoke('smooth-endpoint', {
-        body: { type: 'stock_chain', symbol: stockName.toUpperCase() }
-      });
-
-      if (fnError) throw new Error(fnError.message);
+      const data = await callEdge('smooth-endpoint', { type: 'stock_chain', symbol: stockName.toUpperCase() });
       if (!data?.success) throw new Error(data?.error || 'Fetch failed');
 
       // smooth-endpoint returns { allExpiries: [{ expiry, strikes, spotPrice }], tradeDate }
@@ -460,10 +451,8 @@ export default function StockAnalysis() {
     setFundLoading(true);
     setFundMsg('⏳ Fetching fundamentals from Yahoo Finance...');
     try {
-      const { data, error: fnErr } = await supabase.functions.invoke('smooth-endpoint', {
-        body: { type: 'stock_fundamentals', symbol: stockName.toUpperCase(), exchange }
-      });
-      if (fnErr || !data?.success) throw new Error(data?.error || 'Fetch failed');
+      const data = await callEdge('smooth-endpoint', { type: 'stock_fundamentals', symbol: stockName.toUpperCase(), exchange });
+      if (!data?.success) throw new Error(data?.error || 'Fetch failed');
       const d = data.data;
       if (d.pe)       setPe(String(d.pe));
       if (d.eps)      setEps(String(d.eps));
@@ -786,10 +775,8 @@ export default function StockAnalysis() {
     setPrevLow('');
     setPrevClose('');
     try {
-      const { data, error: fnErr } = await supabase.functions.invoke('smooth-endpoint', {
-        body: { type: 'stock_price', symbol: symbol.toUpperCase(), exchange }
-      });
-      if (fnErr || !data?.success) throw new Error(data?.error || 'Fetch failed');
+      const data = await callEdge('smooth-endpoint', { type: 'stock_price', symbol: symbol.toUpperCase(), exchange });
+      if (!data?.success) throw new Error(data?.error || 'Fetch failed');
       const records: any[] = data.data?.data || [];
       if (!records.length) throw new Error(`No price data for ${symbol}`);
       const latest = records[records.length - 1];
@@ -1039,10 +1026,29 @@ export default function StockAnalysis() {
                         )}
                       </div>
                     ) : (
-                      <input type="text" value={stockName}
-                        onChange={e => setStockName(e.target.value.toUpperCase())}
-                        placeholder="e.g. RELIANCE, SBI, TCS"
-                        className="flex-1 bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                      <div className="flex-1 relative">
+                        <input type="text" value={stockName}
+                          onChange={e => {
+                            const v = e.target.value.toUpperCase();
+                            setStockName(v);
+                            setStockSuggestions(v.length >= 1 ? searchStocks(v, exchange).slice(0, 6) : []);
+                          }}
+                          onBlur={() => setTimeout(() => setStockSuggestions([]), 150)}
+                          placeholder="e.g. RELIANCE, SBI, TCS"
+                          className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                        {stockSuggestions.length > 0 && (
+                          <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-[#16161f] border border-[#1e1e2e] rounded-lg overflow-hidden shadow-xl">
+                            {stockSuggestions.map(s => (
+                              <button key={s.symbol} type="button"
+                                onMouseDown={() => { setStockName(s.symbol); setStockSuggestions([]); }}
+                                className="w-full text-left px-3 py-2 hover:bg-[#f0c040]/10 border-b border-[#1e1e2e]/50 last:border-0">
+                                <span className="text-xs font-black text-[#f0c040]">{s.symbol}</span>
+                                <span className="text-[10px] font-mono text-[#6b6b85] ml-2 truncate">{s.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>

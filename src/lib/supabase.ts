@@ -7,7 +7,45 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: true, autoRefreshToken: true },
+});
+
+// Session-safe edge function caller: uses direct fetch, refreshes token on 401, redirects to login if session gone
+export async function callEdge(fnName: string, body: Record<string, unknown>): Promise<any> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  if (!sessionData.session) {
+    window.location.href = '/login';
+    throw new Error('Session expired. Please log in again.');
+  }
+
+  const fnUrl = supabaseUrl + '/functions/v1/' + fnName;
+
+  const doFetch = (token: string) => fetch(fnUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'apikey': supabaseAnonKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  let res = await doFetch(sessionData.session.access_token);
+
+  if (res.status === 401) {
+    const { data: refreshed, error: rErr } = await supabase.auth.refreshSession();
+    if (rErr || !refreshed.session) {
+      window.location.href = '/login';
+      throw new Error('Session expired. Please log in again.');
+    }
+    res = await doFetch(refreshed.session.access_token);
+  }
+
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || 'Edge function error ' + res.status);
+  return json;
+}
 
 export type UserRole = 'free' | 'basic' | 'premium' | 'admin';
 
