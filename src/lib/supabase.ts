@@ -11,7 +11,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: { persistSession: true, autoRefreshToken: true },
 });
 
-// Session-safe edge function caller: refreshes token on 401, redirects to login if session gone
+// Session-safe edge function caller: uses direct fetch, refreshes token on 401, redirects to login if session gone
 export async function callEdge(fnName: string, body: Record<string, unknown>): Promise<any> {
   const { data: sessionData } = await supabase.auth.getSession();
   if (!sessionData.session) {
@@ -19,24 +19,32 @@ export async function callEdge(fnName: string, body: Record<string, unknown>): P
     throw new Error('Session expired. Please log in again.');
   }
 
-  const { data, error } = await supabase.functions.invoke(fnName, { body });
+  const fnUrl = supabaseUrl + '/functions/v1/' + fnName;
 
-  if (error) {
-    const msg = (error.message || '').toLowerCase();
-    if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('non-2xx')) {
-      const { data: refreshed, error: rErr } = await supabase.auth.refreshSession();
-      if (rErr || !refreshed.session) {
-        window.location.href = '/login';
-        throw new Error('Session expired. Please log in again.');
-      }
-      const { data: retryData, error: retryErr } = await supabase.functions.invoke(fnName, { body });
-      if (retryErr) throw new Error(retryErr.message);
-      return retryData;
+  const doFetch = (token: string) => fetch(fnUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'apikey': supabaseAnonKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  let res = await doFetch(sessionData.session.access_token);
+
+  if (res.status === 401) {
+    const { data: refreshed, error: rErr } = await supabase.auth.refreshSession();
+    if (rErr || !refreshed.session) {
+      window.location.href = '/login';
+      throw new Error('Session expired. Please log in again.');
     }
-    throw new Error(error.message);
+    res = await doFetch(refreshed.session.access_token);
   }
 
-  return data;
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || 'Edge function error ' + res.status);
+  return json;
 }
 
 export type UserRole = 'free' | 'basic' | 'premium' | 'admin';

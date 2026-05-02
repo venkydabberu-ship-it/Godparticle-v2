@@ -451,10 +451,8 @@ export default function StockAnalysis() {
     setFundLoading(true);
     setFundMsg('⏳ Fetching fundamentals from Yahoo Finance...');
     try {
-      const { data, error: fnErr } = await supabase.functions.invoke('smooth-endpoint', {
-        body: { type: 'stock_fundamentals', symbol: stockName.toUpperCase(), exchange }
-      });
-      if (fnErr || !data?.success) throw new Error(data?.error || 'Fetch failed');
+      const data = await callEdge('smooth-endpoint', { type: 'stock_fundamentals', symbol: stockName.toUpperCase(), exchange });
+      if (!data?.success) throw new Error(data?.error || 'Fetch failed');
       const d = data.data;
       if (d.pe)       setPe(String(d.pe));
       if (d.eps)      setEps(String(d.eps));
@@ -777,10 +775,8 @@ export default function StockAnalysis() {
     setPrevLow('');
     setPrevClose('');
     try {
-      const { data, error: fnErr } = await supabase.functions.invoke('smooth-endpoint', {
-        body: { type: 'stock_price', symbol: symbol.toUpperCase(), exchange }
-      });
-      if (fnErr || !data?.success) throw new Error(data?.error || 'Fetch failed');
+      const data = await callEdge('smooth-endpoint', { type: 'stock_price', symbol: symbol.toUpperCase(), exchange });
+      if (!data?.success) throw new Error(data?.error || 'Fetch failed');
       const records: any[] = data.data?.data || [];
       if (!records.length) throw new Error(`No price data for ${symbol}`);
       const latest = records[records.length - 1];
