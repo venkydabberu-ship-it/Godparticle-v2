@@ -7,7 +7,37 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: true, autoRefreshToken: true },
+});
+
+// Session-safe edge function caller: refreshes token on 401, redirects to login if session gone
+export async function callEdge(fnName: string, body: Record<string, unknown>): Promise<any> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  if (!sessionData.session) {
+    window.location.href = '/login';
+    throw new Error('Session expired. Please log in again.');
+  }
+
+  const { data, error } = await supabase.functions.invoke(fnName, { body });
+
+  if (error) {
+    const msg = (error.message || '').toLowerCase();
+    if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('non-2xx')) {
+      const { data: refreshed, error: rErr } = await supabase.auth.refreshSession();
+      if (rErr || !refreshed.session) {
+        window.location.href = '/login';
+        throw new Error('Session expired. Please log in again.');
+      }
+      const { data: retryData, error: retryErr } = await supabase.functions.invoke(fnName, { body });
+      if (retryErr) throw new Error(retryErr.message);
+      return retryData;
+    }
+    throw new Error(error.message);
+  }
+
+  return data;
+}
 
 export type UserRole = 'free' | 'basic' | 'premium' | 'admin';
 

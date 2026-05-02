@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabase';
+import { supabase, callEdge } from '../lib/supabase';
 import { computeGodParticle, generateScenarioMatrix, saveAnalysis } from '../lib/market';
 import { searchStocks } from '../lib/stockList';
 
@@ -157,13 +157,7 @@ export default function StockAnalysis() {
       setFetchMsg(`⏳ Fetching 14 months from ${exchange} via server...`);
 
       // Use smooth-endpoint directly (routes stock_price to Yahoo Finance)
-      const { data, error: fnError } = await supabase.functions.invoke('smooth-endpoint', {
-        body: { type: 'stock_price', symbol: stockName.toUpperCase(), exchange }
-      });
-
-      if (fnError) throw new Error(fnError.message.includes('non-2xx')
-        ? `Edge function error — if using BSE, run: supabase functions deploy smooth-endpoint`
-        : fnError.message);
+      const data = await callEdge('smooth-endpoint', { type: 'stock_price', symbol: stockName.toUpperCase(), exchange });
       if (!data?.success) throw new Error(data?.error || 'Fetch failed');
 
       const records: any[] = data.data?.data || [];
@@ -248,11 +242,7 @@ export default function StockAnalysis() {
       setOptFetchMsg('⏳ Fetching stock option chain via server...');
 
       // Use smooth-endpoint directly (routes stock_chain to Upstox v2)
-      const { data, error: fnError } = await supabase.functions.invoke('smooth-endpoint', {
-        body: { type: 'stock_chain', symbol: stockName.toUpperCase() }
-      });
-
-      if (fnError) throw new Error(fnError.message);
+      const data = await callEdge('smooth-endpoint', { type: 'stock_chain', symbol: stockName.toUpperCase() });
       if (!data?.success) throw new Error(data?.error || 'Fetch failed');
 
       // smooth-endpoint returns { allExpiries: [{ expiry, strikes, spotPrice }], tradeDate }

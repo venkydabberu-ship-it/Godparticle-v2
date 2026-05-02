@@ -304,6 +304,13 @@ export default function Dashboard() {
             <div className="text-xs font-mono text-[#6b6b85]">Top movers in your budget · Near breakout · Pre-market</div>
           </Link>
 
+          <Link to="/sector-rotation"
+            className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#3b82f6] transition-all">
+            <div className="text-2xl mb-2">🔄</div>
+            <div className="font-black text-sm text-[#3b82f6] mb-1">Sector Rotation</div>
+            <div className="text-xs font-mono text-[#6b6b85]">RRG chart — which sectors are Leading, Improving, Lagging</div>
+          </Link>
+
           <Link to="/pricing"
             className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#39d98a] transition-all">
             <div className="text-2xl mb-2">💳</div>

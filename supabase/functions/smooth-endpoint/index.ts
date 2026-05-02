@@ -9,6 +9,7 @@ const CREDIT_COST: Record<string, number> = {
   stock_chain:        2,
   market_movers:      0,
   stock_fundamentals: 0,
+  sector_rr:          0,
 };
 
 // Simple in-memory rate limiter: max 20 requests per user per 60s
@@ -384,6 +385,43 @@ Deno.serve(async function(req) {
         profit2:   ish2[1] ? toCr(ish2[1].netIncome && ish2[1].netIncome.raw) : 0,
         profit3:   ish2[0] ? toCr(ish2[0].netIncome && ish2[0].netIncome.raw) : 0,
       }});
+    }
+
+    // ── SECTOR ROTATION DATA ──
+    if (type === 'sector_rr') {
+      var sectorList = [
+        { name: 'NIFTY 50',  sym: '^NSEI'      },
+        { name: 'Bank',      sym: '^NSEBANK'    },
+        { name: 'IT',        sym: '^CNXIT'      },
+        { name: 'Pharma',    sym: '^CNXPHARMA'  },
+        { name: 'Auto',      sym: '^CNXAUTO'    },
+        { name: 'Metal',     sym: '^CNXMETAL'   },
+        { name: 'FMCG',      sym: '^CNXFMCG'    },
+        { name: 'Realty',    sym: '^CNXREALTY'  },
+        { name: 'Energy',    sym: '^CNXENERGY'  },
+        { name: 'Financial', sym: '^CNXFINANCE' },
+      ];
+      var chartBase2 = getYahooBase();
+      var sectorResults = await Promise.all(sectorList.map(async function(s) {
+        try {
+          var url2 = chartBase2 + '/' + encodeURIComponent(s.sym) + '?range=3mo&interval=1wk';
+          var r2 = await fetch(url2, { headers: yahooHdrs() });
+          if (!r2.ok) return { name: s.name, sym: s.sym, closes: [], changePct: 0 };
+          var j2 = await r2.json();
+          var res2 = j2.chart && j2.chart.result && j2.chart.result[0];
+          if (!res2) return { name: s.name, sym: s.sym, closes: [], changePct: 0 };
+          var qq = (res2.indicators && res2.indicators.quote && res2.indicators.quote[0]) || {};
+          var closes2 = (qq.close || []).filter(function(c) { return c != null && c > 0; });
+          var meta2 = res2.meta || {};
+          var curr2 = meta2.regularMarketPrice || (closes2.length ? closes2[closes2.length - 1] : 0);
+          var prev2 = meta2.chartPreviousClose || (closes2.length >= 2 ? closes2[closes2.length - 2] : curr2);
+          var chgPct2 = prev2 > 0 ? (curr2 - prev2) / prev2 * 100 : 0;
+          return { name: s.name, sym: s.sym, closes: closes2, changePct: Math.round(chgPct2 * 100) / 100, currentPrice: Math.round(curr2) };
+        } catch(_e3) {
+          return { name: s.name, sym: s.sym, closes: [], changePct: 0 };
+        }
+      }));
+      return respond({ success: true, data: sectorResults });
     }
 
     return respond({ success: false, error: 'Unknown type: ' + type }, 400);
