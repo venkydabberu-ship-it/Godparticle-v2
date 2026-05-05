@@ -52,6 +52,7 @@ export default function StockAnalysis() {
   const [hlcFetched, setHlcFetched] = useState(false);
   const [hlcError, setHlcError] = useState('');
   const [manualHLC, setManualHLC] = useState(false);
+  const [prevDate, setPrevDate] = useState('');
   const [autoFetchFailed, setAutoFetchFailed] = useState(false);
   const [autoRun, setAutoRun] = useState(false);
   const [fundLoading, setFundLoading] = useState(false);
@@ -774,12 +775,19 @@ export default function StockAnalysis() {
     setPrevHigh('');
     setPrevLow('');
     setPrevClose('');
+    setPrevDate('');
     try {
-      const data = await callEdge('smooth-endpoint', { type: 'stock_price', symbol: symbol.toUpperCase(), exchange });
+      const data = await callEdge('smooth-endpoint', { type: 'stock_price', symbol: symbol.toUpperCase(), exchange, interval: 'daily' });
       if (!data?.success) throw new Error(data?.error || 'Fetch failed');
       const records: any[] = data.data?.data || [];
       if (!records.length) throw new Error(`No price data for ${symbol}`);
-      const latest = records[records.length - 1];
+      const today = new Date().toISOString().split('T')[0];
+      const completed = records.filter((r: any) => {
+        const ts = r.CH_TIMESTAMP || r.timestamp || '';
+        return ts.split('T')[0] < today;
+      });
+      if (!completed.length) throw new Error('No completed trading session data available. Enter values manually.');
+      const latest = completed[completed.length - 1];
       const h = parseFloat(latest.CH_TRADE_HIGH_PRICE);
       const l = parseFloat(latest.CH_TRADE_LOW_PRICE);
       const c = parseFloat(latest.CH_CLOSING_PRICE);
@@ -787,6 +795,8 @@ export default function StockAnalysis() {
       setPrevHigh(String(h));
       setPrevLow(String(l));
       setPrevClose(String(c));
+      const ts = latest.CH_TIMESTAMP || latest.timestamp || '';
+      setPrevDate(ts.split('T')[0] || '');
       setHlcFetched(true);
     } catch (err: any) {
       setHlcError(err.message || 'Could not fetch price data. Try again.');
@@ -1241,10 +1251,15 @@ export default function StockAnalysis() {
                   </div>
                 )}
 
-                {/* Manual H/L/C entry fallback */}
-                {manualHLC && !hlcFetched && (
+                {/* Manual H/L/C entry — always accessible */}
+                {manualHLC && (
                   <div className="bg-[#f0c040]/8 border border-[#f0c040]/25 rounded-xl p-4 mb-4">
-                    <div className="text-[10px] font-mono text-[#f0c040] mb-3 uppercase tracking-widest">Enter Previous Day's Data Manually</div>
+                    <div className="flex justify-between items-center mb-3">
+                      <div className="text-[10px] font-mono text-[#f0c040] uppercase tracking-widest">Enter Previous Day's H/L/C Manually</div>
+                      {hlcFetched && (
+                        <button onClick={() => setManualHLC(false)} className="text-[10px] font-mono text-[#6b6b85] hover:text-[#e8e8f0] underline">← Back to auto</button>
+                      )}
+                    </div>
                     <div className="grid grid-cols-3 gap-3 mb-3">
                       {[
                         { label: 'Prev High', val: prevHigh, set: setPrevHigh },
@@ -1264,6 +1279,7 @@ export default function StockAnalysis() {
                         if (prevHigh && prevLow && prevClose) {
                           setHlcFetched(true);
                           setManualHLC(false);
+                          setPrevDate('');
                         }
                       }}
                       disabled={!prevHigh || !prevLow || !prevClose}
@@ -1274,9 +1290,14 @@ export default function StockAnalysis() {
                 )}
 
                 {/* Fetched H/L/C display */}
-                {hlcFetched && !hlcLoading && (
+                {hlcFetched && !hlcLoading && !manualHLC && (
                   <div className="bg-[#39d98a]/8 border border-[#39d98a]/25 rounded-xl p-3 mb-4">
-                    <div className="text-[10px] font-mono text-[#39d98a] mb-2 uppercase tracking-widest">✓ Yesterday's data auto-fetched for {stockName}</div>
+                    <div className="flex justify-between items-center mb-2">
+                      <div className="text-[10px] font-mono text-[#39d98a] uppercase tracking-widest">
+                        ✓ {prevDate ? `Data for ${prevDate}` : "Yesterday's data"} — {stockName}
+                      </div>
+                      <button onClick={() => setManualHLC(true)} className="text-[10px] font-mono text-[#f0c040] hover:text-[#ffd060] underline">Edit manually</button>
+                    </div>
                     <div className="grid grid-cols-3 gap-3">
                       {[
                         { label: 'High', val: prevHigh },
@@ -1292,10 +1313,11 @@ export default function StockAnalysis() {
                   </div>
                 )}
 
-                {/* No stock selected prompt */}
+                {/* No stock selected prompt — with always-visible manual entry option */}
                 {!hlcFetched && !hlcLoading && !hlcError && !manualHLC && (
                   <div className="bg-[#ff8c42]/8 border border-[#ff8c42]/25 rounded-xl p-3 mb-4 text-xs font-mono text-[#ff8c42]">
-                    ⚡ Type any NSE symbol above and press <span className="font-black">Fetch</span> or <span className="font-black">Enter</span> — yesterday's H/L/C will be fetched automatically. If auto-fetch fails, you can enter values manually.
+                    <div>⚡ Type any NSE symbol above and press <span className="font-black">Fetch</span> or <span className="font-black">Enter</span> — previous day's H/L/C will be fetched automatically.</div>
+                    <button onClick={() => setManualHLC(true)} className="mt-2 underline text-[#f0c040] hover:text-[#ffd060] text-[10px]">Or enter yesterday's values manually →</button>
                   </div>
                 )}
 
@@ -1893,7 +1915,12 @@ export default function StockAnalysis() {
                               );
                             })}
                             {result.actionableTargets.length === 0 && (
-                              <div className="text-[#f0c040]">Already above all GCT levels — trail SL at {fmt(result.upsideLevels[3].price)}</div>
+                              <div className="space-y-1.5">
+                                <div className="text-[#f0c040]">Already above all GCT levels — trail SL at {fmt(result.upsideLevels[3].price)}</div>
+                                <div className="mt-2 p-2 rounded-lg bg-[#4d9fff]/10 border border-[#4d9fff]/25 text-[#4d9fff]">
+                                  📍 Pattern alert: after exhausting all upside targets, the market often pulls back to crash levels ({fmt(result.crashLevels[0].price)}–{fmt(result.crashLevels[1].price)}) before the next leg up — watch those zones as re-entry opportunities.
+                                </div>
+                              </div>
                             )}
                           </div>
                         </div>
