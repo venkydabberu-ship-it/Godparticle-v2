@@ -24,10 +24,56 @@ interface ConfluenceGroup {
   strength: 1 | 2 | 3;
 }
 
+// ── Resampling helpers ─────────────────────────────────────────────────────────
+
+// Group daily records into weekly candles (keyed by ISO year-week)
+function resampleToWeekly(records: any[]): any[] {
+  const buckets = new Map<string, any[]>();
+  for (const r of records) {
+    const d = new Date(r.CH_TIMESTAMP);
+    // Monday-anchored week key
+    const day = d.getDay() || 7;
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - (day - 1));
+    const key = monday.toISOString().slice(0, 10);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(r);
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, recs]) => {
+      const closes = recs.map(r => parseFloat(r.CH_CLOSING_PRICE)).filter(v => v > 0);
+      return {
+        CH_TIMESTAMP: key,
+        CH_CLOSING_PRICE: String(closes[closes.length - 1] || 0),
+      };
+    })
+    .filter(r => parseFloat(r.CH_CLOSING_PRICE) > 0);
+}
+
+// Group daily records into monthly candles (keyed by YYYY-MM)
+function resampleToMonthly(records: any[]): any[] {
+  const buckets = new Map<string, any[]>();
+  for (const r of records) {
+    const key = r.CH_TIMESTAMP.slice(0, 7);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(r);
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, recs]) => {
+      const closes = recs.map(r => parseFloat(r.CH_CLOSING_PRICE)).filter(v => v > 0);
+      return {
+        CH_TIMESTAMP: key,
+        CH_CLOSING_PRICE: String(closes[closes.length - 1] || 0),
+      };
+    })
+    .filter(r => parseFloat(r.CH_CLOSING_PRICE) > 0);
+}
+
 // ── GCT computation ────────────────────────────────────────────────────────────
 
-// lookback: how many candles to use for the high/low range calculation.
-// Fewer candles = tighter, more recent levels (short-term view).
+// lookback: how many candles from the end to use for the range calculation.
 // currentPrice always comes from the very last candle regardless of lookback.
 function computeGCT(records: any[], lookback?: number): GCTLevels | null {
   if (records.length < 6) return null;
@@ -35,13 +81,10 @@ function computeGCT(records: any[], lookback?: number): GCTLevels | null {
   if (!allCloses.length) return null;
   const currentPrice = allCloses[allCloses.length - 1];
 
-  // Apply lookback window for range calculation
   const window = lookback ? records.slice(-Math.max(lookback, 6)) : records;
   const closes = window.map(r => parseFloat(r.CH_CLOSING_PRICE)).filter(v => v > 0);
   if (!closes.length) return null;
 
-  // Use closing price range — monthly closes span 14 months, daily closes span 20 days,
-  // so each timeframe naturally produces genuinely different levels
   const maxHigh = Math.max(...closes);
   const minLow = Math.min(...closes);
   const avgClose = closes.reduce((s, v) => s + v, 0) / closes.length;
@@ -237,38 +280,33 @@ export default function MultiGCT() {
     setConfluences([]);
 
     try {
-      const [mRes, wRes, dRes] = await Promise.all([
-        callEdge('smooth-endpoint', { type: 'stock_price', symbol: sym, exchange }),
-        callEdge('smooth-endpoint', {
-          type: 'stock_price',
-          symbol: sym,
-          exchange,
-          interval: 'weekly',
-          range: '1y',
-        }),
-        callEdge('smooth-endpoint', {
-          type: 'stock_price',
-          symbol: sym,
-          exchange,
-          interval: 'daily',
-          range: '3mo',
-        }),
-      ]);
+      // Single fetch: 2 years of daily data, then resample client-side.
+      // This guarantees genuinely different timeframes regardless of what
+      // Yahoo Finance returns for different interval params.
+      const res = await callEdge('smooth-endpoint', {
+        type: 'stock_price',
+        symbol: sym,
+        exchange,
+        interval: 'daily',
+        range: '2y',
+      });
 
-      const mRecords: any[] = mRes?.data?.data || [];
-      const wRecords: any[] = wRes?.data?.data || [];
-      const dRecords: any[] = dRes?.data?.data || [];
+      const dRecords: any[] = res?.data?.data || [];
 
-      if (!mRecords.length && !wRecords.length && !dRecords.length) {
+      if (!dRecords.length) {
         throw new Error(
           `No data found for "${sym}" on ${exchange}. Check the symbol (e.g. SBIN, RELIANCE).`,
         );
       }
 
-      // Each timeframe uses a proportional lookback so levels are genuinely different:
-      // Monthly: full ~14 candles (long-term structural view)
-      // Weekly: last 26 candles (~6 months — medium-term trend)
-      // Daily: last 20 candles (~1 trading month — short-term momentum)
+      // Resample on the client: same source data, different aggregations
+      const wRecords = resampleToWeekly(dRecords);
+      const mRecords = resampleToMonthly(dRecords);
+
+      // GCT with timeframe-specific lookbacks:
+      // Monthly: all resampled monthly closes (~24 months) — long-term structure
+      // Weekly: last 26 weekly closes (~6 months) — medium-term trend
+      // Daily: last 20 daily closes (~1 month) — short-term momentum
       const m = computeGCT(mRecords);
       const w = computeGCT(wRecords, 26);
       const d = computeGCT(dRecords, 20);
@@ -438,7 +476,7 @@ export default function MultiGCT() {
             disabled={loading}
             className="w-full bg-[#f0c040] text-black font-black py-3 rounded-xl text-sm hover:bg-[#ffd060] transition-all disabled:opacity-50"
           >
-            {loading ? '⏳ Fetching 3 timeframes...' : '🔭 Analyse All Timeframes'}
+            {loading ? '⏳ Fetching price history...' : '🔭 Analyse All Timeframes'}
           </button>
 
           {error && (
@@ -453,10 +491,10 @@ export default function MultiGCT() {
           <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-12 text-center">
             <div className="text-4xl mb-4 animate-spin inline-block">⚛</div>
             <div className="text-sm font-black text-[#f0c040]">
-              Fetching 3 timeframes...
+              Fetching 2 years of price history...
             </div>
             <div className="text-xs font-mono text-[#6b6b85] mt-1">
-              Monthly · Weekly · Daily — running in parallel
+              Resampling into Monthly · Weekly · Daily timeframes
             </div>
           </div>
         )}
