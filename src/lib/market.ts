@@ -712,6 +712,13 @@ export function generateScenarioMatrix(
     }
     openEst = Math.max(openEst, 1);
 
+    // NSE index options consistently open ~8-10% above theoretical BS value due to
+    // opening auction dynamics and overnight uncertainty premium from market makers.
+    // Adverse scenarios get no uplift — sellers dominate at open when gap is against the option.
+    if (isFav || isNeutral) {
+      openEst = Math.round(openEst * 1.09);
+    }
+
     if (avoid) {
       return {
         gap, label, openEst,
