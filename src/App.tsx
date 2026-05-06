@@ -36,6 +36,12 @@ const ZeroToHero   = lazy(() => import('./pages/ZeroToHero'));
 const StockAnalysis = lazy(() => import('./pages/StockAnalysis'));
 const Trending        = lazy(() => import('./pages/Trending'));
 const SectorRotation  = lazy(() => import('./pages/SectorRotation'));
+const OIHeatmap       = lazy(() => import('./pages/OIHeatmap'));
+const GammaTrap       = lazy(() => import('./pages/GammaTrap'));
+const MultiGCT        = lazy(() => import('./pages/MultiGCT'));
+const TradeJournal    = lazy(() => import('./pages/TradeJournal'));
+const AlertsCenter    = lazy(() => import('./pages/AlertsCenter'));
+const OptionsScanner  = lazy(() => import('./pages/OptionsScanner'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const Terms        = lazy(() => import('./pages/Terms'));
 const Privacy      = lazy(() => import('./pages/Privacy'));
@@ -115,6 +121,24 @@ export default function App() {
             } />
             <Route path="/sector-rotation" element={
               <ProtectedRoute><SectorRotation /></ProtectedRoute>
+            } />
+            <Route path="/oi-heatmap" element={
+              <ProtectedRoute><OIHeatmap /></ProtectedRoute>
+            } />
+            <Route path="/gamma-trap" element={
+              <ProtectedRoute><GammaTrap /></ProtectedRoute>
+            } />
+            <Route path="/multi-gct" element={
+              <ProtectedRoute><MultiGCT /></ProtectedRoute>
+            } />
+            <Route path="/trade-journal" element={
+              <ProtectedRoute><TradeJournal /></ProtectedRoute>
+            } />
+            <Route path="/alerts" element={
+              <ProtectedRoute><AlertsCenter /></ProtectedRoute>
+            } />
+            <Route path="/scanner" element={
+              <ProtectedRoute><OptionsScanner /></ProtectedRoute>
             } />
             <Route path="/terms"   element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />
