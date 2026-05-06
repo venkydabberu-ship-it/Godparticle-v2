@@ -130,7 +130,10 @@ export default function OIHeatmap() {
   const pcr = totalCE > 0 ? totalPE / totalCE : 0;
 
   const atmIdx = rows.findIndex(r => r.strike === atm);
-  const visRows = atmIdx >= 0 ? rows.slice(Math.max(0, atmIdx - 15), atmIdx + 16) : rows.slice(0, 31);
+  // Center view around max pain (best proxy for spot price) rather than OI-balance ATM
+  const maxPainIdx = rows.findIndex(r => r.strike === maxPain);
+  const centerIdx = maxPainIdx >= 0 ? maxPainIdx : atmIdx;
+  const visRows = centerIdx >= 0 ? rows.slice(Math.max(0, centerIdx - 15), centerIdx + 16) : rows.slice(0, 31);
   const maxOI = Math.max(...visRows.map(r => Math.max(r.ce_oi, r.pe_oi)), 1);
 
   const pcrLabel = pcr > 1.2

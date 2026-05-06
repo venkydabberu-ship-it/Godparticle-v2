@@ -38,14 +38,15 @@ function computeGCT(records: any[], lookback?: number): GCTLevels | null {
   // Apply lookback window for range calculation
   const window = lookback ? records.slice(-Math.max(lookback, 6)) : records;
   const closes = window.map(r => parseFloat(r.CH_CLOSING_PRICE)).filter(v => v > 0);
-  const highs   = window.map(r => parseFloat(r.CH_TRADE_HIGH_PRICE)).filter(v => v > 0);
-  const lows    = window.map(r => parseFloat(r.CH_TRADE_LOW_PRICE)).filter(v => v > 0);
-  if (!closes.length || !highs.length || !lows.length) return null;
+  if (!closes.length) return null;
 
-  const maxHigh = Math.max(...highs);
-  const minLow = Math.min(...lows);
+  // Use closing price range — monthly closes span 14 months, daily closes span 20 days,
+  // so each timeframe naturally produces genuinely different levels
+  const maxHigh = Math.max(...closes);
+  const minLow = Math.min(...closes);
   const avgClose = closes.reduce((s, v) => s + v, 0) / closes.length;
   const range = maxHigh - minLow;
+  if (range === 0) return null;
 
   const al = Math.round(maxHigh * 0.97);
   const mgc = Math.round(avgClose);
