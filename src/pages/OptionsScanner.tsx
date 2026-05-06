@@ -232,7 +232,11 @@ export default function OptionsScanner() {
         return;
       }
 
-      const { results: scans, oneDayIndices: odi } = computeScans(data as RawRow[]);
+      // Drop rows for already-expired expiries so scanner only shows live contracts
+      const today = new Date().toISOString().split('T')[0];
+      const fresh = (data as RawRow[]).filter(r => r.expiry >= today);
+
+      const { results: scans, oneDayIndices: odi } = computeScans(fresh);
       setResults(scans);
       setOneDayIdx(odi);
       setScanned(true);
