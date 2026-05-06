@@ -755,17 +755,6 @@ export function generateScenarioMatrix(
       entryHigh = Math.max(Math.round(openEst * 1.17), entryLow  + 1);
     }
 
-    // Observed market pattern: index options open at or above the buy zone, dip to
-    // the buy zone, then rise. The BS/theta model underestimates the actual opening
-    // premium that market makers price in. Clamp openEst so it is never shown below
-    // the buy zone — for favorable/neutral rows, show it above entryHigh (realistic
-    // opening premium); for adverse rows, clamp to at least entryLow.
-    if (isFav || isNeutral) {
-      openEst = Math.max(openEst, Math.round(entryHigh * 1.06));
-    } else {
-      openEst = Math.max(openEst, entryLow);
-    }
-
     // ── Targets — STRICTLY above entryHigh ──
     //
     // R:R anchored to entryLow and sl for disciplined position sizing:
