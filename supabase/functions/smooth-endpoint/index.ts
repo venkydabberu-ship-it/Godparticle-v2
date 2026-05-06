@@ -94,12 +94,12 @@ async function getChain(instrKey, expiry, token, base) {
       ce_coi: (cm.oi || 0) - (cm.prev_oi || 0),
       ce_vol: cm.volume || 0,
       ce_ltp: cm.ltp  || 0,
-      ce_iv:  cg.iv   || 0,
+      ce_iv:  cg.iv > 0 ? (cg.iv < 1.0 ? cg.iv * 100 : cg.iv) : 0,
       pe_oi:  pm.oi   || 0,
       pe_coi: (pm.oi || 0) - (pm.prev_oi || 0),
       pe_vol: pm.volume || 0,
       pe_ltp: pm.ltp  || 0,
-      pe_iv:  pg.iv   || 0,
+      pe_iv:  pg.iv > 0 ? (pg.iv < 1.0 ? pg.iv * 100 : pg.iv) : 0,
     };
   });
   return { expiry: expiry, strikes: strikes, spotPrice: spot };

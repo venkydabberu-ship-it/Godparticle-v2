@@ -233,7 +233,7 @@ export default function StockAnalysis() {
             volume: isCE ? sd.ce_vol : sd.pe_vol,
             oi: isCE ? sd.ce_oi : sd.pe_oi,
             chng_oi: isCE ? (sd.ce_coi ?? sd.ce_chng_oi ?? 0) : (sd.pe_coi ?? sd.pe_chng_oi ?? 0),
-            iv: isCE ? (sd.ce_iv ?? 0) : (sd.pe_iv ?? 0),
+            iv: (() => { const v = isCE ? (sd.ce_iv ?? 0) : (sd.pe_iv ?? 0); return v > 0 && v < 1.0 ? v * 100 : v; })(),
           };
         }).filter(Boolean);
         setOptCsvData(optData);
@@ -307,7 +307,7 @@ export default function StockAnalysis() {
             volume: isCE ? s.ce_vol : s.pe_vol,
             oi: isCE ? s.ce_oi : s.pe_oi,
             chng_oi: isCE ? (s.ce_coi ?? s.ce_chng_oi ?? 0) : (s.pe_coi ?? s.pe_chng_oi ?? 0),
-            iv: isCE ? (s.ce_iv ?? 0) : (s.pe_iv ?? 0),
+            iv: (() => { const v = isCE ? (s.ce_iv ?? 0) : (s.pe_iv ?? 0); return v > 0 && v < 1.0 ? v * 100 : v; })(),
           };
         }).filter(Boolean);
         setOptCsvData(optData);
@@ -321,7 +321,7 @@ export default function StockAnalysis() {
           volume: isCE ? sd.ce_vol : sd.pe_vol,
           oi: isCE ? sd.ce_oi : sd.pe_oi,
           chng_oi: isCE ? (sd.ce_coi ?? sd.ce_chng_oi ?? 0) : (sd.pe_coi ?? sd.pe_chng_oi ?? 0),
-          iv: isCE ? (sd.ce_iv ?? 0) : (sd.pe_iv ?? 0),
+          iv: (() => { const v = isCE ? (sd.ce_iv ?? 0) : (sd.pe_iv ?? 0); return v > 0 && v < 1.0 ? v * 100 : v; })(),
         }]);
       }
 
