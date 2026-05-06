@@ -297,6 +297,18 @@ export default function AlertsCenter() {
           </p>
         </div>
 
+        {/* How to use */}
+        <div className="bg-[#39d98a]/8 border border-[#39d98a]/25 rounded-2xl p-5">
+          <div className="text-[10px] font-black uppercase tracking-widest text-[#39d98a] mb-3">What is this?</div>
+          <div className="space-y-2 text-xs font-mono text-[#6b6b85]">
+            <div><span className="text-[#e8e8f0] font-black">1.</span> Click <span className="text-[#f0c040]">+ Add Alert</span> and enter a stock symbol with a target price — e.g. RELIANCE above ₹2500.</div>
+            <div><span className="text-[#e8e8f0] font-black">2.</span> Click <span className="text-[#39d98a]">▶ Start Polling</span> — the app will quietly check prices every 60 seconds while you have this page open.</div>
+            <div><span className="text-[#e8e8f0] font-black">3.</span> When the price crosses your level, a <span className="text-[#f0c040]">notification</span> pops up instantly and the alert moves to "Triggered".</div>
+            <div><span className="text-[#e8e8f0] font-black">4.</span> Use the <span className="text-[#f0c040]">Label</span> field to tag alerts with GCT levels like "AL Level" or "GCT Buy Zone" so you know why you set it.</div>
+            <div><span className="text-[#e8e8f0] font-black">💡</span> Best used on expiry day — set alerts at Max Pain and Gamma Wall levels from the OI Heatmap and Gamma Trap tools.</div>
+          </div>
+        </div>
+
         {/* Setup required banner */}
         {setupRequired && (
           <div className="bg-[#ff8c42]/10 border border-[#ff8c42]/40 rounded-2xl p-6 space-y-3">

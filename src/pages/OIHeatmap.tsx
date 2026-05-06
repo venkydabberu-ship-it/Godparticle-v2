@@ -164,6 +164,17 @@ export default function OIHeatmap() {
           <p className="text-xs font-mono text-[#6b6b85]">OI distribution across strikes · Max Pain · PCR analysis</p>
         </div>
 
+        {/* How to use */}
+        <div className="bg-[#f0c040]/8 border border-[#f0c040]/25 rounded-2xl p-5">
+          <div className="text-[10px] font-black uppercase tracking-widest text-[#f0c040] mb-3">What is this?</div>
+          <div className="space-y-2 text-xs font-mono text-[#6b6b85]">
+            <div><span className="text-[#e8e8f0] font-black">1.</span> Select an index (Nifty, BankNifty etc.) and expiry date, then click Load.</div>
+            <div><span className="text-[#e8e8f0] font-black">2.</span> You'll see a bar chart — green bars are Call (CE) open interest, red bars are Put (PE) open interest at each strike.</div>
+            <div><span className="text-[#e8e8f0] font-black">3.</span> <span className="text-[#f0c040]">Max Pain</span> = the price where option buyers collectively lose the most money. Market makers tend to push the index toward this level by expiry.</div>
+            <div><span className="text-[#e8e8f0] font-black">💡</span> Requires uploaded option chain data from the God Particle Analysis page.</div>
+          </div>
+        </div>
+
         <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
           <div className="grid grid-cols-2 gap-4">
             <div>

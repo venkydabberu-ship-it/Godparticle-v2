@@ -142,15 +142,24 @@ function computeScans(rows: RawRow[]): {
       if (!currStrike || !prevStrike) continue;
 
       for (const optType of ['CE', 'PE'] as const) {
-        const currEntry = currStrike[optType] ?? currStrike[optType.toLowerCase()];
-        const prevEntry = prevStrike[optType] ?? prevStrike[optType.toLowerCase()];
+        const pfx = optType.toLowerCase(); // 'ce' | 'pe'
+        // Support both flat format (ce_oi / pe_oi) and nested format ({ CE: { oi } })
+        const currOI = parseFloat(
+          currStrike[`${pfx}_oi`] ??
+          currStrike[optType]?.oi ??
+          currStrike[optType]?.openInterest ?? 0
+        );
+        const prevOI = parseFloat(
+          prevStrike?.[`${pfx}_oi`] ??
+          prevStrike?.[optType]?.oi ??
+          prevStrike?.[optType]?.openInterest ?? 0
+        );
+        const ltp = parseFloat(
+          currStrike[`${pfx}_ltp`] ??
+          currStrike[optType]?.ltp ?? 0
+        );
 
-        if (!currEntry || !prevEntry) continue;
-
-        const currOI = parseFloat(currEntry.oi ?? currEntry.OI ?? currEntry.openInterest ?? 0);
-        const prevOI = parseFloat(prevEntry.oi ?? prevEntry.OI ?? prevEntry.openInterest ?? 0);
-        const ltp    = parseFloat(currEntry.ltp ?? currEntry.LTP ?? currEntry.lastPrice ?? 0);
-
+        if (!currOI || !prevOI) continue;
         if (currOI < 500) continue;
         if (prevOI === 0) continue;
 
@@ -286,6 +295,17 @@ export default function OptionsScanner() {
           <p className="text-xs font-mono text-[#6b6b85]">
             Detect unusual OI buildup across NIFTY, BANKNIFTY &amp; more · Flags institutional positioning
           </p>
+        </div>
+
+        {/* How to use */}
+        <div className="bg-[#4d9fff]/8 border border-[#4d9fff]/25 rounded-2xl p-5">
+          <div className="text-[10px] font-black uppercase tracking-widest text-[#4d9fff] mb-3">What is this?</div>
+          <div className="space-y-2 text-xs font-mono text-[#6b6b85]">
+            <div><span className="text-[#e8e8f0] font-black">1.</span> First, upload 2+ days of option chains from the <span className="text-[#f0c040]">God Particle Analysis</span> page (Nifty, BankNifty, FinNifty etc.).</div>
+            <div><span className="text-[#e8e8f0] font-black">2.</span> Click Scan. The app compares yesterday's OI vs today's OI at every strike.</div>
+            <div><span className="text-[#e8e8f0] font-black">3.</span> Strikes where OI jumped suddenly = institutional activity. Big players placed new positions there overnight.</div>
+            <div><span className="text-[#e8e8f0] font-black">💡</span> <span className="text-[#39d98a]">PE buildup</span> = institutions writing puts = they expect floor here (bullish). <span className="text-[#ff4d6d]">CE buildup</span> = they expect ceiling here (bearish).</div>
+          </div>
         </div>
 
         {/* Controls */}

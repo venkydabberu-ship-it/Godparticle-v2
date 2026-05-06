@@ -323,6 +323,18 @@ export default function TradeJournal() {
           )}
         </div>
 
+        {/* How to use */}
+        <div className="bg-[#4d9fff]/8 border border-[#4d9fff]/25 rounded-2xl p-5">
+          <div className="text-[10px] font-black uppercase tracking-widest text-[#4d9fff] mb-3">What is this?</div>
+          <div className="space-y-2 text-xs font-mono text-[#6b6b85]">
+            <div><span className="text-[#e8e8f0] font-black">1.</span> Click <span className="text-[#f0c040]">+ Add Trade</span> and fill in the symbol, entry price, date, and quantity — like a trading diary.</div>
+            <div><span className="text-[#e8e8f0] font-black">2.</span> Tag which <span className="text-[#f0c040]">GCT Zone</span> the market was in when you entered (BUY / WATCH / DANGER / CRASH). This is key for learning.</div>
+            <div><span className="text-[#e8e8f0] font-black">3.</span> When you exit, update the trade with exit price — the app calculates your P&amp;L and win rate automatically.</div>
+            <div><span className="text-[#e8e8f0] font-black">4.</span> After 5+ trades, <span className="text-[#f0c040]">AI Pattern Insights</span> will flag if you're entering in wrong zones or not letting winners run.</div>
+            <div><span className="text-[#e8e8f0] font-black">💡</span> Traders who journal improve win rate by 20–30% within 3 months by spotting their own patterns.</div>
+          </div>
+        </div>
+
         {/* Setup required banner */}
         {setupRequired && (
           <div className="bg-[#111118] border border-[#ff8c42]/40 rounded-2xl p-6 space-y-4">

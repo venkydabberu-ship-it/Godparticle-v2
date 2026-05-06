@@ -191,6 +191,18 @@ export default function GammaTrap() {
           <p className="text-xs font-mono text-[#6b6b85]">Gamma walls · Pin zones · Expiry day playbook</p>
         </div>
 
+        {/* How to use */}
+        <div className="bg-[#ff4d6d]/8 border border-[#ff4d6d]/25 rounded-2xl p-5">
+          <div className="text-[10px] font-black uppercase tracking-widest text-[#ff4d6d] mb-3">What is this?</div>
+          <div className="space-y-2 text-xs font-mono text-[#6b6b85]">
+            <div><span className="text-[#e8e8f0] font-black">Best used on expiry day</span> — every Thursday for Nifty/BankNifty/FinNifty, Friday for Sensex/Bankex.</div>
+            <div><span className="text-[#e8e8f0] font-black">1.</span> Select the index and expiry. Enter today's current Nifty/BankNifty spot price. Set DTE (0 = today is expiry).</div>
+            <div><span className="text-[#e8e8f0] font-black">2.</span> The <span className="text-[#ff4d6d]">Pin Zone</span> is where the index is magnetically pulled toward at expiry — market makers hedge there aggressively.</div>
+            <div><span className="text-[#e8e8f0] font-black">3.</span> <span className="text-[#ff8c42]">Gamma Walls</span> = strikes where the market gets stuck or accelerates violently past. Trade the breakout of a gamma wall.</div>
+            <div><span className="text-[#e8e8f0] font-black">💡</span> Requires uploaded option chain data from the God Particle Analysis page.</div>
+          </div>
+        </div>
+
         {isThursday() && (
           <div className="bg-[#39d98a]/10 border border-[#39d98a]/40 rounded-xl px-4 py-3 text-sm font-black text-[#39d98a] text-center">
             Today is Expiry Day!
