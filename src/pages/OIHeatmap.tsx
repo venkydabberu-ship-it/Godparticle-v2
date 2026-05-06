@@ -44,16 +44,10 @@ function parseStrikeData(raw: Record<string, any>): StrikeRow[] {
 
 function findATM(rows: StrikeRow[]): number {
   if (!rows.length) return 0;
-  let bestBalance = Infinity;
-  let atm = rows[0].strike;
-  for (const r of rows) {
-    const balance = Math.abs(r.ce_oi - r.pe_oi);
-    if (balance < bestBalance) {
-      bestBalance = balance;
-      atm = r.strike;
-    }
-  }
-  return atm;
+  // Strike with highest combined OI is closest to ATM (most activity near money)
+  return rows.reduce((best, r) =>
+    (r.ce_oi + r.pe_oi) > (best.ce_oi + best.pe_oi) ? r : best
+  , rows[0]).strike;
 }
 
 function fmtDate(dateStr: string): string {
@@ -128,6 +122,10 @@ export default function OIHeatmap() {
   const totalCE = rows.reduce((s, r) => s + r.ce_oi, 0);
   const totalPE = rows.reduce((s, r) => s + r.pe_oi, 0);
   const pcr = totalCE > 0 ? totalPE / totalCE : 0;
+  // Highest CE OI strike = call writers' resistance wall
+  const ceWall = rows.length ? rows.reduce((b, r) => r.ce_oi > b.ce_oi ? r : b, rows[0]) : null;
+  // Highest PE OI strike = put writers' support wall
+  const peWall = rows.length ? rows.reduce((b, r) => r.pe_oi > b.pe_oi ? r : b, rows[0]) : null;
 
   const atmIdx = rows.findIndex(r => r.strike === atm);
   // Center view around max pain (best proxy for spot price) rather than OI-balance ATM
@@ -308,22 +306,48 @@ export default function OIHeatmap() {
               </div>
 
               <div className="mt-4 flex items-center gap-2 text-[10px] font-mono text-[#6b6b85]">
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#4d9fff] inline-block" /> ATM Strike</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#4d9fff] inline-block" /> Highest OI strike</span>
                 <span className="mx-2 text-[#1e1e2e]">|</span>
-                <span className="flex items-center gap-1"><span className="text-[#f0c040]">⚡ MAX PAIN</span> = strike where max market maker profit concentrates</span>
+                <span className="flex items-center gap-1"><span className="text-[#f0c040]">⚡ MAX PAIN</span> = likely expiry pin · view centred here</span>
               </div>
             </div>
 
-            <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6 space-y-3">
-              <h2 className="text-sm font-black text-[#e8e8f0]">Key Insight</h2>
-              <p className="text-sm font-mono text-[#e8e8f0]">
-                Market makers will defend{' '}
-                <span className="text-[#f0c040] font-black">₹{maxPain.toLocaleString('en-IN')}</span>
-                {' '}(max pain) into expiry. Current ATM is{' '}
-                <span className="text-[#4d9fff] font-black">₹{atm.toLocaleString('en-IN')}</span>.
-                {' '}Distance:{' '}
-                <span className="text-[#ff8c42] font-black">{Math.abs(atm - maxPain)} pts</span>.
-              </p>
+            <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6 space-y-5">
+              <h2 className="text-sm font-black text-[#e8e8f0]">Trader's Playbook</h2>
+
+              {/* 3 key levels */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-[#ff4d6d]/8 border border-[#ff4d6d]/30 rounded-xl p-3 text-center">
+                  <div className="text-[9px] font-mono text-[#ff4d6d] uppercase tracking-widest mb-1">CE Wall</div>
+                  <div className="text-base font-black font-mono text-[#ff4d6d]">
+                    {ceWall ? `₹${ceWall.strike.toLocaleString('en-IN')}` : '—'}
+                  </div>
+                  <div className="text-[9px] font-mono text-[#6b6b85] mt-0.5">
+                    {ceWall ? `${fmtOI(ceWall.ce_oi)} calls` : ''}
+                  </div>
+                  <div className="text-[9px] font-black text-[#ff4d6d] mt-1">RESISTANCE</div>
+                </div>
+                <div className="bg-[#f0c040]/8 border border-[#f0c040]/30 rounded-xl p-3 text-center">
+                  <div className="text-[9px] font-mono text-[#f0c040] uppercase tracking-widest mb-1">⚡ Max Pain</div>
+                  <div className="text-base font-black font-mono text-[#f0c040]">
+                    ₹{maxPain.toLocaleString('en-IN')}
+                  </div>
+                  <div className="text-[9px] font-mono text-[#6b6b85] mt-0.5">expiry pin target</div>
+                  <div className="text-[9px] font-black text-[#f0c040] mt-1">MAGNET</div>
+                </div>
+                <div className="bg-[#39d98a]/8 border border-[#39d98a]/30 rounded-xl p-3 text-center">
+                  <div className="text-[9px] font-mono text-[#39d98a] uppercase tracking-widest mb-1">PE Wall</div>
+                  <div className="text-base font-black font-mono text-[#39d98a]">
+                    {peWall ? `₹${peWall.strike.toLocaleString('en-IN')}` : '—'}
+                  </div>
+                  <div className="text-[9px] font-mono text-[#6b6b85] mt-0.5">
+                    {peWall ? `${fmtOI(peWall.pe_oi)} puts` : ''}
+                  </div>
+                  <div className="text-[9px] font-black text-[#39d98a] mt-1">SUPPORT</div>
+                </div>
+              </div>
+
+              {/* PCR */}
               <div
                 className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-black border"
                 style={{ color: pcrColor, borderColor: pcrColor + '40', background: pcrColor + '10' }}
@@ -331,6 +355,57 @@ export default function OIHeatmap() {
                 <span>PCR {pcr.toFixed(2)}</span>
                 <span>—</span>
                 <span>{pcrLabel}</span>
+              </div>
+
+              {/* Scenarios */}
+              <div className="space-y-2">
+                <div className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest">What to do now</div>
+                <div className="bg-[#39d98a]/8 border border-[#39d98a]/25 rounded-xl p-3 flex items-start gap-3">
+                  <span className="text-[#39d98a] text-xs font-black shrink-0 whitespace-nowrap">
+                    ↑ Above ₹{maxPain.toLocaleString('en-IN')}
+                  </span>
+                  <span className="text-xs font-mono text-[#6b6b85] leading-relaxed">
+                    PE wall at{' '}
+                    <span className="text-[#39d98a] font-black">
+                      ₹{peWall?.strike.toLocaleString('en-IN')}
+                    </span>{' '}
+                    acts as floor →{' '}
+                    <span className="text-[#39d98a] font-black">BUY CE</span>{' '}
+                    near max pain for upside momentum
+                  </span>
+                </div>
+                <div className="bg-[#ff4d6d]/8 border border-[#ff4d6d]/25 rounded-xl p-3 flex items-start gap-3">
+                  <span className="text-[#ff4d6d] text-xs font-black shrink-0 whitespace-nowrap">
+                    ↓ Below ₹{maxPain.toLocaleString('en-IN')}
+                  </span>
+                  <span className="text-xs font-mono text-[#6b6b85] leading-relaxed">
+                    CE wall at{' '}
+                    <span className="text-[#ff4d6d] font-black">
+                      ₹{ceWall?.strike.toLocaleString('en-IN')}
+                    </span>{' '}
+                    acts as ceiling →{' '}
+                    <span className="text-[#ff4d6d] font-black">BUY PE</span>{' '}
+                    near max pain for downside momentum
+                  </span>
+                </div>
+                <div className="bg-[#f0c040]/8 border border-[#f0c040]/25 rounded-xl p-3 flex items-start gap-3">
+                  <span className="text-[#f0c040] text-xs font-black shrink-0 whitespace-nowrap">
+                    ⚡ At ₹{maxPain.toLocaleString('en-IN')}
+                  </span>
+                  <span className="text-xs font-mono text-[#6b6b85] leading-relaxed">
+                    Max pain zone — market likely to pin here on expiry →{' '}
+                    <span className="text-[#f0c040] font-black">SELL strangle</span>{' '}
+                    outside{' '}
+                    <span className="text-[#39d98a] font-black">
+                      ₹{peWall?.strike.toLocaleString('en-IN')}
+                    </span>
+                    {' '}PE and{' '}
+                    <span className="text-[#ff4d6d] font-black">
+                      ₹{ceWall?.strike.toLocaleString('en-IN')}
+                    </span>
+                    {' '}CE
+                  </span>
+                </div>
               </div>
             </div>
           </>
