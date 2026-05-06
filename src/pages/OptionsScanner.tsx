@@ -85,6 +85,25 @@ function fmtOI(n: number): string {
   return n.toString();
 }
 
+function fmtExpiry(dateStr: string): string {
+  if (!dateStr) return '';
+  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  const parts = dateStr.split('-');
+  if (parts.length < 3) return dateStr;
+  const day = parts[2].replace(/^0/, '');
+  const mon = months[parseInt(parts[1], 10) - 1] ?? '';
+  return `${day} ${mon}`;
+}
+
+function getAction(signal: ScanResult['signal']): { label: string; color: string; bg: string } {
+  switch (signal) {
+    case 'BULLISH_BUILD': return { label: 'BUY CE',  color: '#39d98a', bg: 'bg-[#39d98a]/10 border-[#39d98a]/40' };
+    case 'BEARISH_BUILD': return { label: 'BUY PE',  color: '#ff4d6d', bg: 'bg-[#ff4d6d]/10 border-[#ff4d6d]/40' };
+    case 'CE_UNWIND':     return { label: 'BUY',     color: '#39d98a', bg: 'bg-[#39d98a]/10 border-[#39d98a]/40' };
+    case 'PE_UNWIND':     return { label: 'SELL',    color: '#ff4d6d', bg: 'bg-[#ff4d6d]/10 border-[#ff4d6d]/40' };
+  }
+}
+
 const INDICES: FilterIndex[] = ['ALL', 'NIFTY50', 'BANKNIFTY', 'FINNIFTY', 'MIDCAPNIFTY', 'SENSEX'];
 const INDEX_LABELS: Record<FilterIndex, string> = {
   ALL: 'All',
@@ -472,8 +491,8 @@ export default function OptionsScanner() {
                 {!collapsed[indexName] && (
                   <div className="border-t border-[#1e1e2e]">
                     {/* Table header */}
-                    <div className="hidden md:grid grid-cols-[1fr_auto_auto_auto_2fr_auto_auto_auto] gap-3 px-6 py-2.5 bg-[#0d0d14] border-b border-[#1e1e2e] text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest">
-                      <span>Index / Expiry</span>
+                    <div className="hidden md:grid grid-cols-[80px_auto_auto_auto_2fr_auto_auto_auto_auto] gap-3 px-6 py-2.5 bg-[#0d0d14] border-b border-[#1e1e2e] text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest">
+                      <span>Expiry</span>
                       <span>Strike</span>
                       <span>Type</span>
                       <span>LTP</span>
@@ -481,6 +500,7 @@ export default function OptionsScanner() {
                       <span>% Change</span>
                       <span>Signal</span>
                       <span>Strength</span>
+                      <span>Action</span>
                     </div>
 
                     <div className="divide-y divide-[#1e1e2e]">
@@ -499,11 +519,18 @@ export default function OptionsScanner() {
                                     ? 'bg-[#ff4d6d]/10 border-[#ff4d6d]/30 text-[#ff4d6d]'
                                     : 'bg-[#39d98a]/10 border-[#39d98a]/30 text-[#39d98a]'
                                 }`}>{r.type}</span>
-                                <span className="text-[10px] font-mono text-[#6b6b85]">{r.expiry}</span>
+                                <span className="text-[10px] font-black font-mono text-[#f0c040]">{fmtExpiry(r.expiry)}</span>
                               </div>
-                              <span className={`text-[9px] font-black px-2 py-0.5 rounded border ${strengthBadge(r.strength)}`}>
-                                {r.strength}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {(() => { const a = getAction(r.signal); return (
+                                  <span className={`text-[9px] font-black px-2 py-0.5 rounded border ${a.bg}`} style={{ color: a.color }}>
+                                    {a.label}
+                                  </span>
+                                ); })()}
+                                <span className={`text-[9px] font-black px-2 py-0.5 rounded border ${strengthBadge(r.strength)}`}>
+                                  {r.strength}
+                                </span>
+                              </div>
                             </div>
                             <div className="flex items-center gap-3 flex-wrap text-[11px] font-mono">
                               <span className="text-[#6b6b85]">
@@ -521,9 +548,9 @@ export default function OptionsScanner() {
                           </div>
 
                           {/* Desktop layout */}
-                          <div className="hidden md:grid grid-cols-[1fr_auto_auto_auto_2fr_auto_auto_auto] gap-3 items-center">
-                            <div className="min-w-0">
-                              <div className="text-xs font-mono text-[#6b6b85] truncate">{r.expiry}</div>
+                          <div className="hidden md:grid grid-cols-[80px_auto_auto_auto_2fr_auto_auto_auto_auto] gap-3 items-center">
+                            <div className="font-black text-xs font-mono text-[#f0c040]">
+                              {fmtExpiry(r.expiry)}
                             </div>
                             <div className="font-black text-sm font-mono text-[#e8e8f0] text-right">
                               {r.strike.toLocaleString('en-IN')}
@@ -561,6 +588,13 @@ export default function OptionsScanner() {
                               <span className={`text-[9px] font-black px-2 py-0.5 rounded ${strengthBadge(r.strength)}`}>
                                 {r.strength}
                               </span>
+                            </div>
+                            <div>
+                              {(() => { const a = getAction(r.signal); return (
+                                <span className={`text-[9px] font-black px-2 py-0.5 rounded border ${a.bg}`} style={{ color: a.color }}>
+                                  {a.label}
+                                </span>
+                              ); })()}
                             </div>
                           </div>
                         </div>
