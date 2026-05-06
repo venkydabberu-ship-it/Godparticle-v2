@@ -105,12 +105,15 @@ async function getChain(instrKey, expiry, token, base) {
   return { expiry: expiry, strikes: strikes, spotPrice: spot };
 }
 
-async function fetchYahooPrice(symbol, exchange, interval) {
+async function fetchYahooPrice(symbol, exchange, interval, range) {
   var chartBase = getYahooBase();
   var suffix = (exchange === 'BSE') ? '.BO' : '.NS';
   var yahooSym = symbol.replace(/&/g, '-') + suffix;
   var isDaily = (interval === 'daily');
-  var url = chartBase + '/' + yahooSym + (isDaily ? '?range=10d&interval=1d' : '?range=14mo&interval=1mo');
+  var isWeekly = (interval === 'weekly');
+  var urlInterval = isDaily ? '1d' : isWeekly ? '1wk' : '1mo';
+  var urlRange = range || (isDaily ? '10d' : isWeekly ? '1y' : '14mo');
+  var url = chartBase + '/' + yahooSym + '?range=' + urlRange + '&interval=' + urlInterval;
   var res = await fetch(url, { headers: yahooHdrs() });
   if (!res.ok) throw new Error('Yahoo ' + res.status + ' for ' + yahooSym);
   var json = await res.json();
@@ -255,7 +258,7 @@ Deno.serve(async function(req) {
     // ── STOCK PRICE ──
     if (type === 'stock_price') {
       if (!symbol) return respond({ success: false, error: 'Missing symbol' }, 400);
-      var priceData = await fetchYahooPrice(symbol, body.exchange || 'NSE', body.interval);
+      var priceData = await fetchYahooPrice(symbol, body.exchange || 'NSE', body.interval, body.range);
       return respond({ success: true, data: priceData });
     }
 

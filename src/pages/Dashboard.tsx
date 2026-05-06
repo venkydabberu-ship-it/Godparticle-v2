@@ -319,6 +319,57 @@ export default function Dashboard() {
           </Link>
         </div>
 
+        {/* ADVANCED FEATURES */}
+        <div>
+          <div className="text-xs font-black uppercase tracking-widest text-[#6b6b85] mb-3 flex items-center gap-2">
+            <span className="w-1 h-4 bg-[#4d9fff] rounded block" />
+            Advanced Intelligence
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Link to="/oi-heatmap"
+              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#f0c040] transition-all">
+              <div className="text-2xl mb-2">🌡</div>
+              <div className="font-black text-sm text-[#f0c040] mb-1">OI Heatmap + Max Pain</div>
+              <div className="text-xs font-mono text-[#6b6b85]">See where market makers are positioned — max pain strike for any expiry</div>
+            </Link>
+
+            <Link to="/gamma-trap"
+              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#ff4d6d] transition-all">
+              <div className="text-2xl mb-2">⚡</div>
+              <div className="font-black text-sm text-[#ff4d6d] mb-1">Gamma Trap</div>
+              <div className="text-xs font-mono text-[#6b6b85]">Expiry day gamma walls — find the pin zone and acceleration levels</div>
+            </Link>
+
+            <Link to="/multi-gct"
+              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#ff8c42] transition-all">
+              <div className="text-2xl mb-2">🔭</div>
+              <div className="font-black text-sm text-[#ff8c42] mb-1">Multi-Timeframe GCT</div>
+              <div className="text-xs font-mono text-[#6b6b85]">Monthly + Weekly + Daily GCT confluence zones — triple alignment signals</div>
+            </Link>
+
+            <Link to="/scanner"
+              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#4d9fff] transition-all">
+              <div className="text-2xl mb-2">🔍</div>
+              <div className="font-black text-sm text-[#4d9fff] mb-1">Options Scanner</div>
+              <div className="text-xs font-mono text-[#6b6b85]">Detect unusual OI buildup — spot institutional activity before the move</div>
+            </Link>
+
+            <Link to="/trade-journal"
+              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#39d98a] transition-all">
+              <div className="text-2xl mb-2">📓</div>
+              <div className="font-black text-sm text-[#39d98a] mb-1">Trade Journal</div>
+              <div className="text-xs font-mono text-[#6b6b85]">Log trades, track P&amp;L, win rate — get AI pattern feedback on your entries</div>
+            </Link>
+
+            <Link to="/alerts"
+              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#ff8c42] transition-all">
+              <div className="text-2xl mb-2">🔔</div>
+              <div className="font-black text-sm text-[#ff8c42] mb-1">Price Alerts</div>
+              <div className="text-xs font-mono text-[#6b6b85]">Set alerts on GCT levels — get notified when price hits your target zones</div>
+            </Link>
+          </div>
+        </div>
+
         {/* RECENT ANALYSES */}
         <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6">
           <h2 className="text-sm font-black uppercase tracking-widest text-[#6b6b85] mb-4 flex items-center gap-2">
