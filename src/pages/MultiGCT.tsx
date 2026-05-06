@@ -24,85 +24,38 @@ interface ConfluenceGroup {
   strength: 1 | 2 | 3;
 }
 
-// ── Resampling helpers ─────────────────────────────────────────────────────────
-
-// Group daily records into weekly candles (keyed by ISO year-week)
-function resampleToWeekly(records: any[]): any[] {
-  const buckets = new Map<string, any[]>();
-  for (const r of records) {
-    const d = new Date(r.CH_TIMESTAMP);
-    // Monday-anchored week key
-    const day = d.getDay() || 7;
-    const monday = new Date(d);
-    monday.setDate(d.getDate() - (day - 1));
-    const key = monday.toISOString().slice(0, 10);
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key)!.push(r);
-  }
-  return [...buckets.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([key, recs]) => {
-      const closes = recs.map(r => parseFloat(r.CH_CLOSING_PRICE)).filter(v => v > 0);
-      return {
-        CH_TIMESTAMP: key,
-        CH_CLOSING_PRICE: String(closes[closes.length - 1] || 0),
-      };
-    })
-    .filter(r => parseFloat(r.CH_CLOSING_PRICE) > 0);
-}
-
-// Group daily records into monthly candles (keyed by YYYY-MM)
-function resampleToMonthly(records: any[]): any[] {
-  const buckets = new Map<string, any[]>();
-  for (const r of records) {
-    const key = r.CH_TIMESTAMP.slice(0, 7);
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key)!.push(r);
-  }
-  return [...buckets.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([key, recs]) => {
-      const closes = recs.map(r => parseFloat(r.CH_CLOSING_PRICE)).filter(v => v > 0);
-      return {
-        CH_TIMESTAMP: key,
-        CH_CLOSING_PRICE: String(closes[closes.length - 1] || 0),
-      };
-    })
-    .filter(r => parseFloat(r.CH_CLOSING_PRICE) > 0);
-}
-
 // ── GCT computation ────────────────────────────────────────────────────────────
 
-// lookback: how many candles from the end to use for the range calculation.
-// currentPrice always comes from the very last candle regardless of lookback.
+// lookback: number of candles from the end to use for range + average.
+// currentPrice always comes from the very last candle.
 function computeGCT(records: any[], lookback?: number): GCTLevels | null {
-  if (records.length < 6) return null;
+  if (records.length < 3) return null;
   const allCloses = records.map(r => parseFloat(r.CH_CLOSING_PRICE)).filter(v => v > 0);
   if (!allCloses.length) return null;
   const currentPrice = allCloses[allCloses.length - 1];
 
-  const window = lookback ? records.slice(-Math.max(lookback, 6)) : records;
-  const closes = window.map(r => parseFloat(r.CH_CLOSING_PRICE)).filter(v => v > 0);
-  if (!closes.length) return null;
+  const win = lookback ? records.slice(-Math.max(lookback, 3)) : records;
+  const closes = win.map(r => parseFloat(r.CH_CLOSING_PRICE)).filter(v => v > 0);
+  if (closes.length < 2) return null;
 
   const maxHigh = Math.max(...closes);
-  const minLow = Math.min(...closes);
+  const minLow  = Math.min(...closes);
   const avgClose = closes.reduce((s, v) => s + v, 0) / closes.length;
   const range = maxHigh - minLow;
   if (range === 0) return null;
 
-  const al = Math.round(maxHigh * 0.97);
+  const al  = Math.round(maxHigh * 0.97);
   const mgc = Math.round(avgClose);
-  const cl = Math.round(minLow + range * 0.15);
-  const l1 = Math.round(minLow + range * 0.08);
-  const l2 = Math.round(minLow);
-  const u1 = Math.round(maxHigh * 1.08);
-  const u2 = Math.round(maxHigh * 1.18);
+  const cl  = Math.round(minLow + range * 0.15);
+  const l1  = Math.round(minLow + range * 0.08);
+  const l2  = Math.round(minLow);
+  const u1  = Math.round(maxHigh * 1.08);
+  const u2  = Math.round(maxHigh * 1.18);
 
   const zone =
-    currentPrice >= al ? 'BUY ZONE'
+    currentPrice >= al  ? 'BUY ZONE'
     : currentPrice >= mgc ? 'WATCH ZONE'
-    : currentPrice >= cl ? 'DANGER ZONE'
+    : currentPrice >= cl  ? 'DANGER ZONE'
     : 'CRASH ZONE';
 
   return { al, mgc, cl, l1, l2, u1, u2, currentPrice, zone };
@@ -280,36 +233,32 @@ export default function MultiGCT() {
     setConfluences([]);
 
     try {
-      // Single fetch: 2 years of daily data, then resample client-side.
-      // This guarantees genuinely different timeframes regardless of what
-      // Yahoo Finance returns for different interval params.
+      // Yahoo Finance reliably returns ~14 monthly candles for Indian stocks
+      // regardless of what interval we request. We work with this reality:
+      // fetch monthly data once, then apply 3 different lookback windows
+      // to get genuinely distinct long / mid / near-term GCT levels.
       const res = await callEdge('smooth-endpoint', {
         type: 'stock_price',
         symbol: sym,
         exchange,
-        interval: 'daily',
-        range: '2y',
+        // no interval/range → defaults to monthly, 14mo in the edge function
       });
 
-      const dRecords: any[] = res?.data?.data || [];
+      const records: any[] = res?.data?.data || [];
 
-      if (!dRecords.length) {
+      if (!records.length) {
         throw new Error(
           `No data found for "${sym}" on ${exchange}. Check the symbol (e.g. SBIN, RELIANCE).`,
         );
       }
 
-      // Resample on the client: same source data, different aggregations
-      const wRecords = resampleToWeekly(dRecords);
-      const mRecords = resampleToMonthly(dRecords);
-
-      // GCT with timeframe-specific lookbacks:
-      // Monthly: all resampled monthly closes (~24 months) — long-term structure
-      // Weekly: last 26 weekly closes (~6 months) — medium-term trend
-      // Daily: last 20 daily closes (~1 month) — short-term momentum
-      const m = computeGCT(mRecords);
-      const w = computeGCT(wRecords, 26);
-      const d = computeGCT(dRecords, 20);
+      // Three GCT views from the same monthly dataset:
+      // Long Term  (all ~14 candles)  — full structural range
+      // Mid Term   (last 6 candles)   — ~6-month trend
+      // Near Term  (last 4 candles)   — ~4-month momentum
+      const m = computeGCT(records);
+      const w = computeGCT(records, 6);
+      const d = computeGCT(records, 4);
 
       if (!m && !w && !d) {
         throw new Error('Not enough candles to compute GCT. Try a different symbol.');
@@ -395,7 +344,7 @@ export default function MultiGCT() {
             <h1 className="text-2xl font-black">Multi-Timeframe GCT</h1>
           </div>
           <p className="text-xs font-mono text-[#6b6b85]">
-            Monthly · Weekly · Daily confluence analysis — identify the strongest
+            Long Term · Mid Term · Near Term confluence analysis — identify the strongest
             GCT levels across all timeframes
           </p>
         </div>
@@ -405,9 +354,9 @@ export default function MultiGCT() {
           <div className="text-[10px] font-black uppercase tracking-widest text-[#4d9fff] mb-3">What is this?</div>
           <div className="space-y-2 text-xs font-mono text-[#6b6b85]">
             <div><span className="text-[#e8e8f0] font-black">1.</span> Enter any NSE stock symbol and click Analyse.</div>
-            <div><span className="text-[#e8e8f0] font-black">2.</span> The app fetches 3 timeframes — monthly (14 months), weekly (6 months), daily (1 month) — and runs GCT on each.</div>
-            <div><span className="text-[#e8e8f0] font-black">3.</span> Where two or more timeframes point to the <span className="text-[#f0c040]">same price level</span>, that's a Confluence Zone — the strongest support/resistance.</div>
-            <div><span className="text-[#e8e8f0] font-black">💡</span> Triple Confluence = all 3 timeframes agree → highest conviction level to buy/sell/set SL at.</div>
+            <div><span className="text-[#e8e8f0] font-black">2.</span> The app shows 3 GCT views: <span className="text-[#f0c040]">Long Term</span> (full 14-month range), <span className="text-[#f0c040]">Mid Term</span> (~6 months), and <span className="text-[#f0c040]">Near Term</span> (~4 months) — each with its own support/resistance levels.</div>
+            <div><span className="text-[#e8e8f0] font-black">3.</span> Where two or more views point to the <span className="text-[#f0c040]">same price level</span>, that's a Confluence Zone — the strongest support/resistance.</div>
+            <div><span className="text-[#e8e8f0] font-black">💡</span> Triple Confluence = all 3 views agree → highest conviction level to buy/sell/set SL at.</div>
           </div>
         </div>
 
@@ -491,10 +440,10 @@ export default function MultiGCT() {
           <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-12 text-center">
             <div className="text-4xl mb-4 animate-spin inline-block">⚛</div>
             <div className="text-sm font-black text-[#f0c040]">
-              Fetching 2 years of price history...
+              Fetching price history...
             </div>
             <div className="text-xs font-mono text-[#6b6b85] mt-1">
-              Resampling into Monthly · Weekly · Daily timeframes
+              Long Term · Mid Term · Near Term analysis
             </div>
           </div>
         )}
@@ -510,9 +459,9 @@ export default function MultiGCT() {
                   Timeframe Breakdown
                 </div>
                 <div className="flex gap-3">
-                  {monthlyGCT && <TFCard label="Monthly" gct={monthlyGCT} />}
-                  {weeklyGCT && <TFCard label="Weekly" gct={weeklyGCT} />}
-                  {dailyGCT && <TFCard label="Daily" gct={dailyGCT} />}
+                  {monthlyGCT && <TFCard label="Long Term" gct={monthlyGCT} />}
+                  {weeklyGCT && <TFCard label="Mid Term" gct={weeklyGCT} />}
+                  {dailyGCT && <TFCard label="Near Term" gct={dailyGCT} />}
                 </div>
               </div>
 
