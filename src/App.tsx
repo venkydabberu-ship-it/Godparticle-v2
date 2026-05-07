@@ -42,6 +42,7 @@ const MultiGCT        = lazy(() => import('./pages/MultiGCT'));
 const TradeJournal    = lazy(() => import('./pages/TradeJournal'));
 const AlertsCenter    = lazy(() => import('./pages/AlertsCenter'));
 const OptionsScanner  = lazy(() => import('./pages/OptionsScanner'));
+const DailyFocus      = lazy(() => import('./pages/DailyFocus'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const Terms        = lazy(() => import('./pages/Terms'));
 const Privacy      = lazy(() => import('./pages/Privacy'));
@@ -139,6 +140,9 @@ export default function App() {
             } />
             <Route path="/scanner" element={
               <ProtectedRoute><OptionsScanner /></ProtectedRoute>
+            } />
+            <Route path="/focus" element={
+              <ProtectedRoute><DailyFocus /></ProtectedRoute>
             } />
             <Route path="/terms"   element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />
