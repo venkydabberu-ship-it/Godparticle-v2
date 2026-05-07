@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabase';
+import { supabase, callEdge } from '../lib/supabase';
 import {
   INDEX_CONFIG, ALL_Z2H_INDICES,
   getExpiryDates, isExpiryDay, getExpiriesForMonth,
@@ -38,6 +38,9 @@ export default function ZeroToHero() {
   const [error, setError] = useState('');
   const [todaySetups, setTodaySetups] = useState<TodayExpirySetup[]>([]);
   const [setupsLoading, setSetupsLoading] = useState(false);
+  const [z2hAiInsight, setZ2hAiInsight] = useState('');
+  const [z2hAiLoading, setZ2hAiLoading] = useState(false);
+  const [z2hAiError, setZ2hAiError] = useState('');
 
   const todayStr = new Date().toISOString().split('T')[0];
   const cfg = INDEX_CONFIG[index];
@@ -172,6 +175,37 @@ export default function ZeroToHero() {
   function nextMonth() {
     if (calMonth === 11) { setCalYear(y => y + 1); setCalMonth(0); }
     else setCalMonth(m => m + 1);
+  }
+
+  async function fetchZ2HAIInsight() {
+    if (!maxPainPull) return;
+    setZ2hAiLoading(true);
+    setZ2hAiError('');
+    try {
+      const data = await callEdge('ai-insight', {
+        type: 'z2h_signal',
+        data: {
+          signal: maxPainPull.signal,
+          direction: maxPainPull.direction,
+          indexKey: index,
+          expiry,
+          spot930: maxPainPull.spot930,
+          prevMaxPain: maxPainPull.prevMaxPain,
+          pullStrike: maxPainPull.pullStrike,
+          wallStrike: maxPainPull.wallStrike,
+          pullLTP: maxPainPull.pullLTP,
+          gapPct: maxPainPull.gapPct,
+          gap: maxPainPull.gap,
+          optionType: maxPainPull.optionType,
+          targets: maxPainPull.targets,
+        },
+      });
+      setZ2hAiInsight(data.insight);
+    } catch (err: any) {
+      setZ2hAiError(err.message || 'AI insight failed');
+    } finally {
+      setZ2hAiLoading(false);
+    }
   }
 
   async function fetchMorning() {
@@ -624,6 +658,30 @@ export default function ZeroToHero() {
                     <><span className="text-[#a855f7] font-black">⚠ Risk:</span> Gamma squeezes require market to MOVE toward the wall. If spot stalls at max pain by 11:00 AM, exit. Size to 25-50% of normal — all-or-nothing trade. Confirm LTP is still cheap (&lt;₹150) before entry.</>
                   ) : (
                     <><span className="text-[#f0c040] font-black">⚠ Risk:</span> EARLY signal — direction not yet confirmed by volume. Size to 25-50% of normal. All-or-nothing trade. If spot doesn't move toward max pain by 12:00 PM, exit immediately.</>
+                  )}
+                </div>
+
+                {/* AI TRADE INSIGHT */}
+                <div className="mt-3 pt-3 border-t border-white/10">
+                  {!z2hAiInsight && !z2hAiLoading && (
+                    <button
+                      onClick={fetchZ2HAIInsight}
+                      className="w-full py-2.5 rounded-xl text-xs font-black border border-[#a855f7]/40 text-[#a855f7] hover:bg-[#a855f7]/10 transition-all"
+                    >
+                      🤖 Get AI Trade Insight
+                    </button>
+                  )}
+                  {z2hAiLoading && (
+                    <div className="text-center text-xs font-mono text-[#a855f7] py-2">⏳ AI is analysing this setup...</div>
+                  )}
+                  {z2hAiError && (
+                    <div className="text-xs font-mono text-[#ff4d6d] py-1">{z2hAiError}</div>
+                  )}
+                  {z2hAiInsight && (
+                    <div className="bg-[#1a1020] border border-[#a855f7]/30 rounded-xl p-4">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-[#a855f7] mb-2">🤖 AI Trade Insight</div>
+                      <div className="text-[11px] font-mono text-[#e8e8f0] leading-relaxed whitespace-pre-line">{z2hAiInsight}</div>
+                    </div>
                   )}
                 </div>
               </div>
