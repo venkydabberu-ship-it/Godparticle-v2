@@ -703,12 +703,38 @@ export function analyzeReversal(
   };
 }
 
-// ── MAX PAIN PULL — early signal using only 9:30 AM + prev day data ──────────
-// On expiry day, if spot is 1-4% from max pain at 9:30 AM, the option AT max
-// pain is a Zero-to-Hero candidate. Entry 9:30-10:30 AM before the pull starts.
+// ── MAX PAIN PULL / GAMMA WALL SQUEEZE — early signal using 9:30 AM + prev day data ──
+// Scenario 1 — Max Pain Pull: spot is 1-4% from max pain → buy option AT max pain strike
+// Scenario 2 — Gamma Wall Squeeze: spot is near max pain (<2%), but a CE/PE wall
+//   (strike with highest CE/PE OI) sits 0.3-3% away. Writers at the wall hedge if spot
+//   approaches → cascade squeeze (e.g. SENSEX 78200 CE ₹40→₹310 on 2026-05-07)
+
+// Find the strike with highest CE/PE OI on the given side of max pain
+function findGammaWall(
+  strikeData: Record<string, any>,
+  maxPain: number,
+  side: 'CE' | 'PE'
+): { strike: number; oi: number; ltp: number } | null {
+  const oiKey  = side === 'CE' ? 'ce_oi'  : 'pe_oi';
+  const ltpKey = side === 'CE' ? 'ce_ltp' : 'pe_ltp';
+  let best: { strike: number; oi: number; ltp: number } | null = null;
+
+  for (const [key, val] of Object.entries(strikeData)) {
+    if (key.startsWith('_')) continue;
+    const strike = parseFloat(key);
+    if (isNaN(strike)) continue;
+    if (side === 'CE' && strike < maxPain) continue;
+    if (side === 'PE' && strike > maxPain) continue;
+
+    const oi  = parseFloat(String((val as any)?.[oiKey]  ?? 0)) || 0;
+    const ltp = parseFloat(String((val as any)?.[ltpKey] ?? 0)) || 0;
+    if (oi > 0 && (!best || oi > best.oi)) best = { strike, oi, ltp };
+  }
+  return best;
+}
 
 export interface MaxPainPullResult {
-  signal: 'MAX_PAIN_PULL' | 'NO_PULL';
+  signal: 'MAX_PAIN_PULL' | 'GAMMA_WALL_SQUEEZE';
   direction: 'BULLISH' | 'BEARISH';
   pullStrike: number;
   optionType: 'CE' | 'PE';
@@ -729,59 +755,94 @@ export function computeMaxPainPull(
 ): MaxPainPullResult | null {
   const spot930 = snap930.spot_price;
   const strikeGap = INDEX_CONFIG[indexKey]?.strikeGap ?? 50;
-
   if (!spot930) return null;
 
-  // Use DB max_pain if available; otherwise compute from strike_data
+  // Resolve max pain: DB field → compute from strike_data → snap930 fallback
   let prevMaxPain = dayBefore?.max_pain ?? 0;
-  if (!prevMaxPain && dayBefore?.strike_data) {
-    prevMaxPain = calculateMaxPain(dayBefore.strike_data);
-  }
-  // Also try snap930 max_pain as fallback (it reflects pre-open OI state)
+  if (!prevMaxPain && dayBefore?.strike_data) prevMaxPain = calculateMaxPain(dayBefore.strike_data);
   if (!prevMaxPain) prevMaxPain = snap930.max_pain ?? 0;
   if (!prevMaxPain) return null;
 
-  const gap = prevMaxPain - spot930;
+  const gap    = prevMaxPain - spot930;
   const gapPct = Math.abs(gap) / spot930 * 100;
 
-  // Must be 1-4% away — close enough for pull to work, far enough to be OTM
-  if (gapPct < 1.0 || gapPct > 4.0) return null;
-  // Must span at least 4 strike intervals (not noise)
-  if (Math.abs(gap) < strikeGap * 4) return null;
+  // ── SCENARIO 1: Max Pain Pull — spot is 1-4% from max pain ───────────────
+  if (gapPct >= 1.0 && gapPct <= 4.0 && Math.abs(gap) >= strikeGap * 4) {
+    const direction: 'BULLISH' | 'BEARISH' = gap > 0 ? 'BULLISH' : 'BEARISH';
+    const optionType = direction === 'BULLISH' ? 'CE' : 'PE';
+    const ltpKey     = optionType === 'CE' ? 'ce_ltp' : 'pe_ltp';
+    const pullStrike = Math.round(prevMaxPain / strikeGap) * strikeGap;
+    const s930       = snap930.strike_data || {};
+    const pullLTP    = parseFloat(String((s930[String(pullStrike)] as any)?.[ltpKey] ?? 0)) || 0;
 
-  const direction: 'BULLISH' | 'BEARISH' = gap > 0 ? 'BULLISH' : 'BEARISH';
-  const optionType = direction === 'BULLISH' ? 'CE' : 'PE';
-  const ltpKey = optionType === 'CE' ? 'ce_ltp' : 'pe_ltp';
+    if (pullLTP > 0 && pullLTP > 150) return null;
 
-  // Pull strike = strike nearest to yesterday's max pain (the gravity target)
-  const pullStrike = Math.round(prevMaxPain / strikeGap) * strikeGap;
-  const s930 = snap930.strike_data || {};
-  const pullLTP = parseFloat(String((s930[String(pullStrike)] as any)?.[ltpKey] ?? 0)) || 0;
+    const strength: 'HIGH' | 'MEDIUM' = gapPct >= 2.0 ? 'HIGH' : 'MEDIUM';
+    const sl   = pullLTP > 0 ? Math.round(pullLTP * 0.5) : 0;
+    const t1   = pullLTP > 0 ? Math.round(pullLTP * 3)   : 0;
+    const t2   = pullLTP > 0 ? Math.round(pullLTP * 5)   : 0;
+    const hero = pullLTP > 0 ? Math.round(pullLTP * 10)  : 0;
 
-  // Option must be cheap enough to be a "zero" (< ₹150 LTP)
-  if (pullLTP > 0 && pullLTP > 150) return null;
+    return {
+      signal: 'MAX_PAIN_PULL', direction, pullStrike, optionType,
+      prevMaxPain, spot930, gap: Math.round(gap),
+      gapPct: Math.round(gapPct * 10) / 10, pullLTP, strength,
+      reason: `${indexKey} spot ${spot930.toLocaleString()} is ${Math.round(Math.abs(gap))} pts (${gapPct.toFixed(1)}%) ${gap > 0 ? 'BELOW' : 'ABOVE'} Max Pain ${prevMaxPain.toLocaleString()}. Expiry gravity pull ${direction === 'BULLISH' ? 'upward' : 'downward'} expected.`,
+      targets: { sl, t1, t2, hero },
+    };
+  }
 
-  const strength: 'HIGH' | 'MEDIUM' = gapPct >= 2.0 ? 'HIGH' : 'MEDIUM';
+  // ── SCENARIO 2: Gamma Wall Squeeze — spot near max pain, wall 0.3-3% away ─
+  // Even when spot ≈ max pain, a concentrated OI wall nearby forces writers to
+  // hedge if spot approaches → explosive cascade. Enter AT the wall strike.
+  if (gapPct <= 2.0) {
+    const s930   = snap930.strike_data || {};
+    const ceWall = findGammaWall(s930, prevMaxPain, 'CE');
+    const peWall = findGammaWall(s930, prevMaxPain, 'PE');
 
-  const sl   = pullLTP > 0 ? Math.round(pullLTP * 0.5)  : 0;
-  const t1   = pullLTP > 0 ? Math.round(pullLTP * 3)    : 0;
-  const t2   = pullLTP > 0 ? Math.round(pullLTP * 5)    : 0;
-  const hero = pullLTP > 0 ? Math.round(pullLTP * 10)   : 0;
+    const ceDistPct = ceWall ? (ceWall.strike - spot930) / spot930 * 100 : 999;
+    const peDistPct = peWall ? (spot930 - peWall.strike) / spot930 * 100 : 999;
 
-  return {
-    signal: 'MAX_PAIN_PULL',
-    direction,
-    pullStrike,
-    optionType,
-    prevMaxPain,
-    spot930,
-    gap: Math.round(gap),
-    gapPct: Math.round(gapPct * 10) / 10,
-    pullLTP,
-    strength,
-    reason: `${indexKey} spot ${spot930.toLocaleString()} is ${Math.round(Math.abs(gap))} pts (${gapPct.toFixed(1)}%) ${gap > 0 ? 'BELOW' : 'ABOVE'} Max Pain ${prevMaxPain.toLocaleString()}. Expiry day gravity pull ${direction === 'BULLISH' ? 'upward' : 'downward'} expected.`,
-    targets: { sl, t1, t2, hero },
-  };
+    // CE wall squeeze: wall 0.3-3% above spot, cheap option
+    if (ceDistPct >= 0.3 && ceDistPct <= 3.0 && ceWall && ceWall.ltp > 0 && ceWall.ltp <= 150) {
+      const wallPts    = Math.round(ceWall.strike - spot930);
+      const strength: 'HIGH' | 'MEDIUM' = ceDistPct >= 1.0 ? 'HIGH' : 'MEDIUM';
+      return {
+        signal: 'GAMMA_WALL_SQUEEZE', direction: 'BULLISH',
+        pullStrike: ceWall.strike, optionType: 'CE',
+        prevMaxPain, spot930, gap: Math.round(gap),
+        gapPct: Math.round(gapPct * 10) / 10, pullLTP: ceWall.ltp, strength,
+        reason: `${indexKey} CE wall at ${ceWall.strike.toLocaleString()} is ${wallPts} pts (${ceDistPct.toFixed(1)}%) above spot. Highest CE OI concentration = writer fuel. Spot is near max pain — if bulls push through, CE writers forced to delta-hedge → explosive upward squeeze.`,
+        targets: {
+          sl:   Math.round(ceWall.ltp * 0.5),
+          t1:   Math.round(ceWall.ltp * 3),
+          t2:   Math.round(ceWall.ltp * 5),
+          hero: Math.round(ceWall.ltp * 10),
+        },
+      };
+    }
+
+    // PE wall squeeze: wall 0.3-3% below spot, cheap option
+    if (peDistPct >= 0.3 && peDistPct <= 3.0 && peWall && peWall.ltp > 0 && peWall.ltp <= 150) {
+      const wallPts    = Math.round(spot930 - peWall.strike);
+      const strength: 'HIGH' | 'MEDIUM' = peDistPct >= 1.0 ? 'HIGH' : 'MEDIUM';
+      return {
+        signal: 'GAMMA_WALL_SQUEEZE', direction: 'BEARISH',
+        pullStrike: peWall.strike, optionType: 'PE',
+        prevMaxPain, spot930, gap: Math.round(gap),
+        gapPct: Math.round(gapPct * 10) / 10, pullLTP: peWall.ltp, strength,
+        reason: `${indexKey} PE wall at ${peWall.strike.toLocaleString()} is ${wallPts} pts (${peDistPct.toFixed(1)}%) below spot. Highest PE OI concentration = writer fuel. Spot is near max pain — if bears break through, PE writers forced to delta-hedge → explosive downward squeeze.`,
+        targets: {
+          sl:   Math.round(peWall.ltp * 0.5),
+          t1:   Math.round(peWall.ltp * 3),
+          t2:   Math.round(peWall.ltp * 5),
+          hero: Math.round(peWall.ltp * 10),
+        },
+      };
+    }
+  }
+
+  return null;
 }
 
 // ── TODAY'S EXPIRY SETUP — from market_data alone (no live fetch needed) ──────
@@ -797,7 +858,13 @@ export interface TodayExpirySetup {
   direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   pullStrike: number;
   optionType: 'CE' | 'PE' | null;
-  isActionable: boolean; // gap 1-4% AND span >= 4 strike intervals
+  isActionable: boolean;  // gap 1-4% AND span >= 4 intervals (Max Pain Pull)
+  // Gamma wall info (from yesterday's OI, no LTP filter — LTP checked live at 9:30)
+  ceWallStrike: number;
+  ceWallDistPct: number;  // % distance from prevSpot to CE wall
+  peWallStrike: number;
+  peWallDistPct: number;  // % distance from prevSpot to PE wall (positive = below)
+  hasGammaWall: boolean;  // either wall is 0.3-3% from prevSpot when gap < 1%
 }
 
 export function buildTodayExpirySetup(
@@ -808,7 +875,6 @@ export function buildTodayExpirySetup(
   const strikeGap = INDEX_CONFIG[indexKey]?.strikeGap ?? 50;
   const prevSpot = parseFloat(strikeData['_spot_close']) || 0;
 
-  // Compute max pain from stored OI
   const strikesOnly = Object.fromEntries(
     Object.entries(strikeData).filter(([k]) => !k.startsWith('_'))
   );
@@ -827,5 +893,27 @@ export function buildTodayExpirySetup(
 
   const isActionable = gapPct >= 1.0 && gapPct <= 4.0 && direction !== 'NEUTRAL';
 
-  return { indexKey, expiry, prevSpot, prevMaxPain, gap: Math.round(gap), gapPct, direction, pullStrike, optionType, isActionable };
+  // Identify gamma walls from yesterday's OI concentration
+  const ceWall = findGammaWall(strikesOnly, prevMaxPain, 'CE');
+  const peWall = findGammaWall(strikesOnly, prevMaxPain, 'PE');
+
+  const ceWallStrike = ceWall?.strike ?? 0;
+  const peWallStrike = peWall?.strike ?? 0;
+  const ceWallDistPct = (ceWallStrike > 0 && prevSpot > 0)
+    ? Math.round((ceWallStrike - prevSpot) / prevSpot * 1000) / 10
+    : 0;
+  const peWallDistPct = (peWallStrike > 0 && prevSpot > 0)
+    ? Math.round((prevSpot - peWallStrike) / prevSpot * 1000) / 10
+    : 0;
+  // Only flag hasGammaWall when gap is small (max pain pull not already triggered)
+  const hasGammaWall = !isActionable && (
+    (ceWallDistPct >= 0.3 && ceWallDistPct <= 3.0) ||
+    (peWallDistPct >= 0.3 && peWallDistPct <= 3.0)
+  );
+
+  return {
+    indexKey, expiry, prevSpot, prevMaxPain,
+    gap: Math.round(gap), gapPct, direction, pullStrike, optionType, isActionable,
+    ceWallStrike, ceWallDistPct, peWallStrike, peWallDistPct, hasGammaWall,
+  };
 }
