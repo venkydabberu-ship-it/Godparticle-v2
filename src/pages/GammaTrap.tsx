@@ -14,7 +14,7 @@ interface GammaRow extends StrikeRow {
   dollarGamma: number;
 }
 
-const INDEX_OPTIONS = ['NIFTY50', 'BANKNIFTY', 'FINNIFTY', 'MIDCAPNIFTY'];
+const INDEX_OPTIONS = ['NIFTY50', 'BANKNIFTY', 'FINNIFTY', 'MIDCAPNIFTY', 'SENSEX', 'BANKEX'];
 const DTE_OPTIONS = [0, 1, 2, 3];
 
 function normPdf(x: number): number {
@@ -89,10 +89,12 @@ export default function GammaTrap() {
       setExpiry('');
       setChainData(null);
       setError('');
+      const today = new Date().toISOString().split('T')[0];
       const { data, error: err } = await supabase
         .from('market_data')
         .select('expiry')
         .eq('index_name', indexName)
+        .gte('expiry', today)
         .order('expiry', { ascending: true });
       if (err) { setError(err.message); return; }
       const unique = [...new Set((data ?? []).map((r: any) => r.expiry))];

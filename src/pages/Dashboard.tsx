@@ -367,6 +367,13 @@ export default function Dashboard() {
               <div className="font-black text-sm text-[#ff8c42] mb-1">Price Alerts</div>
               <div className="text-xs font-mono text-[#6b6b85]">Set alerts on GCT levels — get notified when price hits your target zones</div>
             </Link>
+
+            <Link to="/focus"
+              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#f0c040] transition-all md:col-span-2">
+              <div className="text-2xl mb-2">🎯</div>
+              <div className="font-black text-sm text-[#f0c040] mb-1">Strike Focus — Today's Strikes</div>
+              <div className="text-xs font-mono text-[#6b6b85]">One PE + one CE strike per index to focus on today — max pain walls, support & resistance levels, and exact trade plan</div>
+            </Link>
           </div>
         </div>
 

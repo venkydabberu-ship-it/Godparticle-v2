@@ -8,7 +8,7 @@ interface StrikeRow {
   pe_oi: number;
 }
 
-const INDEX_OPTIONS = ['NIFTY50', 'BANKNIFTY', 'FINNIFTY', 'MIDCAPNIFTY'];
+const INDEX_OPTIONS = ['NIFTY50', 'BANKNIFTY', 'FINNIFTY', 'MIDCAPNIFTY', 'SENSEX', 'BANKEX'];
 
 function computeMaxPain(rows: StrikeRow[]): number {
   let minPain = Infinity;
@@ -81,10 +81,12 @@ export default function OIHeatmap() {
       setExpiry('');
       setChainData(null);
       setError('');
+      const today = new Date().toISOString().split('T')[0];
       const { data, error: err } = await supabase
         .from('market_data')
         .select('expiry')
         .eq('index_name', indexName)
+        .gte('expiry', today)
         .order('expiry', { ascending: true });
       if (err) { setError(err.message); return; }
       const unique = [...new Set((data ?? []).map((r: any) => r.expiry))];
