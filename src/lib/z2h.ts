@@ -727,11 +727,19 @@ export function computeMaxPainPull(
   snap930: Z2HSnapshot,
   indexKey: string
 ): MaxPainPullResult | null {
-  const prevMaxPain = dayBefore?.max_pain ?? 0;
   const spot930 = snap930.spot_price;
   const strikeGap = INDEX_CONFIG[indexKey]?.strikeGap ?? 50;
 
-  if (!prevMaxPain || !spot930) return null;
+  if (!spot930) return null;
+
+  // Use DB max_pain if available; otherwise compute from strike_data
+  let prevMaxPain = dayBefore?.max_pain ?? 0;
+  if (!prevMaxPain && dayBefore?.strike_data) {
+    prevMaxPain = calculateMaxPain(dayBefore.strike_data);
+  }
+  // Also try snap930 max_pain as fallback (it reflects pre-open OI state)
+  if (!prevMaxPain) prevMaxPain = snap930.max_pain ?? 0;
+  if (!prevMaxPain) return null;
 
   const gap = prevMaxPain - spot930;
   const gapPct = Math.abs(gap) / spot930 * 100;

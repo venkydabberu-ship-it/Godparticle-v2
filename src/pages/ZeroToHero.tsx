@@ -148,6 +148,14 @@ export default function ZeroToHero() {
     ? computeMaxPainPull(snapDayBefore as Z2HSnapshot | null, snap930 as Z2HSnapshot, index)
     : null;
 
+  // Resolve prev day max pain for display — DB may have stored it as null
+  const prevDayMaxPain: number = (() => {
+    if (!snapDayBefore) return 0;
+    if (snapDayBefore.max_pain) return snapDayBefore.max_pain;
+    if (snapDayBefore.strike_data) return calculateMaxPain(snapDayBefore.strike_data);
+    return 0;
+  })();
+
   function buildCalCells(): (string | null)[] {
     const firstDow = new Date(calYear, calMonth, 1).getDay();
     const lastDate = new Date(calYear, calMonth + 1, 0).getDate();
@@ -435,7 +443,7 @@ export default function ZeroToHero() {
                   {snapDayBefore ? (
                     <div className="text-[10px] font-mono space-y-0.5">
                       <div className="text-[#4d9fff]">✅ Loaded from database</div>
-                      <div className="text-[#6b6b85]">Spot: <span className="text-[#e8e8f0]">{snapDayBefore.spot_price?.toLocaleString()}</span> · Max Pain: <span className="text-[#e8e8f0]">{snapDayBefore.max_pain?.toLocaleString()}</span></div>
+                      <div className="text-[#6b6b85]">Spot: <span className="text-[#e8e8f0]">{snapDayBefore.spot_price?.toLocaleString()}</span> · Max Pain: <span className="text-[#f0c040]">{prevDayMaxPain > 0 ? prevDayMaxPain.toLocaleString() : '—'}</span></div>
                     </div>
                   ) : (
                     <div className="text-[10px] font-mono text-[#6b6b85]">
