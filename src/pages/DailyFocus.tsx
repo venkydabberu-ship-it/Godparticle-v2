@@ -13,7 +13,8 @@ interface FocusCard {
   expiry: string;
   tradeDate: string;
   maxPain: number;
-  atm: number;
+  spotClose: number;  // actual spot at data capture time
+  atm: number;        // closest strike to spotClose (or maxPain if no spot)
   interval: number;
   // Seller strikes — high OI OTM walls
   ceFocus: number;
@@ -32,9 +33,11 @@ interface IndexGroup {
   cards: FocusCard[]; // one per expiry, sorted asc
 }
 
-function parseStrikeData(raw: Record<string, any>): StrikeRow[] {
-  if (!raw) return [];
-  return Object.entries(raw)
+function parseStrikeData(raw: Record<string, any>): { rows: StrikeRow[]; spotClose: number } {
+  if (!raw) return { rows: [], spotClose: 0 };
+  const spotClose = parseFloat(raw['_spot_close']) || 0;
+  const rows = Object.entries(raw)
+    .filter(([key]) => key !== '_spot_close')
     .map(([key, val]: [string, any]) => {
       const strike = parseFloat(key);
       if (isNaN(strike)) return null;
@@ -44,6 +47,7 @@ function parseStrikeData(raw: Record<string, any>): StrikeRow[] {
     })
     .filter((r): r is StrikeRow => r !== null)
     .sort((a, b) => a.strike - b.strike);
+  return { rows, spotClose };
 }
 
 function computeMaxPain(rows: StrikeRow[]): number {
@@ -80,18 +84,19 @@ function computeFocusCard(
   tradeDate: string,
   strikeData: Record<string, any>
 ): FocusCard | null {
-  const rows = parseStrikeData(strikeData);
+  const { rows, spotClose } = parseStrikeData(strikeData);
   if (rows.length < 3) return null;
 
   const maxPain = computeMaxPain(rows);
   const interval = detectInterval(rows);
 
-  // ATM = strike closest to max pain
+  // ATM = strike closest to actual spot close (falls back to max pain if spot not stored)
+  const spotRef = spotClose > 0 ? spotClose : maxPain;
   const atm = rows.reduce((b, r) =>
-    Math.abs(r.strike - maxPain) < Math.abs(b.strike - maxPain) ? r : b
+    Math.abs(r.strike - spotRef) < Math.abs(b.strike - spotRef) ? r : b
   ).strike;
 
-  // Seller walls: highest OI far OTM
+  // Seller walls: highest OI on each side of max pain
   const ceWallRows = rows.filter(r => r.strike >= maxPain && r.ce_oi > 0);
   if (!ceWallRows.length) return null;
   const ceFocusRow = ceWallRows.reduce((b, r) => r.ce_oi > b.ce_oi ? r : b);
@@ -100,8 +105,8 @@ function computeFocusCard(
   if (!peWallRows.length) return null;
   const peFocusRow = peWallRows.reduce((b, r) => r.pe_oi > b.pe_oi ? r : b);
 
-  // Buyer range: 2 OTM to 5 ITM from ATM/max pain
-  // CE buyer: 5 strikes below ATM (ITM) to 2 strikes above ATM (OTM) — highest CE OI = most liquid
+  // Buyer range anchored on actual spot (not max pain) — 2 OTM to 5 ITM
+  // CE buyer: 5 strikes below ATM (ITM calls) to 2 strikes above ATM (OTM calls)
   const ceBuyLow  = atm - 5 * interval;
   const ceBuyHigh = atm + 2 * interval;
   const ceBuyRows = rows.filter(r => r.strike >= ceBuyLow && r.strike <= ceBuyHigh && r.ce_oi > 0);
@@ -109,7 +114,7 @@ function computeFocusCard(
     ? ceBuyRows.reduce((b, r) => r.ce_oi > b.ce_oi ? r : b)
     : null;
 
-  // PE buyer: 2 strikes below ATM (OTM) to 5 strikes above ATM (ITM) — highest PE OI = most liquid
+  // PE buyer: 2 strikes below ATM (OTM puts) to 5 strikes above ATM (ITM puts)
   const peBuyLow  = atm - 2 * interval;
   const peBuyHigh = atm + 5 * interval;
   const peBuyRows = rows.filter(r => r.strike >= peBuyLow && r.strike <= peBuyHigh && r.pe_oi > 0);
@@ -122,6 +127,7 @@ function computeFocusCard(
     expiry,
     tradeDate,
     maxPain,
+    spotClose,
     atm,
     interval,
     ceFocus: ceFocusRow.strike,
@@ -335,8 +341,13 @@ export default function DailyFocus() {
             >
               {/* Index header + expiry tabs */}
               <div className="px-5 pt-4 pb-3 flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-black text-sm" style={{ color }}>{group.indexName}</span>
+                  {card.spotClose > 0 ? (
+                    <span className="text-[9px] font-mono bg-[#f0c040]/10 border border-[#f0c040]/25 text-[#f0c040] px-2 py-0.5 rounded-full">
+                      Spot {fmtStrike(card.spotClose)}
+                    </span>
+                  ) : null}
                   <span className="text-[9px] font-mono text-[#6b6b85]">ATM {fmtStrike(card.atm)}</span>
                 </div>
                 {/* Expiry tabs */}
@@ -380,7 +391,9 @@ export default function DailyFocus() {
                     <div className="bg-[#f0c040]/8 border border-[#f0c040]/25 rounded-xl p-3 text-center">
                       <div className="text-[9px] font-black uppercase tracking-widest text-[#f0c040] mb-1">Max Pain</div>
                       <div className="font-black text-base text-[#e8e8f0]">{fmtStrike(card.maxPain)}</div>
-                      <div className="text-[9px] font-mono text-[#6b6b85] mt-1">ATM {fmtStrike(card.atm)}</div>
+                      <div className="text-[9px] font-mono text-[#6b6b85] mt-1">
+                        {card.spotClose > 0 ? `Spot ${fmtStrike(card.spotClose)}` : `ATM ${fmtStrike(card.atm)}`}
+                      </div>
                       <div className="text-[9px] font-mono text-[#f0c040] mt-0.5">EXPIRY PIN</div>
                     </div>
 
@@ -493,7 +506,9 @@ export default function DailyFocus() {
 
                 {/* Data footer */}
                 <div className="text-[9px] font-mono text-[#6b6b85] text-right">
-                  Data as of {fmtExpiry(card.tradeDate)} · Strike interval {fmtStrike(card.interval)} pts
+                  OI data: {fmtExpiry(card.tradeDate)} close
+                  {card.spotClose > 0 ? ` · Spot at close: ${fmtStrike(card.spotClose)}` : ''}
+                  {' · '}Strike interval {fmtStrike(card.interval)} pts
                 </div>
               </div>
             </div>
