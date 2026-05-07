@@ -36,7 +36,6 @@ export default function ZeroToHero() {
   const [fetchingAnalysis, setFetchingAnalysis] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState('');
-  const [maxPainPull, setMaxPainPull] = useState<MaxPainPullResult | null>(null);
   const [todaySetups, setTodaySetups] = useState<TodayExpirySetup[]>([]);
   const [setupsLoading, setSetupsLoading] = useState(false);
 
@@ -68,20 +67,6 @@ export default function ZeroToHero() {
     setError('');
     loadSnapshots(); // always load — DAY_BEFORE may be available even on non-expiry days
   }, [expiry, index]);
-
-  // Auto-compute max pain pull whenever Opening CSV becomes available
-  useEffect(() => {
-    if (snap930 && selectedIsExpiry) {
-      const pull = computeMaxPainPull(
-        snapDayBefore as Z2HSnapshot | null,
-        snap930 as Z2HSnapshot,
-        index
-      );
-      setMaxPainPull(pull);
-    } else {
-      setMaxPainPull(null);
-    }
-  }, [snap930, snapDayBefore, index, selectedIsExpiry]);
 
   // Load today's expiry setups across all indices — morning briefing
   useEffect(() => {
@@ -157,6 +142,11 @@ export default function ZeroToHero() {
   const snap1115 = getSnap('EXPIRY_1115');
   // DAY_BEFORE: from z2h_snapshots first, then market_data fallback (prevDaySnap)
   const snapDayBefore = getSnap('DAY_BEFORE') ?? getSnap('EXPIRY_EOD') ?? prevDaySnap;
+
+  // Computed inline — no useEffect needed since snap930/snapDayBefore are already derived from state
+  const maxPainPull: MaxPainPullResult | null = (snap930 && selectedIsExpiry)
+    ? computeMaxPainPull(snapDayBefore as Z2HSnapshot | null, snap930 as Z2HSnapshot, index)
+    : null;
 
   function buildCalCells(): (string | null)[] {
     const firstDow = new Date(calYear, calMonth, 1).getDay();
