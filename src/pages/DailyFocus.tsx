@@ -13,10 +13,23 @@ interface FocusCard {
   expiry: string;
   tradeDate: string;
   maxPain: number;
+  atm: number;
+  interval: number;
+  // Seller strikes — high OI OTM walls
   ceFocus: number;
   ceFocusOI: number;
   peFocus: number;
   peFocusOI: number;
+  // Buyer strikes — most liquid within 2OTM to 5ITM range
+  ceBuy: number;
+  ceBuyOI: number;
+  peBuy: number;
+  peBuyOI: number;
+}
+
+interface IndexGroup {
+  indexName: string;
+  cards: FocusCard[]; // one per expiry, sorted asc
 }
 
 function parseStrikeData(raw: Record<string, any>): StrikeRow[] {
@@ -51,6 +64,16 @@ function computeMaxPain(rows: StrikeRow[]): number {
   return maxPainStrike;
 }
 
+function detectInterval(rows: StrikeRow[]): number {
+  if (rows.length < 2) return 50;
+  const gaps = rows.slice(1).map((r, i) => r.strike - rows[i].strike).filter(g => g > 0);
+  if (!gaps.length) return 50;
+  // Use mode of gaps (most common gap = actual strike interval)
+  const freq: Record<number, number> = {};
+  for (const g of gaps) freq[g] = (freq[g] ?? 0) + 1;
+  return Number(Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0]);
+}
+
 function computeFocusCard(
   indexName: string,
   expiry: string,
@@ -61,26 +84,54 @@ function computeFocusCard(
   if (rows.length < 3) return null;
 
   const maxPain = computeMaxPain(rows);
+  const interval = detectInterval(rows);
 
-  // CE Focus: highest CE OI at or above max pain (resistance wall above)
-  const ceRows = rows.filter(r => r.strike >= maxPain && r.ce_oi > 0);
-  if (!ceRows.length) return null;
-  const ceFocusRow = ceRows.reduce((b, r) => r.ce_oi > b.ce_oi ? r : b);
+  // ATM = strike closest to max pain
+  const atm = rows.reduce((b, r) =>
+    Math.abs(r.strike - maxPain) < Math.abs(b.strike - maxPain) ? r : b
+  ).strike;
 
-  // PE Focus: highest PE OI at or below max pain (support wall below)
-  const peRows = rows.filter(r => r.strike <= maxPain && r.pe_oi > 0);
-  if (!peRows.length) return null;
-  const peFocusRow = peRows.reduce((b, r) => r.pe_oi > b.pe_oi ? r : b);
+  // Seller walls: highest OI far OTM
+  const ceWallRows = rows.filter(r => r.strike >= maxPain && r.ce_oi > 0);
+  if (!ceWallRows.length) return null;
+  const ceFocusRow = ceWallRows.reduce((b, r) => r.ce_oi > b.ce_oi ? r : b);
+
+  const peWallRows = rows.filter(r => r.strike <= maxPain && r.pe_oi > 0);
+  if (!peWallRows.length) return null;
+  const peFocusRow = peWallRows.reduce((b, r) => r.pe_oi > b.pe_oi ? r : b);
+
+  // Buyer range: 2 OTM to 5 ITM from ATM/max pain
+  // CE buyer: 5 strikes below ATM (ITM) to 2 strikes above ATM (OTM) — highest CE OI = most liquid
+  const ceBuyLow  = atm - 5 * interval;
+  const ceBuyHigh = atm + 2 * interval;
+  const ceBuyRows = rows.filter(r => r.strike >= ceBuyLow && r.strike <= ceBuyHigh && r.ce_oi > 0);
+  const ceBuyRow  = ceBuyRows.length
+    ? ceBuyRows.reduce((b, r) => r.ce_oi > b.ce_oi ? r : b)
+    : null;
+
+  // PE buyer: 2 strikes below ATM (OTM) to 5 strikes above ATM (ITM) — highest PE OI = most liquid
+  const peBuyLow  = atm - 2 * interval;
+  const peBuyHigh = atm + 5 * interval;
+  const peBuyRows = rows.filter(r => r.strike >= peBuyLow && r.strike <= peBuyHigh && r.pe_oi > 0);
+  const peBuyRow  = peBuyRows.length
+    ? peBuyRows.reduce((b, r) => r.pe_oi > b.pe_oi ? r : b)
+    : null;
 
   return {
     indexName,
     expiry,
     tradeDate,
     maxPain,
+    atm,
+    interval,
     ceFocus: ceFocusRow.strike,
     ceFocusOI: ceFocusRow.ce_oi,
     peFocus: peFocusRow.strike,
     peFocusOI: peFocusRow.pe_oi,
+    ceBuy: ceBuyRow?.strike ?? atm,
+    ceBuyOI: ceBuyRow?.ce_oi ?? 0,
+    peBuy: peBuyRow?.strike ?? atm,
+    peBuyOI: peBuyRow?.pe_oi ?? 0,
   };
 }
 
@@ -111,8 +162,11 @@ const INDEX_COLOR: Record<string, string> = {
   BANKEX:      '#ff4d6d',
 };
 
+const INDEX_ORDER = ['NIFTY50','BANKNIFTY','FINNIFTY','MIDCAPNIFTY','SENSEX','BANKEX'];
+
 export default function DailyFocus() {
-  const [cards, setCards] = useState<FocusCard[]>([]);
+  const [groups, setGroups] = useState<IndexGroup[]>([]);
+  const [selectedExpiry, setSelectedExpiry] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
@@ -128,29 +182,50 @@ export default function DailyFocus() {
         .gte('expiry', today)
         .order('expiry', { ascending: true })
         .order('trade_date', { ascending: false })
-        .limit(200);
+        .limit(400);
 
       if (err) throw new Error(err.message);
 
-      // Take first record per index (nearest expiry, latest trade_date)
-      const seen = new Set<string>();
-      const focusCards: FocusCard[] = [];
+      // Group by (index_name, expiry), keep latest trade_date per group
+      const byIndexExpiry = new Map<string, Map<string, any>>();
       for (const row of (data ?? [])) {
-        if (seen.has(row.index_name)) continue;
-        seen.add(row.index_name);
-        const card = computeFocusCard(row.index_name, row.expiry, row.trade_date, row.strike_data);
-        if (card) focusCards.push(card);
+        if (!byIndexExpiry.has(row.index_name)) byIndexExpiry.set(row.index_name, new Map());
+        const byExpiry = byIndexExpiry.get(row.index_name)!;
+        // Already ordered trade_date desc, so first seen = latest
+        if (!byExpiry.has(row.expiry)) byExpiry.set(row.expiry, row);
       }
 
-      // Sort by canonical index order
-      const order = ['NIFTY50','BANKNIFTY','FINNIFTY','MIDCAPNIFTY','SENSEX','BANKEX'];
-      focusCards.sort((a, b) => {
-        const ai = order.indexOf(a.indexName);
-        const bi = order.indexOf(b.indexName);
+      const newGroups: IndexGroup[] = [];
+      for (const [indexName, byExpiry] of byIndexExpiry) {
+        const cards: FocusCard[] = [];
+        for (const [, row] of byExpiry) {
+          const card = computeFocusCard(indexName, row.expiry, row.trade_date, row.strike_data);
+          if (card) cards.push(card);
+        }
+        cards.sort((a, b) => a.expiry.localeCompare(b.expiry));
+        if (cards.length > 0) newGroups.push({ indexName, cards });
+      }
+
+      newGroups.sort((a, b) => {
+        const ai = INDEX_ORDER.indexOf(a.indexName);
+        const bi = INDEX_ORDER.indexOf(b.indexName);
         return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
       });
 
-      setCards(focusCards);
+      setGroups(newGroups);
+      // Default selected expiry = nearest per index
+      const defaults: Record<string, string> = {};
+      for (const g of newGroups) defaults[g.indexName] = g.cards[0].expiry;
+      setSelectedExpiry(prev => {
+        const merged = { ...defaults };
+        // Keep user's selection if still valid
+        for (const g of newGroups) {
+          if (prev[g.indexName] && g.cards.some(c => c.expiry === prev[g.indexName])) {
+            merged[g.indexName] = prev[g.indexName];
+          }
+        }
+        return merged;
+      });
       setLastUpdated(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
     } catch (e: any) {
       setError(e.message || 'Failed to load data');
@@ -193,24 +268,20 @@ export default function DailyFocus() {
         <div className="bg-[#f0c040]/8 border border-[#f0c040]/25 rounded-2xl p-5">
           <div className="text-[10px] font-black uppercase tracking-widest text-[#f0c040] mb-3">What is this?</div>
           <div className="space-y-2 text-xs font-mono text-[#6b6b85]">
-            <div>
-              <span className="text-[#e8e8f0] font-black">CE Focus Strike</span> — The strike with the
-              highest call writer (CE OI) concentration above Max Pain. This is the market makers'
-              resistance ceiling. Price struggles to close above it.
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="bg-[#0d0d14] rounded-xl p-3">
+                <div className="text-[9px] font-black text-[#4d9fff] uppercase mb-1">For Buyers</div>
+                <div><span className="text-[#e8e8f0] font-black">CE Buy Strike</span> — Most liquid CE within 5 ITM to 2 OTM of ATM. Good delta, reasonable premium.</div>
+                <div className="mt-1"><span className="text-[#e8e8f0] font-black">PE Buy Strike</span> — Most liquid PE within 2 OTM to 5 ITM of ATM. Best leverage for directional trades.</div>
+              </div>
+              <div className="bg-[#0d0d14] rounded-xl p-3">
+                <div className="text-[9px] font-black text-[#ff8c42] uppercase mb-1">For Sellers</div>
+                <div><span className="text-[#e8e8f0] font-black">CE Wall</span> — Highest CE OI above Max Pain. Market makers' resistance ceiling — price struggles here.</div>
+                <div className="mt-1"><span className="text-[#e8e8f0] font-black">PE Wall</span> — Highest PE OI below Max Pain. Market makers' support floor — price defended here.</div>
+              </div>
             </div>
-            <div>
-              <span className="text-[#e8e8f0] font-black">PE Focus Strike</span> — The strike with the
-              highest put writer (PE OI) concentration below Max Pain. This is the market makers'
-              support floor. Price is defended near this level.
-            </div>
-            <div>
-              <span className="text-[#e8e8f0] font-black">Max Pain</span> — The strike where option
-              sellers lose the least. Markets tend to gravitate toward it by expiry.
-            </div>
-            <div className="mt-2 pt-2 border-t border-[#f0c040]/15">
-              <span className="text-[#f0c040] font-black">💡</span> These are the two strikes to watch
-              today. Buy CE near PE Focus support when bullish. Buy PE near CE Focus resistance when
-              bearish. Sell strangle between both if market is rangebound.
+            <div className="pt-2 border-t border-[#f0c040]/15 text-[10px]">
+              <span className="text-[#f0c040] font-black">💡</span> Switch expiry tabs per index to see buyer/seller strikes for weekly vs monthly expiries. Buyers prefer near-term; sellers prefer far-term.
             </div>
           </div>
         </div>
@@ -223,24 +294,23 @@ export default function DailyFocus() {
         )}
 
         {/* Loading skeleton */}
-        {loading && cards.length === 0 && (
+        {loading && groups.length === 0 && (
           <div className="space-y-4">
             {[1, 2, 3].map(i => (
               <div key={i} className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5 animate-pulse">
                 <div className="h-4 bg-[#1e1e2e] rounded w-32 mb-4" />
+                <div className="flex gap-2 mb-4">{[1,2,3].map(j => <div key={j} className="h-6 bg-[#1e1e2e] rounded-full w-16" />)}</div>
                 <div className="grid grid-cols-3 gap-3 mb-4">
-                  {[1, 2, 3].map(j => (
-                    <div key={j} className="h-16 bg-[#1e1e2e] rounded-xl" />
-                  ))}
+                  {[1, 2, 3].map(j => <div key={j} className="h-20 bg-[#1e1e2e] rounded-xl" />)}
                 </div>
-                <div className="h-24 bg-[#1e1e2e] rounded-xl" />
+                <div className="h-28 bg-[#1e1e2e] rounded-xl" />
               </div>
             ))}
           </div>
         )}
 
         {/* No data state */}
-        {!loading && !error && cards.length === 0 && (
+        {!loading && !error && groups.length === 0 && (
           <div className="text-center py-12">
             <div className="text-4xl mb-3">📭</div>
             <div className="text-sm font-mono text-[#6b6b85]">No option chain data found for today.</div>
@@ -250,109 +320,180 @@ export default function DailyFocus() {
           </div>
         )}
 
-        {/* Cards */}
-        {cards.map(card => {
-          const color = INDEX_COLOR[card.indexName] ?? '#e8e8f0';
-          const range = card.ceFocus - card.peFocus;
-          const mid = Math.round((card.ceFocus + card.peFocus) / 2);
+        {/* Index groups */}
+        {groups.map(group => {
+          const color = INDEX_COLOR[group.indexName] ?? '#e8e8f0';
+          const selExp = selectedExpiry[group.indexName] ?? group.cards[0].expiry;
+          const card = group.cards.find(c => c.expiry === selExp) ?? group.cards[0];
+          const sellerRange = card.ceFocus - card.peFocus;
+
           return (
             <div
-              key={card.indexName}
-              className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5 space-y-4"
+              key={group.indexName}
+              className="bg-[#111118] border border-[#1e1e2e] rounded-2xl overflow-hidden"
               style={{ borderTopColor: color, borderTopWidth: 2 }}
             >
-              {/* Header row */}
-              <div className="flex items-center justify-between">
+              {/* Index header + expiry tabs */}
+              <div className="px-5 pt-4 pb-3 flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="font-black text-sm" style={{ color }}>{card.indexName}</span>
-                  <span className="text-[10px] font-mono text-[#6b6b85] bg-[#1e1e2e] px-2 py-0.5 rounded-full">
-                    Expiry {fmtExpiry(card.expiry)}
-                  </span>
+                  <span className="font-black text-sm" style={{ color }}>{group.indexName}</span>
+                  <span className="text-[9px] font-mono text-[#6b6b85]">ATM {fmtStrike(card.atm)}</span>
                 </div>
-                <span className="text-[10px] font-mono text-[#6b6b85]">
-                  Data: {fmtExpiry(card.tradeDate)}
-                </span>
-              </div>
-
-              {/* Three data pills */}
-              <div className="grid grid-cols-3 gap-2">
-                {/* PE Focus */}
-                <div className="bg-[#ff4d6d]/8 border border-[#ff4d6d]/25 rounded-xl p-3 text-center">
-                  <div className="text-[9px] font-black uppercase tracking-widest text-[#ff4d6d] mb-1">PE Focus</div>
-                  <div className="font-black text-sm text-[#e8e8f0]">{fmtStrike(card.peFocus)}</div>
-                  <div className="text-[9px] font-mono text-[#6b6b85] mt-1">{fmtOI(card.peFocusOI)} OI</div>
-                  <div className="text-[9px] font-mono text-[#ff4d6d] mt-0.5">SUPPORT</div>
-                </div>
-
-                {/* Max Pain */}
-                <div className="bg-[#f0c040]/8 border border-[#f0c040]/25 rounded-xl p-3 text-center">
-                  <div className="text-[9px] font-black uppercase tracking-widest text-[#f0c040] mb-1">Max Pain</div>
-                  <div className="font-black text-sm text-[#e8e8f0]">{fmtStrike(card.maxPain)}</div>
-                  <div className="text-[9px] font-mono text-[#6b6b85] mt-1">Pin target</div>
-                  <div className="text-[9px] font-mono text-[#f0c040] mt-0.5">EXPIRY PIN</div>
-                </div>
-
-                {/* CE Focus */}
-                <div className="bg-[#39d98a]/8 border border-[#39d98a]/25 rounded-xl p-3 text-center">
-                  <div className="text-[9px] font-black uppercase tracking-widest text-[#39d98a] mb-1">CE Focus</div>
-                  <div className="font-black text-sm text-[#e8e8f0]">{fmtStrike(card.ceFocus)}</div>
-                  <div className="text-[9px] font-mono text-[#6b6b85] mt-1">{fmtOI(card.ceFocusOI)} OI</div>
-                  <div className="text-[9px] font-mono text-[#39d98a] mt-0.5">RESISTANCE</div>
+                {/* Expiry tabs */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {group.cards.map(c => (
+                    <button
+                      key={c.expiry}
+                      onClick={() => setSelectedExpiry(prev => ({ ...prev, [group.indexName]: c.expiry }))}
+                      className={`text-[9px] font-black px-2.5 py-1 rounded-full transition-all ${
+                        c.expiry === selExp
+                          ? 'text-[#0a0a0f]'
+                          : 'text-[#6b6b85] bg-[#1e1e2e] hover:text-[#e8e8f0]'
+                      }`}
+                      style={c.expiry === selExp ? { backgroundColor: color } : {}}
+                    >
+                      {fmtExpiry(c.expiry)}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Range indicator */}
-              <div className="flex items-center gap-2 text-[10px] font-mono text-[#6b6b85]">
-                <span className="text-[#ff4d6d]">{fmtStrike(card.peFocus)}</span>
-                <div className="flex-1 h-px bg-gradient-to-r from-[#ff4d6d]/40 via-[#f0c040]/60 to-[#39d98a]/40" />
-                <span className="text-[#6b6b85]">Range: {fmtStrike(range)} pts · Mid: {fmtStrike(mid)}</span>
-                <div className="flex-1 h-px bg-gradient-to-r from-[#39d98a]/40 via-[#f0c040]/60 to-[#ff4d6d]/40" />
-                <span className="text-[#39d98a]">{fmtStrike(card.ceFocus)}</span>
-              </div>
-
-              {/* Trade plan */}
-              <div className="bg-[#0d0d14] border border-[#1e1e2e] rounded-xl p-4 space-y-3">
-                <div className="text-[9px] font-black uppercase tracking-widest text-[#6b6b85]">Today's Trade Plan</div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-5 h-5 rounded-lg bg-[#39d98a]/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <span className="text-[#39d98a] text-[10px]">▲</span>
+              <div className="px-5 pb-5 space-y-4">
+                {/* BUYERS section */}
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-[#4d9fff]">Buyers</span>
+                    <span className="text-[9px] font-mono text-[#6b6b85]">5 ITM → 2 OTM range · most liquid strike</span>
                   </div>
-                  <div>
-                    <div className="text-[10px] font-black text-[#39d98a]">BULLISH — BUY CE {fmtStrike(card.ceFocus)}</div>
-                    <div className="text-[9px] font-mono text-[#6b6b85]">
-                      If market holds above Max Pain ({fmtStrike(card.maxPain)}) and PE support ({fmtStrike(card.peFocus)}) holds.
-                      Buy {card.indexName} CE {fmtStrike(card.ceFocus)} when price approaches from below.
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* PE Buy */}
+                    <div className="bg-[#ff4d6d]/8 border border-[#ff4d6d]/25 rounded-xl p-3 text-center">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-[#ff4d6d] mb-1">PE Buy</div>
+                      <div className="font-black text-base text-[#e8e8f0]">{fmtStrike(card.peBuy)}</div>
+                      <div className="text-[9px] font-mono text-[#6b6b85] mt-1">{fmtOI(card.peBuyOI)} OI</div>
+                      <div className="text-[9px] font-mono text-[#ff4d6d] mt-0.5">
+                        {card.peBuy > card.atm ? 'ITM' : card.peBuy === card.atm ? 'ATM' : 'OTM'}
+                      </div>
+                    </div>
+
+                    {/* ATM / Max Pain */}
+                    <div className="bg-[#f0c040]/8 border border-[#f0c040]/25 rounded-xl p-3 text-center">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-[#f0c040] mb-1">Max Pain</div>
+                      <div className="font-black text-base text-[#e8e8f0]">{fmtStrike(card.maxPain)}</div>
+                      <div className="text-[9px] font-mono text-[#6b6b85] mt-1">ATM {fmtStrike(card.atm)}</div>
+                      <div className="text-[9px] font-mono text-[#f0c040] mt-0.5">EXPIRY PIN</div>
+                    </div>
+
+                    {/* CE Buy */}
+                    <div className="bg-[#39d98a]/8 border border-[#39d98a]/25 rounded-xl p-3 text-center">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-[#39d98a] mb-1">CE Buy</div>
+                      <div className="font-black text-base text-[#e8e8f0]">{fmtStrike(card.ceBuy)}</div>
+                      <div className="text-[9px] font-mono text-[#6b6b85] mt-1">{fmtOI(card.ceBuyOI)} OI</div>
+                      <div className="text-[9px] font-mono text-[#39d98a] mt-0.5">
+                        {card.ceBuy < card.atm ? 'ITM' : card.ceBuy === card.atm ? 'ATM' : 'OTM'}
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-start gap-3">
-                  <div className="w-5 h-5 rounded-lg bg-[#ff4d6d]/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <span className="text-[#ff4d6d] text-[10px]">▼</span>
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-black text-[#ff4d6d]">BEARISH — BUY PE {fmtStrike(card.peFocus)}</div>
-                    <div className="text-[9px] font-mono text-[#6b6b85]">
-                      If market breaks below Max Pain ({fmtStrike(card.maxPain)}) and CE wall ({fmtStrike(card.ceFocus)}) holds as ceiling.
-                      Buy {card.indexName} PE {fmtStrike(card.peFocus)} when price rejects from above.
+                {/* Divider */}
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-px bg-[#1e1e2e]" />
+                  <span className="text-[9px] font-black uppercase tracking-widest text-[#6b6b85]">Sellers — OI Walls</span>
+                  <div className="flex-1 h-px bg-[#1e1e2e]" />
+                </div>
+
+                {/* SELLERS section */}
+                <div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* PE Wall */}
+                    <div className="bg-[#1e1e2e]/60 border border-[#2a2a3e] rounded-xl p-3 text-center">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-[#ff8c42] mb-1">PE Wall</div>
+                      <div className="font-black text-base text-[#e8e8f0]">{fmtStrike(card.peFocus)}</div>
+                      <div className="text-[9px] font-mono text-[#6b6b85] mt-1">{fmtOI(card.peFocusOI)} OI</div>
+                      <div className="text-[9px] font-mono text-[#ff8c42] mt-0.5">SUPPORT</div>
+                    </div>
+
+                    {/* Range */}
+                    <div className="bg-[#1e1e2e]/60 border border-[#2a2a3e] rounded-xl p-3 text-center">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-[#6b6b85] mb-1">Range</div>
+                      <div className="font-black text-base text-[#e8e8f0]">{fmtStrike(sellerRange)}</div>
+                      <div className="text-[9px] font-mono text-[#6b6b85] mt-1">pts wide</div>
+                      <div className="text-[9px] font-mono text-[#6b6b85] mt-0.5">STRANGLE ZONE</div>
+                    </div>
+
+                    {/* CE Wall */}
+                    <div className="bg-[#1e1e2e]/60 border border-[#2a2a3e] rounded-xl p-3 text-center">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-[#ff8c42] mb-1">CE Wall</div>
+                      <div className="font-black text-base text-[#e8e8f0]">{fmtStrike(card.ceFocus)}</div>
+                      <div className="text-[9px] font-mono text-[#6b6b85] mt-1">{fmtOI(card.ceFocusOI)} OI</div>
+                      <div className="text-[9px] font-mono text-[#ff8c42] mt-0.5">RESISTANCE</div>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-start gap-3">
-                  <div className="w-5 h-5 rounded-lg bg-[#f0c040]/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <span className="text-[#f0c040] text-[10px]">◆</span>
+                {/* Trade plan */}
+                <div className="bg-[#0d0d14] border border-[#1e1e2e] rounded-xl p-4 space-y-3">
+                  <div className="text-[9px] font-black uppercase tracking-widest text-[#6b6b85]">
+                    Today's Trade Plan · {fmtExpiry(card.expiry)} Expiry
                   </div>
-                  <div>
-                    <div className="text-[10px] font-black text-[#f0c040]">
-                      RANGE — SELL STRANGLE {fmtStrike(card.peFocus)} PE + {fmtStrike(card.ceFocus)} CE
+
+                  {/* Bullish — buyer */}
+                  <div className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-lg bg-[#39d98a]/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-[#39d98a] text-[10px]">▲</span>
                     </div>
-                    <div className="text-[9px] font-mono text-[#6b6b85]">
-                      If market pins near Max Pain ({fmtStrike(card.maxPain)}) between both walls.
-                      Sell both strikes to collect premium. Range: {fmtStrike(range)} pts.
+                    <div>
+                      <div className="text-[10px] font-black text-[#39d98a]">
+                        BULLISH BUYER — BUY CE {fmtStrike(card.ceBuy)}
+                      </div>
+                      <div className="text-[9px] font-mono text-[#6b6b85]">
+                        When price holds above Max Pain ({fmtStrike(card.maxPain)}) and PE wall ({fmtStrike(card.peFocus)}) holds as support.
+                        {card.ceBuy < card.atm
+                          ? ` ITM CE gives higher delta — less time decay risk.`
+                          : ` Slight OTM gives good leverage with lower premium.`}
+                      </div>
                     </div>
                   </div>
+
+                  {/* Bearish — buyer */}
+                  <div className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-lg bg-[#ff4d6d]/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-[#ff4d6d] text-[10px]">▼</span>
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-black text-[#ff4d6d]">
+                        BEARISH BUYER — BUY PE {fmtStrike(card.peBuy)}
+                      </div>
+                      <div className="text-[9px] font-mono text-[#6b6b85]">
+                        When price breaks below Max Pain ({fmtStrike(card.maxPain)}) and CE wall ({fmtStrike(card.ceFocus)}) caps the upside.
+                        {card.peBuy > card.atm
+                          ? ` ITM PE gives higher delta — moves more per point.`
+                          : ` Slight OTM PE for higher reward on momentum moves.`}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Range — seller */}
+                  <div className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-lg bg-[#ff8c42]/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-[#ff8c42] text-[10px]">◆</span>
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-black text-[#ff8c42]">
+                        SELLER — STRANGLE {fmtStrike(card.peFocus)} PE + {fmtStrike(card.ceFocus)} CE
+                      </div>
+                      <div className="text-[9px] font-mono text-[#6b6b85]">
+                        When market is rangebound near Max Pain ({fmtStrike(card.maxPain)}).
+                        Sell both OI walls to collect premium. {fmtStrike(sellerRange)} pts wide — max profit if expires between both walls.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Data footer */}
+                <div className="text-[9px] font-mono text-[#6b6b85] text-right">
+                  Data as of {fmtExpiry(card.tradeDate)} · Strike interval {fmtStrike(card.interval)} pts
                 </div>
               </div>
             </div>
