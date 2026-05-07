@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">God Particle</string>
+    <string name="title_activity_main">God Particle</string>
+    <string name="package_name">life.godparticle.app</string>
+    <string name="custom_url_scheme">life.godparticle.app</string>
+</resources>
