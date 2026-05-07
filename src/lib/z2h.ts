@@ -702,3 +702,122 @@ export function analyzeReversal(
     signal, confidence, counterStrike, counterLTP, confirmations, warnings,
   };
 }
+
+// ── MAX PAIN PULL — early signal using only 9:30 AM + prev day data ──────────
+// On expiry day, if spot is 1-4% from max pain at 9:30 AM, the option AT max
+// pain is a Zero-to-Hero candidate. Entry 9:30-10:30 AM before the pull starts.
+
+export interface MaxPainPullResult {
+  signal: 'MAX_PAIN_PULL' | 'NO_PULL';
+  direction: 'BULLISH' | 'BEARISH';
+  pullStrike: number;
+  optionType: 'CE' | 'PE';
+  prevMaxPain: number;
+  spot930: number;
+  gap: number;       // prevMaxPain - spot930 (positive = spot below = BULLISH pull)
+  gapPct: number;
+  pullLTP: number;   // live LTP of pull strike at 9:30 AM
+  strength: 'HIGH' | 'MEDIUM';
+  reason: string;
+  targets: { sl: number; t1: number; t2: number; hero: number };
+}
+
+export function computeMaxPainPull(
+  dayBefore: Z2HSnapshot | null,
+  snap930: Z2HSnapshot,
+  indexKey: string
+): MaxPainPullResult | null {
+  const prevMaxPain = dayBefore?.max_pain ?? 0;
+  const spot930 = snap930.spot_price;
+  const strikeGap = INDEX_CONFIG[indexKey]?.strikeGap ?? 50;
+
+  if (!prevMaxPain || !spot930) return null;
+
+  const gap = prevMaxPain - spot930;
+  const gapPct = Math.abs(gap) / spot930 * 100;
+
+  // Must be 1-4% away — close enough for pull to work, far enough to be OTM
+  if (gapPct < 1.0 || gapPct > 4.0) return null;
+  // Must span at least 4 strike intervals (not noise)
+  if (Math.abs(gap) < strikeGap * 4) return null;
+
+  const direction: 'BULLISH' | 'BEARISH' = gap > 0 ? 'BULLISH' : 'BEARISH';
+  const optionType = direction === 'BULLISH' ? 'CE' : 'PE';
+  const ltpKey = optionType === 'CE' ? 'ce_ltp' : 'pe_ltp';
+
+  // Pull strike = strike nearest to yesterday's max pain (the gravity target)
+  const pullStrike = Math.round(prevMaxPain / strikeGap) * strikeGap;
+  const s930 = snap930.strike_data || {};
+  const pullLTP = parseFloat(String((s930[String(pullStrike)] as any)?.[ltpKey] ?? 0)) || 0;
+
+  // Option must be cheap enough to be a "zero" (< ₹150 LTP)
+  if (pullLTP > 0 && pullLTP > 150) return null;
+
+  const strength: 'HIGH' | 'MEDIUM' = gapPct >= 2.0 ? 'HIGH' : 'MEDIUM';
+
+  const sl   = pullLTP > 0 ? Math.round(pullLTP * 0.5)  : 0;
+  const t1   = pullLTP > 0 ? Math.round(pullLTP * 3)    : 0;
+  const t2   = pullLTP > 0 ? Math.round(pullLTP * 5)    : 0;
+  const hero = pullLTP > 0 ? Math.round(pullLTP * 10)   : 0;
+
+  return {
+    signal: 'MAX_PAIN_PULL',
+    direction,
+    pullStrike,
+    optionType,
+    prevMaxPain,
+    spot930,
+    gap: Math.round(gap),
+    gapPct: Math.round(gapPct * 10) / 10,
+    pullLTP,
+    strength,
+    reason: `${indexKey} spot ${spot930.toLocaleString()} is ${Math.round(Math.abs(gap))} pts (${gapPct.toFixed(1)}%) ${gap > 0 ? 'BELOW' : 'ABOVE'} Max Pain ${prevMaxPain.toLocaleString()}. Expiry day gravity pull ${direction === 'BULLISH' ? 'upward' : 'downward'} expected.`,
+    targets: { sl, t1, t2, hero },
+  };
+}
+
+// ── TODAY'S EXPIRY SETUP — from market_data alone (no live fetch needed) ──────
+// Used for morning briefing: shows max pain gap across all expiring indices
+
+export interface TodayExpirySetup {
+  indexKey: string;
+  expiry: string;
+  prevSpot: number;
+  prevMaxPain: number;
+  gap: number;
+  gapPct: number;
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  pullStrike: number;
+  optionType: 'CE' | 'PE' | null;
+  isActionable: boolean; // gap 1-4% AND span >= 4 strike intervals
+}
+
+export function buildTodayExpirySetup(
+  indexKey: string,
+  expiry: string,
+  strikeData: Record<string, any>
+): TodayExpirySetup {
+  const strikeGap = INDEX_CONFIG[indexKey]?.strikeGap ?? 50;
+  const prevSpot = parseFloat(strikeData['_spot_close']) || 0;
+
+  // Compute max pain from stored OI
+  const strikesOnly = Object.fromEntries(
+    Object.entries(strikeData).filter(([k]) => !k.startsWith('_'))
+  );
+  const prevMaxPain = calculateMaxPain(strikesOnly);
+
+  const gap = prevMaxPain - prevSpot;
+  const gapPct = prevSpot > 0 ? Math.round(Math.abs(gap) / prevSpot * 1000) / 10 : 0;
+  const pullStrike = Math.round(prevMaxPain / strikeGap) * strikeGap;
+
+  let direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+  let optionType: 'CE' | 'PE' | null = null;
+  if (Math.abs(gap) >= strikeGap * 4) {
+    direction = gap > 0 ? 'BULLISH' : 'BEARISH';
+    optionType = gap > 0 ? 'CE' : 'PE';
+  }
+
+  const isActionable = gapPct >= 1.0 && gapPct <= 4.0 && direction !== 'NEUTRAL';
+
+  return { indexKey, expiry, prevSpot, prevMaxPain, gap: Math.round(gap), gapPct, direction, pullStrike, optionType, isActionable };
+}
