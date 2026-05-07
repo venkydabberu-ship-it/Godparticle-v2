@@ -260,7 +260,7 @@ export default function ZeroToHero() {
           <div className="bg-[#111118] border border-[#f0c040]/30 rounded-2xl p-5 mb-6">
             <div className="flex items-center gap-2 mb-4">
               <div className="text-base">🎯</div>
-              <div className="text-xs font-black uppercase tracking-widest text-[#f0c040]">Today's Expiry — Max Pain Pull Watch</div>
+              <div className="text-xs font-black uppercase tracking-widest text-[#f0c040]">Today's Expiry — Max Pain Pull & Gamma Wall Watch</div>
             </div>
             {setupsLoading ? (
               <div className="text-xs font-mono text-[#6b6b85]">Loading today's setups...</div>
@@ -293,6 +293,11 @@ export default function ZeroToHero() {
                               {setup.direction === 'BULLISH' ? '▲ BULL PULL' : '▼ BEAR PULL'}
                             </span>
                           )}
+                          {!isAction && setup.hasGammaWall && (
+                            <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-[#a855f7]/15 text-[#a855f7] border border-[#a855f7]/30">
+                              ⚡ GAMMA WALL
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-3 text-[10px] font-mono">
                           <span className="text-[#6b6b85]">Spot <span className="text-[#e8e8f0]">{setup.prevSpot.toLocaleString('en-IN')}</span></span>
@@ -309,9 +314,19 @@ export default function ZeroToHero() {
                           Buy at 9:30 AM if premium is cheap (&lt;₹150). Exit at max pain target {setup.prevMaxPain.toLocaleString('en-IN')}.
                         </div>
                       )}
-                      {!isAction && (
+                      {!isAction && setup.hasGammaWall && (
+                        <div className="mt-2 text-[10px] font-mono text-[#6b6b85]">
+                          {setup.ceWallDistPct >= 0.3 && setup.ceWallDistPct <= 3.0 && (
+                            <div>CE wall: <span className="text-[#a855f7] font-black">{setup.ceWallStrike} CE</span> is {setup.ceWallDistPct}% above spot — massive CE OI. If spot pushes up, gamma squeeze possible. Confirm live LTP &lt;₹150 at 9:30 AM.</div>
+                          )}
+                          {setup.peWallDistPct >= 0.3 && setup.peWallDistPct <= 3.0 && (
+                            <div className="mt-1">PE wall: <span className="text-[#a855f7] font-black">{setup.peWallStrike} PE</span> is {setup.peWallDistPct}% below spot — massive PE OI. If spot breaks down, gamma squeeze possible. Confirm live LTP &lt;₹150 at 9:30 AM.</div>
+                          )}
+                        </div>
+                      )}
+                      {!isAction && !setup.hasGammaWall && (
                         <div className="mt-1 text-[9px] font-mono text-[#3a3a4a]">
-                          Gap {setup.gapPct}% — {setup.gapPct < 1 ? 'too close to max pain (no edge)' : 'too far from max pain (risky)'}
+                          Gap {setup.gapPct}% — {setup.gapPct < 1 ? 'spot at max pain · no clear edge today' : 'too far from max pain (risky)'}
                         </div>
                       )}
                     </div>
@@ -517,26 +532,39 @@ export default function ZeroToHero() {
               </div>
             )}
 
-            {/* MAX PAIN PULL SIGNAL — early signal from 9:30 AM data only */}
+            {/* MAX PAIN PULL / GAMMA WALL SQUEEZE — early signal from 9:30 AM data only */}
             {selectedIsExpiry && snap930 && maxPainPull && (
               <div className={`rounded-2xl p-6 mb-4 border ${
-                maxPainPull.strength === 'HIGH'
-                  ? 'bg-[#f0c040]/8 border-[#f0c040]/40'
-                  : 'bg-[#ff8c42]/8 border-[#ff8c42]/40'
+                maxPainPull.signal === 'GAMMA_WALL_SQUEEZE'
+                  ? (maxPainPull.strength === 'HIGH' ? 'bg-[#a855f7]/8 border-[#a855f7]/40' : 'bg-[#a855f7]/5 border-[#a855f7]/25')
+                  : (maxPainPull.strength === 'HIGH' ? 'bg-[#f0c040]/8 border-[#f0c040]/40' : 'bg-[#ff8c42]/8 border-[#ff8c42]/40')
               }`}>
                 <div className="flex items-center gap-2 mb-4">
-                  <span className="text-xl">⚡</span>
+                  <span className="text-xl">{maxPainPull.signal === 'GAMMA_WALL_SQUEEZE' ? '🧲' : '⚡'}</span>
                   <div>
-                    <div className={`text-xs font-black uppercase tracking-widest ${maxPainPull.strength === 'HIGH' ? 'text-[#f0c040]' : 'text-[#ff8c42]'}`}>
-                      Max Pain Pull — {maxPainPull.strength === 'HIGH' ? 'STRONG SETUP' : 'MODERATE SETUP'}
+                    <div className={`text-xs font-black uppercase tracking-widest ${
+                      maxPainPull.signal === 'GAMMA_WALL_SQUEEZE'
+                        ? 'text-[#a855f7]'
+                        : (maxPainPull.strength === 'HIGH' ? 'text-[#f0c040]' : 'text-[#ff8c42]')
+                    }`}>
+                      {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE'
+                        ? `Gamma Wall Squeeze — ${maxPainPull.strength === 'HIGH' ? 'STRONG SETUP' : 'MODERATE SETUP'}`
+                        : `Max Pain Pull — ${maxPainPull.strength === 'HIGH' ? 'STRONG SETUP' : 'MODERATE SETUP'}`
+                      }
                     </div>
-                    <div className="text-[9px] font-mono text-[#6b6b85]">Early signal · Enter 9:30–10:30 AM · Before the confirmed 5-force window</div>
+                    <div className="text-[9px] font-mono text-[#6b6b85]">
+                      {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE'
+                        ? 'Gamma squeeze · Enter 9:30–10:30 AM · OI wall forces writers to hedge if spot approaches'
+                        : 'Gravity pull · Enter 9:30–10:30 AM · Before the confirmed 5-force window'}
+                    </div>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
                   <div className="bg-black/30 rounded-xl p-3 text-center">
-                    <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">Strike</div>
+                    <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">
+                      {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE' ? 'Wall Strike' : 'Strike'}
+                    </div>
                     <div className={`font-black text-lg ${maxPainPull.direction === 'BULLISH' ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>
                       {maxPainPull.pullStrike} {maxPainPull.optionType}
                     </div>
@@ -548,13 +576,21 @@ export default function ZeroToHero() {
                     </div>
                   </div>
                   <div className="bg-black/30 rounded-xl p-3 text-center">
-                    <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">Gap to MaxPain</div>
+                    <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">
+                      {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE' ? 'Wall Distance' : 'Gap to MaxPain'}
+                    </div>
                     <div className={`font-black text-lg ${maxPainPull.direction === 'BULLISH' ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>
-                      {Math.abs(maxPainPull.gap)} pts
+                      {Math.abs(maxPainPull.signal === 'GAMMA_WALL_SQUEEZE'
+                        ? (maxPainPull.direction === 'BULLISH'
+                            ? maxPainPull.pullStrike - maxPainPull.spot930
+                            : maxPainPull.spot930 - maxPainPull.pullStrike)
+                        : maxPainPull.gap)} pts
                     </div>
                   </div>
                   <div className="bg-black/30 rounded-xl p-3 text-center">
-                    <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">Pull %</div>
+                    <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">
+                      {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE' ? 'Wall %' : 'Pull %'}
+                    </div>
                     <div className="font-black text-lg text-[#e8e8f0]">{maxPainPull.gapPct}%</div>
                   </div>
                 </div>
@@ -564,10 +600,10 @@ export default function ZeroToHero() {
                 {maxPainPull.pullLTP > 0 && (
                   <div className="grid grid-cols-4 gap-2 mb-3">
                     {[
-                      { label: 'SL',   val: maxPainPull.targets.sl,   col: '#ff4d6d' },
-                      { label: 'T1 3x', val: maxPainPull.targets.t1,  col: '#f0c040' },
-                      { label: 'T2 5x', val: maxPainPull.targets.t2,  col: '#39d98a' },
-                      { label: 'Hero 10x', val: maxPainPull.targets.hero, col: '#4d9fff' },
+                      { label: 'SL',      val: maxPainPull.targets.sl,   col: '#ff4d6d' },
+                      { label: 'T1 3x',   val: maxPainPull.targets.t1,   col: '#f0c040' },
+                      { label: 'T2 5x',   val: maxPainPull.targets.t2,   col: '#39d98a' },
+                      { label: 'Hero 10x',val: maxPainPull.targets.hero,  col: '#4d9fff' },
                     ].map(r => (
                       <div key={r.label} className="bg-black/30 rounded-lg p-2 text-center">
                         <div className="text-[9px] font-mono text-[#6b6b85]">{r.label}</div>
@@ -578,7 +614,11 @@ export default function ZeroToHero() {
                 )}
 
                 <div className="bg-black/20 rounded-xl p-3 text-[10px] font-mono text-[#6b6b85]">
-                  <span className="text-[#f0c040] font-black">⚠ Risk:</span> This is an EARLY signal — direction not yet confirmed by volume. Size to 25-50% of normal. All-or-nothing trade. If spot doesn't move toward max pain by 12:00 PM, exit immediately.
+                  {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE' ? (
+                    <><span className="text-[#a855f7] font-black">⚠ Risk:</span> Gamma squeezes require market to MOVE toward the wall. If spot stalls at max pain by 11:00 AM, exit. Size to 25-50% of normal — all-or-nothing trade. Confirm LTP is still cheap (&lt;₹150) before entry.</>
+                  ) : (
+                    <><span className="text-[#f0c040] font-black">⚠ Risk:</span> EARLY signal — direction not yet confirmed by volume. Size to 25-50% of normal. All-or-nothing trade. If spot doesn't move toward max pain by 12:00 PM, exit immediately.</>
+                  )}
                 </div>
               </div>
             )}
