@@ -577,21 +577,27 @@ export default function ZeroToHero() {
                   </div>
                   <div className="bg-black/30 rounded-xl p-3 text-center">
                     <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">
-                      {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE' ? 'Wall Distance' : 'Gap to MaxPain'}
+                      {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE' ? 'Wall Target' : 'Gap to MaxPain'}
                     </div>
                     <div className={`font-black text-lg ${maxPainPull.direction === 'BULLISH' ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>
-                      {Math.abs(maxPainPull.signal === 'GAMMA_WALL_SQUEEZE'
-                        ? (maxPainPull.direction === 'BULLISH'
-                            ? maxPainPull.pullStrike - maxPainPull.spot930
-                            : maxPainPull.spot930 - maxPainPull.pullStrike)
-                        : maxPainPull.gap)} pts
+                      {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE' && maxPainPull.wallStrike
+                        ? maxPainPull.wallStrike.toLocaleString('en-IN')
+                        : `${Math.abs(maxPainPull.gap)} pts`}
                     </div>
                   </div>
                   <div className="bg-black/30 rounded-xl p-3 text-center">
                     <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">
-                      {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE' ? 'Wall %' : 'Pull %'}
+                      {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE' ? 'OTM from Spot' : 'Pull %'}
                     </div>
-                    <div className="font-black text-lg text-[#e8e8f0]">{maxPainPull.gapPct}%</div>
+                    <div className="font-black text-lg text-[#e8e8f0]">
+                      {maxPainPull.signal === 'GAMMA_WALL_SQUEEZE'
+                        ? `${Math.round(Math.abs(
+                            maxPainPull.direction === 'BULLISH'
+                              ? maxPainPull.pullStrike - maxPainPull.spot930
+                              : maxPainPull.spot930 - maxPainPull.pullStrike
+                          ))} pts`
+                        : `${maxPainPull.gapPct}%`}
+                    </div>
                   </div>
                 </div>
 
