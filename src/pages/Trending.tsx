@@ -1,7 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase, callEdge } from '../lib/supabase';
 import { NSE_STOCKS } from '../lib/stockList';
+import { getCached, setCached } from '../lib/cache';
+
+const CACHE_KEY = 'trending_quotes_v1';
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 interface StockQuote {
   symbol: string;
@@ -31,6 +35,24 @@ export default function Trending() {
   const [error, setError] = useState('');
   const [debugInfo, setDebugInfo] = useState('');
   const [fetched, setFetched] = useState(false);
+  const [cacheAge, setCacheAge] = useState('');
+
+  // Restore cached quotes on mount — no fetch needed if fresh
+  useEffect(() => {
+    const cached = getCached<StockQuote[]>(CACHE_KEY, CACHE_TTL);
+    if (cached && cached.length > 0) {
+      setQuotes(cached);
+      setFetched(true);
+      // Show how old the cache is
+      try {
+        const raw = localStorage.getItem(CACHE_KEY);
+        if (raw) {
+          const ageMins = Math.round((Date.now() - JSON.parse(raw).ts) / 60000);
+          setCacheAge(`${ageMins}m ago`);
+        }
+      } catch {}
+    }
+  }, []);
 
   const cap = parseFloat(capital) || 0;
   const minSh = parseInt(minShares) || 5;
@@ -39,9 +61,8 @@ export default function Trending() {
     setLoading(true);
     setError('');
     setDebugInfo('');
-    setQuotes([]);
-    setFetched(false);
     setProgress('');
+    setCacheAge('');
 
     try {
       const symbols = NSE_STOCKS.filter(s => !s.symbol.includes('&')).map(s => s.symbol);
@@ -59,6 +80,7 @@ export default function Trending() {
       setQuotes(all);
       setFetched(true);
       setProgress('');
+      setCached(CACHE_KEY, all); // persist for 10 min — survives tab close & revisit
     } catch (err: any) {
       setError(err.message || 'Could not fetch market data.');
     } finally {
@@ -143,7 +165,7 @@ export default function Trending() {
 
           <button onClick={fetchTrending} disabled={loading}
             className="w-full bg-[#f0c040] text-black font-black py-3 rounded-xl text-sm hover:bg-[#ffd060] transition-all disabled:opacity-50">
-            {loading ? `⏳ ${progress}` : fetched ? '🔄 Refresh Data' : '🔥 Fetch Trending Stocks'}
+            {loading ? `⏳ ${progress}` : fetched ? `🔄 Refresh Data${cacheAge ? ` (cached ${cacheAge})` : ''}` : '🔥 Fetch Trending Stocks'}
           </button>
 
           {error && (

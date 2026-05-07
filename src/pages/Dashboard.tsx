@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { signOut } from '../lib/auth';
+import { getCached, setCached } from '../lib/cache';
 
 export default function Dashboard() {
   const { user, profile, refreshProfile } = useAuth();
@@ -45,34 +46,37 @@ export default function Dashboard() {
   }, [user]);
 
   async function loadDashboard() {
-    const { data: analysesData } = await supabase
-      .from('analyses')
-      .select('*')
-      .eq('user_id', user?.id)
-      .order('created_at', { ascending: false })
-      .limit(5);
-    if (analysesData) setAnalyses(analysesData);
+    const uid = user?.id;
+    if (!uid) return;
+    const cacheKey = `dashboard_v1_${uid}`;
 
-    const { data: z2hData } = await supabase
-      .from('z2h_signals')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(1);
-    if (z2hData?.[0]) setZ2hSignal(z2hData[0]);
+    // Paint cached data immediately so the screen isn't blank
+    const cached = getCached<{ analyses: any[]; announcement: string; queries: any[] }>(cacheKey, 3 * 60 * 1000);
+    if (cached) {
+      setAnalyses(cached.analyses);
+      setAnnouncement(cached.announcement);
+      setMyQueries(cached.queries);
+    }
 
-    const { data: announcementData } = await supabase
-      .from('admin_settings')
-      .select('value')
-      .eq('key', 'announcement')
-      .single();
-    if (announcementData?.value) setAnnouncement(announcementData.value);
+    // Fetch all 4 queries in parallel — no sequential waterfall
+    const [analysesRes, z2hRes, announcementRes, queriesRes] = await Promise.all([
+      supabase.from('analyses').select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(5),
+      supabase.from('z2h_signals').select('*').order('created_at', { ascending: false }).limit(1),
+      supabase.from('admin_settings').select('value').eq('key', 'announcement').single(),
+      supabase.from('customer_queries').select('id,category,status,created_at,query_text').eq('user_id', uid).order('created_at', { ascending: false }),
+    ]);
 
-    const { data: queriesData } = await supabase
-      .from('customer_queries')
-      .select('*')
-      .eq('user_id', user?.id)
-      .order('created_at', { ascending: false });
-    if (queriesData) setMyQueries(queriesData);
+    const analyses  = analysesRes.data || [];
+    const announcement = announcementRes.data?.value || '';
+    const queries   = queriesRes.data || [];
+
+    setAnalyses(analyses);
+    if (z2hRes.data?.[0]) setZ2hSignal(z2hRes.data[0]);
+    setAnnouncement(announcement);
+    setMyQueries(queries);
+
+    // Persist fresh data for next visit
+    setCached(cacheKey, { analyses, announcement, queries });
   }
 
   async function handleSignOut() {
