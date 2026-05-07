@@ -10,6 +10,16 @@ export function getCached<T>(key: string, ttlMs: number): T | null {
   } catch { return null; }
 }
 
+// Like getCached but returns stale data even if expired — for instant paint on revisit.
+// The caller should always refresh in background regardless.
+export function getStale<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return (JSON.parse(raw) as { data: T }).data;
+  } catch { return null; }
+}
+
 export function setCached<T>(key: string, data: T): void {
   try {
     localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { signOut } from '../lib/auth';
-import { getCached, setCached } from '../lib/cache';
+import { getStale, setCached } from '../lib/cache';
 
 export default function Dashboard() {
   const { user, profile, refreshProfile } = useAuth();
@@ -39,6 +39,19 @@ export default function Dashboard() {
   const isExpiryDay = isTuesday || isThursday;
   const expiryIndex = isTuesday ? 'NIFTY 50' : 'SENSEX';
 
+  // Paint stale cached data IMMEDIATELY on mount — before auth session even confirms.
+  // This eliminates the blank screen when reopening the browser after auth token refresh.
+  useEffect(() => {
+    const lastUid = localStorage.getItem('gp_last_uid');
+    if (!lastUid) return;
+    const stale = getStale<{ analyses: any[]; announcement: string; queries: any[] }>(`dashboard_v1_${lastUid}`);
+    if (stale) {
+      setAnalyses(stale.analyses);
+      setAnnouncement(stale.announcement);
+      setMyQueries(stale.queries);
+    }
+  }, []);
+
   useEffect(() => {
     if (!user) return;
     refreshProfile();
@@ -50,13 +63,8 @@ export default function Dashboard() {
     if (!uid) return;
     const cacheKey = `dashboard_v1_${uid}`;
 
-    // Paint cached data immediately so the screen isn't blank
-    const cached = getCached<{ analyses: any[]; announcement: string; queries: any[] }>(cacheKey, 3 * 60 * 1000);
-    if (cached) {
-      setAnalyses(cached.analyses);
-      setAnnouncement(cached.announcement);
-      setMyQueries(cached.queries);
-    }
+    // Remember this user so the mount effect can paint stale data on next visit
+    localStorage.setItem('gp_last_uid', uid);
 
     // Fetch all 4 queries in parallel — no sequential waterfall
     const [analysesRes, z2hRes, announcementRes, queriesRes] = await Promise.all([
@@ -80,6 +88,7 @@ export default function Dashboard() {
   }
 
   async function handleSignOut() {
+    localStorage.removeItem('gp_last_uid');
     await signOut();
     navigate('/');
   }
