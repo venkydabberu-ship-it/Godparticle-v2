@@ -709,6 +709,40 @@ export function analyzeReversal(
 //   (strike with highest CE/PE OI) sits 0.3-3% away. Writers at the wall hedge if spot
 //   approaches → cascade squeeze (e.g. SENSEX 78200 CE ₹40→₹310 on 2026-05-07)
 
+// Find the most OTM CE/PE between max pain and wall with viable LTP [5, 150].
+// Buying here (not at the wall) gives the biggest % return when spot hits the wall,
+// because this strike becomes ITM (intrinsic = wall - strike) while the wall itself
+// only hits ATM (zero intrinsic). E.g. SENSEX wall 78500: buy 78200 CE → ₹40→₹310.
+function findPullStrike(
+  strikeData: Record<string, any>,
+  maxPain: number,
+  wallStrike: number,
+  side: 'CE' | 'PE'
+): { strike: number; ltp: number } | null {
+  const ltpKey = side === 'CE' ? 'ce_ltp' : 'pe_ltp';
+  let best: { strike: number; ltp: number } | null = null;
+
+  for (const [key, val] of Object.entries(strikeData)) {
+    if (key.startsWith('_')) continue;
+    const strike = parseFloat(key);
+    if (isNaN(strike)) continue;
+
+    // Strictly between max pain and wall (exclusive of wall — buying wall gives no intrinsic at target)
+    if (side === 'CE' && (strike <= maxPain || strike >= wallStrike)) continue;
+    if (side === 'PE' && (strike >= maxPain || strike <= wallStrike)) continue;
+
+    const ltp = parseFloat(String((val as any)?.[ltpKey] ?? 0)) || 0;
+    if (ltp < 5 || ltp > 150) continue;
+
+    // Most OTM = highest CE strike, lowest PE strike → cheapest entry, highest % if spot hits wall
+    const isBetter = side === 'CE'
+      ? (!best || strike > best.strike)
+      : (!best || strike < best.strike);
+    if (isBetter) best = { strike, ltp };
+  }
+  return best;
+}
+
 // Find the strike with highest CE/PE OI on the given side of max pain
 function findGammaWall(
   strikeData: Record<string, any>,
@@ -736,13 +770,14 @@ function findGammaWall(
 export interface MaxPainPullResult {
   signal: 'MAX_PAIN_PULL' | 'GAMMA_WALL_SQUEEZE';
   direction: 'BULLISH' | 'BEARISH';
-  pullStrike: number;
+  pullStrike: number;    // strike to TRADE (below/above wall)
+  wallStrike?: number;   // gamma wall strike (highest OI) — the squeeze TARGET
   optionType: 'CE' | 'PE';
   prevMaxPain: number;
   spot930: number;
-  gap: number;       // prevMaxPain - spot930 (positive = spot below = BULLISH pull)
+  gap: number;           // prevMaxPain - spot930
   gapPct: number;
-  pullLTP: number;   // live LTP of pull strike at 9:30 AM
+  pullLTP: number;       // live LTP of trade strike at 9:30 AM
   strength: 'HIGH' | 'MEDIUM';
   reason: string;
   targets: { sl: number; t1: number; t2: number; hero: number };
@@ -793,8 +828,10 @@ export function computeMaxPainPull(
   }
 
   // ── SCENARIO 2: Gamma Wall Squeeze — spot near max pain, wall 0.3-3% away ─
-  // Even when spot ≈ max pain, a concentrated OI wall nearby forces writers to
-  // hedge if spot approaches → explosive cascade. Enter AT the wall strike.
+  // Wall (highest OI) = the squeeze MAGNET. We don't buy the wall itself — when
+  // spot reaches the wall, the wall option hits ATM (zero intrinsic). Instead we
+  // buy the most OTM viable strike BETWEEN max pain and wall: it becomes ITM
+  // as spot squeezes toward the wall → maximum % return.
   if (gapPct <= 2.0) {
     const s930   = snap930.strike_data || {};
     const ceWall = findGammaWall(s930, prevMaxPain, 'CE');
@@ -803,40 +840,50 @@ export function computeMaxPainPull(
     const ceDistPct = ceWall ? (ceWall.strike - spot930) / spot930 * 100 : 999;
     const peDistPct = peWall ? (spot930 - peWall.strike) / spot930 * 100 : 999;
 
-    // CE wall squeeze: wall 0.3-3% above spot, cheap option
-    if (ceDistPct >= 0.3 && ceDistPct <= 3.0 && ceWall && ceWall.ltp > 0 && ceWall.ltp <= 150) {
+    // CE wall squeeze: wall 0.3-3% above spot
+    if (ceDistPct >= 0.3 && ceDistPct <= 3.0 && ceWall) {
+      // Trade strike = most OTM viable CE between max pain and wall
+      const tradeStrike = findPullStrike(s930, prevMaxPain, ceWall.strike, 'CE');
+      if (!tradeStrike) return null;
+
       const wallPts    = Math.round(ceWall.strike - spot930);
+      const tradePts   = Math.round(ceWall.strike - tradeStrike.strike);
       const strength: 'HIGH' | 'MEDIUM' = ceDistPct >= 1.0 ? 'HIGH' : 'MEDIUM';
       return {
         signal: 'GAMMA_WALL_SQUEEZE', direction: 'BULLISH',
-        pullStrike: ceWall.strike, optionType: 'CE',
+        pullStrike: tradeStrike.strike, wallStrike: ceWall.strike, optionType: 'CE',
         prevMaxPain, spot930, gap: Math.round(gap),
-        gapPct: Math.round(gapPct * 10) / 10, pullLTP: ceWall.ltp, strength,
-        reason: `${indexKey} CE wall at ${ceWall.strike.toLocaleString()} is ${wallPts} pts (${ceDistPct.toFixed(1)}%) above spot. Highest CE OI concentration = writer fuel. Spot is near max pain — if bulls push through, CE writers forced to delta-hedge → explosive upward squeeze.`,
+        gapPct: Math.round(gapPct * 10) / 10, pullLTP: tradeStrike.ltp, strength,
+        reason: `${indexKey} CE wall (highest OI) at ${ceWall.strike.toLocaleString()} is ${wallPts} pts (${ceDistPct.toFixed(1)}%) above spot. Buy ${tradeStrike.strike} CE (₹${tradeStrike.ltp}) — ${tradePts} pts below the wall, goes ITM if spot squeezes to ${ceWall.strike.toLocaleString()}. Writers forced to delta-hedge → explosive upward move.`,
         targets: {
-          sl:   Math.round(ceWall.ltp * 0.5),
-          t1:   Math.round(ceWall.ltp * 3),
-          t2:   Math.round(ceWall.ltp * 5),
-          hero: Math.round(ceWall.ltp * 10),
+          sl:   Math.round(tradeStrike.ltp * 0.5),
+          t1:   Math.round(tradeStrike.ltp * 3),
+          t2:   Math.round(tradeStrike.ltp * 5),
+          hero: Math.round(tradeStrike.ltp * 10),
         },
       };
     }
 
-    // PE wall squeeze: wall 0.3-3% below spot, cheap option
-    if (peDistPct >= 0.3 && peDistPct <= 3.0 && peWall && peWall.ltp > 0 && peWall.ltp <= 150) {
+    // PE wall squeeze: wall 0.3-3% below spot
+    if (peDistPct >= 0.3 && peDistPct <= 3.0 && peWall) {
+      // Trade strike = most OTM viable PE between max pain and wall
+      const tradeStrike = findPullStrike(s930, prevMaxPain, peWall.strike, 'PE');
+      if (!tradeStrike) return null;
+
       const wallPts    = Math.round(spot930 - peWall.strike);
+      const tradePts   = Math.round(tradeStrike.strike - peWall.strike);
       const strength: 'HIGH' | 'MEDIUM' = peDistPct >= 1.0 ? 'HIGH' : 'MEDIUM';
       return {
         signal: 'GAMMA_WALL_SQUEEZE', direction: 'BEARISH',
-        pullStrike: peWall.strike, optionType: 'PE',
+        pullStrike: tradeStrike.strike, wallStrike: peWall.strike, optionType: 'PE',
         prevMaxPain, spot930, gap: Math.round(gap),
-        gapPct: Math.round(gapPct * 10) / 10, pullLTP: peWall.ltp, strength,
-        reason: `${indexKey} PE wall at ${peWall.strike.toLocaleString()} is ${wallPts} pts (${peDistPct.toFixed(1)}%) below spot. Highest PE OI concentration = writer fuel. Spot is near max pain — if bears break through, PE writers forced to delta-hedge → explosive downward squeeze.`,
+        gapPct: Math.round(gapPct * 10) / 10, pullLTP: tradeStrike.ltp, strength,
+        reason: `${indexKey} PE wall (highest OI) at ${peWall.strike.toLocaleString()} is ${wallPts} pts (${peDistPct.toFixed(1)}%) below spot. Buy ${tradeStrike.strike} PE (₹${tradeStrike.ltp}) — ${tradePts} pts above the wall, goes ITM if spot squeezes to ${peWall.strike.toLocaleString()}. Writers forced to delta-hedge → explosive downward move.`,
         targets: {
-          sl:   Math.round(peWall.ltp * 0.5),
-          t1:   Math.round(peWall.ltp * 3),
-          t2:   Math.round(peWall.ltp * 5),
-          hero: Math.round(peWall.ltp * 10),
+          sl:   Math.round(tradeStrike.ltp * 0.5),
+          t1:   Math.round(tradeStrike.ltp * 3),
+          t2:   Math.round(tradeStrike.ltp * 5),
+          hero: Math.round(tradeStrike.ltp * 10),
         },
       };
     }
