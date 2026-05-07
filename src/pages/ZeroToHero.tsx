@@ -6,7 +6,9 @@ import {
   INDEX_CONFIG, ALL_Z2H_INDICES,
   getExpiryDates, isExpiryDay, getExpiriesForMonth,
   computeZ2H, calculateMaxPain, analyzeReversal,
+  computeMaxPainPull, buildTodayExpirySetup,
   type Z2HSnapshot, type SnapshotType, type ReversalAnalysis,
+  type MaxPainPullResult, type TodayExpirySetup,
 } from '../lib/z2h';
 import { fetchAndSaveZ2HSnapshot } from '../lib/autofetch';
 
@@ -34,6 +36,9 @@ export default function ZeroToHero() {
   const [fetchingAnalysis, setFetchingAnalysis] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState('');
+  const [maxPainPull, setMaxPainPull] = useState<MaxPainPullResult | null>(null);
+  const [todaySetups, setTodaySetups] = useState<TodayExpirySetup[]>([]);
+  const [setupsLoading, setSetupsLoading] = useState(false);
 
   const todayStr = new Date().toISOString().split('T')[0];
   const cfg = INDEX_CONFIG[index];
@@ -63,6 +68,51 @@ export default function ZeroToHero() {
     setError('');
     loadSnapshots(); // always load — DAY_BEFORE may be available even on non-expiry days
   }, [expiry, index]);
+
+  // Auto-compute max pain pull whenever Opening CSV becomes available
+  useEffect(() => {
+    if (snap930 && selectedIsExpiry) {
+      const pull = computeMaxPainPull(
+        snapDayBefore as Z2HSnapshot | null,
+        snap930 as Z2HSnapshot,
+        index
+      );
+      setMaxPainPull(pull);
+    } else {
+      setMaxPainPull(null);
+    }
+  }, [snap930, snapDayBefore, index, selectedIsExpiry]);
+
+  // Load today's expiry setups across all indices — morning briefing
+  useEffect(() => {
+    async function loadTodaySetups() {
+      setSetupsLoading(true);
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const expiringToday = ALL_Z2H_INDICES.filter(k => isExpiryDay(k, today));
+        if (!expiringToday.length) { setTodaySetups([]); return; }
+
+        const results: TodayExpirySetup[] = [];
+        for (const indexKey of expiringToday) {
+          const { data } = await supabase
+            .from('market_data')
+            .select('strike_data, expiry')
+            .eq('index_name', indexKey)
+            .eq('expiry', today)
+            .order('trade_date', { ascending: false })
+            .limit(1);
+          if (data?.length) {
+            const setup = buildTodayExpirySetup(indexKey, data[0].expiry, data[0].strike_data || {});
+            results.push(setup);
+          }
+        }
+        setTodaySetups(results);
+      } finally {
+        setSetupsLoading(false);
+      }
+    }
+    loadTodaySetups();
+  }, []);
 
   async function loadSnapshots() {
     const { data } = await supabase
@@ -198,7 +248,7 @@ export default function ZeroToHero() {
 
       <div className="relative z-10 max-w-4xl mx-auto px-6 py-8">
 
-        <div className="mb-8">
+        <div className="mb-6">
           <div className="flex items-center gap-3 mb-2">
             <div className="text-2xl">🚀</div>
             <h1 className="text-2xl font-black">Zero to Hero</h1>
@@ -206,6 +256,74 @@ export default function ZeroToHero() {
           </div>
           <p className="text-xs font-mono text-[#6b6b85]">Identifies deeply OTM options on expiry day with 3x–10x potential.</p>
         </div>
+
+        {/* TODAY'S EXPIRY SETUPS — morning briefing across all indices */}
+        {(todaySetups.length > 0 || setupsLoading) && (
+          <div className="bg-[#111118] border border-[#f0c040]/30 rounded-2xl p-5 mb-6">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="text-base">🎯</div>
+              <div className="text-xs font-black uppercase tracking-widest text-[#f0c040]">Today's Expiry — Max Pain Pull Watch</div>
+            </div>
+            {setupsLoading ? (
+              <div className="text-xs font-mono text-[#6b6b85]">Loading today's setups...</div>
+            ) : (
+              <div className="space-y-3">
+                {todaySetups.map(setup => {
+                  const cfg = INDEX_CONFIG[setup.indexKey];
+                  const col = cfg?.color ?? '#f0c040';
+                  const isAction = setup.isActionable;
+                  return (
+                    <div
+                      key={setup.indexKey}
+                      className={`rounded-xl p-4 border cursor-pointer transition-all ${
+                        isAction
+                          ? 'border-[#f0c040]/40 bg-[#f0c040]/5 hover:border-[#f0c040]/60'
+                          : 'border-[#1e1e2e] bg-[#16161f]'
+                      }`}
+                      onClick={() => { setIndex(setup.indexKey); setExpiry(setup.expiry); }}
+                    >
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-black text-xs" style={{ color: col }}>{setup.indexKey}</span>
+                          <span className="text-[9px] font-mono text-[#6b6b85] bg-[#1e1e2e] px-1.5 py-0.5 rounded">Exp {setup.expiry.slice(5).replace('-', ' ')}</span>
+                          {isAction && (
+                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${
+                              setup.direction === 'BULLISH'
+                                ? 'bg-[#39d98a]/15 text-[#39d98a] border border-[#39d98a]/30'
+                                : 'bg-[#ff4d6d]/15 text-[#ff4d6d] border border-[#ff4d6d]/30'
+                            }`}>
+                              {setup.direction === 'BULLISH' ? '▲ BULL PULL' : '▼ BEAR PULL'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 text-[10px] font-mono">
+                          <span className="text-[#6b6b85]">Spot <span className="text-[#e8e8f0]">{setup.prevSpot.toLocaleString('en-IN')}</span></span>
+                          <span className="text-[#6b6b85]">MaxPain <span className="text-[#f0c040]">{setup.prevMaxPain.toLocaleString('en-IN')}</span></span>
+                          <span className={`font-black ${isAction ? (setup.direction === 'BULLISH' ? 'text-[#39d98a]' : 'text-[#ff4d6d]') : 'text-[#6b6b85]'}`}>
+                            {setup.gap > 0 ? '+' : ''}{setup.gap} pts ({setup.gapPct}%)
+                          </span>
+                        </div>
+                      </div>
+                      {isAction && (
+                        <div className="mt-2 text-[10px] font-mono text-[#6b6b85]">
+                          Watch: <span className="text-[#f0c040] font-black">{setup.indexKey} {setup.pullStrike} {setup.optionType}</span>
+                          {' '}— spot is {Math.abs(setup.gap)} pts {setup.gap > 0 ? 'below' : 'above'} max pain.
+                          Buy at 9:30 AM if premium is cheap (&lt;₹150). Exit at max pain target {setup.prevMaxPain.toLocaleString('en-IN')}.
+                        </div>
+                      )}
+                      {!isAction && (
+                        <div className="mt-1 text-[9px] font-mono text-[#3a3a4a]">
+                          Gap {setup.gapPct}% — {setup.gapPct < 1 ? 'too close to max pain (no edge)' : 'too far from max pain (risky)'}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="text-[9px] font-mono text-[#6b6b85]">Based on yesterday's OI close · Click any row to analyse that index</div>
+              </div>
+            )}
+          </div>
+        )}
 
         {!isPremiumPlus && credits >= 0 && (
           <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-2xl p-4 mb-6">
@@ -397,6 +515,72 @@ export default function ZeroToHero() {
                       </>
                     )}
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* MAX PAIN PULL SIGNAL — early signal from 9:30 AM data only */}
+            {selectedIsExpiry && snap930 && maxPainPull && (
+              <div className={`rounded-2xl p-6 mb-4 border ${
+                maxPainPull.strength === 'HIGH'
+                  ? 'bg-[#f0c040]/8 border-[#f0c040]/40'
+                  : 'bg-[#ff8c42]/8 border-[#ff8c42]/40'
+              }`}>
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-xl">⚡</span>
+                  <div>
+                    <div className={`text-xs font-black uppercase tracking-widest ${maxPainPull.strength === 'HIGH' ? 'text-[#f0c040]' : 'text-[#ff8c42]'}`}>
+                      Max Pain Pull — {maxPainPull.strength === 'HIGH' ? 'STRONG SETUP' : 'MODERATE SETUP'}
+                    </div>
+                    <div className="text-[9px] font-mono text-[#6b6b85]">Early signal · Enter 9:30–10:30 AM · Before the confirmed 5-force window</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                  <div className="bg-black/30 rounded-xl p-3 text-center">
+                    <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">Strike</div>
+                    <div className={`font-black text-lg ${maxPainPull.direction === 'BULLISH' ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>
+                      {maxPainPull.pullStrike} {maxPainPull.optionType}
+                    </div>
+                  </div>
+                  <div className="bg-black/30 rounded-xl p-3 text-center">
+                    <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">Entry LTP</div>
+                    <div className="font-black text-lg text-[#f0c040]">
+                      {maxPainPull.pullLTP > 0 ? `₹${maxPainPull.pullLTP}` : '—'}
+                    </div>
+                  </div>
+                  <div className="bg-black/30 rounded-xl p-3 text-center">
+                    <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">Gap to MaxPain</div>
+                    <div className={`font-black text-lg ${maxPainPull.direction === 'BULLISH' ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>
+                      {Math.abs(maxPainPull.gap)} pts
+                    </div>
+                  </div>
+                  <div className="bg-black/30 rounded-xl p-3 text-center">
+                    <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">Pull %</div>
+                    <div className="font-black text-lg text-[#e8e8f0]">{maxPainPull.gapPct}%</div>
+                  </div>
+                </div>
+
+                <div className="text-[10px] font-mono text-[#6b6b85] mb-3">{maxPainPull.reason}</div>
+
+                {maxPainPull.pullLTP > 0 && (
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    {[
+                      { label: 'SL',   val: maxPainPull.targets.sl,   col: '#ff4d6d' },
+                      { label: 'T1 3x', val: maxPainPull.targets.t1,  col: '#f0c040' },
+                      { label: 'T2 5x', val: maxPainPull.targets.t2,  col: '#39d98a' },
+                      { label: 'Hero 10x', val: maxPainPull.targets.hero, col: '#4d9fff' },
+                    ].map(r => (
+                      <div key={r.label} className="bg-black/30 rounded-lg p-2 text-center">
+                        <div className="text-[9px] font-mono text-[#6b6b85]">{r.label}</div>
+                        <div className="font-black text-sm" style={{ color: r.col }}>₹{r.val}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="bg-black/20 rounded-xl p-3 text-[10px] font-mono text-[#6b6b85]">
+                  <span className="text-[#f0c040] font-black">⚠ Risk:</span> This is an EARLY signal — direction not yet confirmed by volume. Size to 25-50% of normal. All-or-nothing trade. If spot doesn't move toward max pain by 12:00 PM, exit immediately.
                 </div>
               </div>
             )}
