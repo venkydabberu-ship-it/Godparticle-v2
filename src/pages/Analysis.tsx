@@ -1050,26 +1050,38 @@ export default function Analysis() {
                   <table className="w-full text-xs font-mono">
                     <thead>
                       <tr className="border-b border-[#1e1e2e]">
-                        {['Scenario', 'Opens Est', 'Buy Zone', 'Target 1', 'Target 2', 'SL'].map(h => (
-                          <th key={h} className="text-left px-3 py-3 text-[#6b6b85] uppercase tracking-widest font-normal">{h}</th>
+                        {['Scenario', 'Opens Est', 'Buy Zone', 'To T1', 'Target 1', 'Target 2', 'SL'].map(h => (
+                          <th key={h} className={`text-left px-3 py-3 uppercase tracking-widest font-normal ${h === 'To T1' ? 'text-[#a855f7]' : 'text-[#6b6b85]'}`}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {scenarios.map((sc, i) => (
-                        <tr key={i} className={`border-b border-[#1e1e2e]/50 transition-all ${sc.avoid ? 'opacity-40' : sc.isFlat ? 'bg-[#f0c040]/5' : sc.isBest ? 'bg-[#39d98a]/5' : ''}`}>
-                          <td className={`px-3 py-2.5 font-bold ${sc.gap > 0 ? 'text-[#39d98a]' : sc.gap < 0 ? 'text-[#ff4d6d]' : 'text-[#f0c040]'}`}>
-                            {sc.label} {sc.isBest && !sc.avoid ? '⭐' : ''} {sc.avoid ? '🚫' : ''}
-                          </td>
-                          <td className="px-3 py-2.5 text-[#6b6b85]">{sc.avoid ? '—' : `₹${sc.openEst}`}</td>
-                          <td className="px-3 py-2.5 text-[#f0c040]">{sc.avoid ? 'AVOID' : `₹${sc.entryLow}–${sc.entryHigh}`}</td>
-                          <td className="px-3 py-2.5 text-[#39d98a]">{sc.avoid ? '—' : `₹${sc.target1}`}</td>
-                          <td className="px-3 py-2.5 text-[#39d98a]">{sc.avoid ? '—' : `₹${sc.target2}`}</td>
-                          <td className="px-3 py-2.5 text-[#ff4d6d]">{sc.avoid ? '—' : `₹${sc.sl}`}</td>
-                        </tr>
-                      ))}
+                      {scenarios.map((sc, i) => {
+                        const toT1 = sc.avoid ? 0 : sc.target1 - sc.entryHigh;
+                        const is60 = !sc.avoid && toT1 >= 60;
+                        const is40 = !sc.avoid && toT1 >= 40 && toT1 < 60;
+                        return (
+                          <tr key={i} className={`border-b border-[#1e1e2e]/50 transition-all ${sc.avoid ? 'opacity-40' : is60 ? 'bg-[#a855f7]/5' : sc.isFlat ? 'bg-[#f0c040]/5' : sc.isBest ? 'bg-[#39d98a]/5' : ''}`}>
+                            <td className={`px-3 py-2.5 font-bold ${sc.gap > 0 ? 'text-[#39d98a]' : sc.gap < 0 ? 'text-[#ff4d6d]' : 'text-[#f0c040]'}`}>
+                              {sc.label} {sc.isBest && !sc.avoid ? '⭐' : ''} {sc.avoid ? '🚫' : ''}
+                            </td>
+                            <td className="px-3 py-2.5 text-[#6b6b85]">{sc.avoid ? '—' : `₹${sc.openEst}`}</td>
+                            <td className="px-3 py-2.5 text-[#f0c040]">{sc.avoid ? 'AVOID' : `₹${sc.entryLow}–${sc.entryHigh}`}</td>
+                            <td className={`px-3 py-2.5 font-black ${sc.avoid ? 'text-[#3a3a4a]' : is60 ? 'text-[#a855f7]' : is40 ? 'text-[#f0c040]' : 'text-[#6b6b85]'}`}>
+                              {sc.avoid ? '—' : `+${toT1}${is60 ? ' ✓' : ''}`}
+                            </td>
+                            <td className="px-3 py-2.5 text-[#39d98a]">{sc.avoid ? '—' : `₹${sc.target1}`}</td>
+                            <td className="px-3 py-2.5 text-[#39d98a]">{sc.avoid ? '—' : `₹${sc.target2}`}</td>
+                            <td className="px-3 py-2.5 text-[#ff4d6d]">{sc.avoid ? '—' : `₹${sc.sl}`}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
+                </div>
+                <div className="mt-2 text-[10px] font-mono text-[#6b6b85] px-1">
+                  <span className="text-[#a855f7]">■</span> To T1 ≥ 60 pts — 60-point trade possible if entered within buy zone
+                  &nbsp;·&nbsp; <span className="text-[#f0c040]">■</span> 40–59 pts
                 </div>
               </div>
             )}
