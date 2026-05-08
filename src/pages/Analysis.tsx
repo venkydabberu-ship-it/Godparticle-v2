@@ -1039,10 +1039,13 @@ export default function Analysis() {
                   </div>
                 )}
                 <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl px-4 py-2 text-xs font-mono text-[#f0c040] mb-3">
-                  ⚛ PCB ₹{result.pcb.toFixed(1)} · SL = entry − {scenarios.find(s => !s.avoid)?.slPts ?? 30} pts · Enter at entryLow (limit order) · T1 = 2:1 R:R
+                  <div>⚛ PCB ₹{result.pcb.toFixed(1)} · SL = entry − {scenarios.find(s => !s.avoid)?.slPts ?? 30} pts · T1 = entry + {(scenarios.find(s => !s.avoid)?.slPts ?? 30) * 2} pts (2:1 R:R)</div>
+                  <div className="mt-1 text-[#f0c040]/80">
+                    📌 Entry rule: Place limit order at <span className="text-[#f0c040]">entryLow</span>. Enter when premium touches or dips to entryLow — do NOT chase if premium is above entryHigh. If premium never reaches entryLow, skip the trade.
+                  </div>
                   {result.daysSinceClose > 0 && (
                     <span className="ml-2 text-[#ff8c42]">
-                      · {result.daysSinceClose}d theta decay applied
+                      · {result.daysSinceClose}d theta decay on open est
                     </span>
                   )}
                 </div>
@@ -1094,8 +1097,10 @@ export default function Analysis() {
                   </table>
                 </div>
                 <div className="mt-2 text-[10px] font-mono text-[#6b6b85] px-1">
-                  <span className="text-[#a855f7]">■</span> To T1 ≥ 60 pts from entryLow — place limit order at entryLow, SL = entryLow − {scenarios.find(s => !s.avoid)?.slPts ?? 30} pts
-                  &nbsp;·&nbsp; <span className="text-[#f0c040]">■</span> 40–59 pts
+                  <span className="text-[#a855f7]">■</span> To T1 ≥ 60 pts &nbsp;·&nbsp;
+                  <span className="text-[#f0c040]">■</span> 40–59 pts &nbsp;·&nbsp;
+                  SL = entryLow − {scenarios.find(s => !s.avoid)?.slPts ?? 30} pts &nbsp;·&nbsp;
+                  Enter only if premium ≤ entryHigh — never chase above it
                 </div>
               </div>
             )}
@@ -1149,6 +1154,46 @@ export default function Analysis() {
                       T2: <span className="text-[#39d98a]">₹{target2}</span>
                     </div>
                   </div>
+
+                  {/* ── Breakout / Trending Day Protocol ── */}
+                  {(() => {
+                    const slPts = sc.slPts ?? 30;
+                    const brkEntry  = sc.entryHigh;
+                    const brkSL     = Math.max(brkEntry - slPts, 1);
+                    const brkT1     = brkEntry + slPts * 2;
+                    const brkT2     = brkEntry + Math.round(slPts * 3.5);
+                    return (
+                      <div className="mb-5 bg-[#ff8c42]/8 border border-[#ff8c42]/30 rounded-xl p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="text-sm">🚀</span>
+                          <span className="text-xs font-black font-mono text-[#ff8c42] uppercase tracking-widest">Trending Day — Breakout Entry Protocol</span>
+                        </div>
+                        <div className="text-[10px] font-mono text-[#ff8c42]/70 mb-3 leading-relaxed">
+                          Use when premium <span className="text-[#ff8c42] font-bold">never touches ₹{sc.entryLow}</span> (buy zone) and keeps climbing from open.
+                          Wait for 9:45 AM (first 15-min candle) to close. If it closes above ₹{sc.entryHigh}, this is a trending day.
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                          {[
+                            { label: 'Breakout Entry', value: `₹${brkEntry}`, color: '#ff8c42' },
+                            { label: `SL (−${slPts} pts)`, value: `₹${brkSL}`, color: '#ff4d6d' },
+                            { label: `T1 (+${slPts * 2} pts)`, value: `₹${brkT1}`, color: '#39d98a' },
+                            { label: `T2 (+${Math.round(slPts * 3.5)} pts)`, value: `₹${brkT2}`, color: '#39d98a' },
+                          ].map(({ label, value, color }) => (
+                            <div key={label} className="bg-[#0a0a0f] rounded-lg p-2.5 text-center">
+                              <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">{label}</div>
+                              <div className="text-sm font-black font-mono" style={{ color }}>{value}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="space-y-1 text-[10px] font-mono text-[#ff8c42]/70">
+                          <div>📌 <span className="text-[#ff8c42]">Entry trigger:</span> Enter when 15-min candle (9:15–9:30) closes above ₹{sc.entryHigh} — don't buy mid-candle</div>
+                          <div>⚠️ <span className="text-[#ff8c42]">Qty rule:</span> Use 50% of normal quantity — you're entering late, risk is higher</div>
+                          <div>🕥 <span className="text-[#ff8c42]">Cutoff:</span> No breakout entries after 10:30 AM — momentum trades need time to work</div>
+                          <div>❌ <span className="text-[#ff8c42]">Skip if:</span> Premium is already above ₹{brkT1} at open (you've missed it entirely)</div>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
 
@@ -1217,18 +1262,23 @@ export default function Analysis() {
                         const dT2 = dv(target2, slot);
                         const dConf = dv(confAbove, slot);
                         const dRecov = dv(confBelow, slot);
+                        const slPtsSlot = sc.slPts ?? 30;
+                        const brkSLSlot = Math.max(eH - slPtsSlot, 1);
+                        const brkT1Slot = eH + slPtsSlot * 2;
                         return (
                           <div key={time} className="bg-[#16161f] border border-[#1e1e2e] rounded-xl p-3">
                             <div className="text-xs font-black text-[#f0c040] mb-2">{time}</div>
                             <div className="space-y-1.5">
                               <div className="flex items-start gap-2">
-                                <span className="text-[10px] text-[#ff8c42] mt-0.5 shrink-0 font-mono">▲</span>
+                                <span className="text-[10px] text-[#ff8c42] mt-0.5 shrink-0 font-mono">🚀</span>
                                 <div className="text-[10px] font-mono text-[#6b6b85]">
-                                  Above <span className="text-[#e8e8f0]">₹{eH}</span>
-                                  <span className="text-[#ff8c42]"> → Enter · Reduced Qty · SL ₹{eH}</span>
-                                  <div className="mt-1 bg-[#ff8c42]/10 border border-[#ff8c42]/30 rounded px-1.5 py-1 text-[9px] text-[#ff8c42]">
-                                    ⚡ Wait for <span className="font-black">₹{dConf}</span> — crossing this confirms momentum continues toward T1
-                                  </div>
+                                  Above <span className="text-[#e8e8f0]">₹{eH}</span> (trending)
+                                  <span className="text-[#ff8c42]"> → Breakout Entry · 50% Qty · SL ₹{brkSLSlot} · T1 ₹{brkT1Slot}</span>
+                                  {slot === 0 && (
+                                    <div className="mt-1 bg-[#ff8c42]/10 border border-[#ff8c42]/30 rounded px-1.5 py-1 text-[9px] text-[#ff8c42]">
+                                      ⚡ Wait for 9:45 AM 15-min candle close above ₹{eH} before entering
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                               <div className="flex items-start gap-2 bg-[#39d98a]/10 rounded-lg px-2 py-1.5">

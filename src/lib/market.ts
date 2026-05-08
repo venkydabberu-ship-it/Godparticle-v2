@@ -641,11 +641,13 @@ export function generateScenarioMatrix(
   // Use Black-Scholes when we have spot price — IV now always has a value
   const useBSModel = spotClose > 0 && strike > 0 && dte >= 0;
 
-  // Theta discount applied to targets
+  // Theta discount applied to targets.
+  // For intraday trades (DTE ≥ 2): targets are premium moves within a session.
+  // Within-session theta on a 2+ DTE option is negligible vs. a 60-pt premium swing.
+  // Discounting here would reduce T1 below the 2:1 R:R promise, so we skip it.
+  // Only expiry day / expiry-eve options need this adjustment.
   const td = dte <= 0 ? 0.50
            : dte <= 1 ? 0.65
-           : dte <= 2 ? 0.78
-           : dte <= 4 ? 0.92
            : 1.00;
 
   const gapStep    = getGapStep(indexName);
