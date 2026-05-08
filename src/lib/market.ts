@@ -74,6 +74,26 @@ function bsOpenEstimate(
   return Math.max(price, intrinsic, 0.5);
 }
 
+// Back-calculate implied volatility from a known market price using bisection.
+// Returns IV as a decimal (e.g. 0.25 = 25%). Returns null if inputs invalid.
+function impliedVolatility(
+  spot: number, strike: number, dte: number,
+  optType: 'CE' | 'PE', marketPrice: number
+): number | null {
+  if (spot <= 0 || strike <= 0 || dte <= 0 || marketPrice <= 0) return null;
+  const T = dte / 365;
+  const intrinsic = optType === 'CE' ? Math.max(0, spot - strike) : Math.max(0, strike - spot);
+  if (marketPrice <= intrinsic) return null; // no time value — can't infer IV
+  let lo = 0.01, hi = 5.0;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    const p = bsPrice(spot, strike, T, mid, optType);
+    if (Math.abs(p - marketPrice) < 0.05) return mid;
+    if (p < marketPrice) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 // Returns the IV (in %, e.g. 13.5) of the strike nearest to spotAtGap in the chain.
 // This gives us the actual market vol-skew for each gap scenario instead of a crude linear estimate.
 function getChainIVForSpot(
@@ -634,7 +654,12 @@ export function generateScenarioMatrix(
     NIFTYNEXT50: 16, SENSEX: 14, BANKEX: 17,
   };
   const rawIV     = result.latestIV ?? 0;
-  const latestIV  = rawIV > 0 ? rawIV : (DEFAULT_IV[indexName] ?? 15);
+  // Priority: chain IV > back-calculated IV from last close > default IV
+  // Back-calculating from lc gives the actual market-implied IV (not a guess),
+  // which is critical for options priced at 25-30% IV when the default is 14%.
+  const backCalcIV = impliedVolatility(spotClose, strike, dte, isCE ? 'CE' : 'PE', lc);
+  const backCalcIVPct = backCalcIV ? Math.round(backCalcIV * 1000) / 10 : 0; // decimal→ pct
+  const latestIV  = rawIV > 0 ? rawIV : (backCalcIVPct > 0 ? backCalcIVPct : (DEFAULT_IV[indexName] ?? 15));
   const rawAvgIV  = result.avgIV ?? 0;
   const avgIV     = rawAvgIV > 0 ? rawAvgIV : latestIV;
 

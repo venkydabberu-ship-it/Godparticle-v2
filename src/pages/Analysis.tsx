@@ -1033,6 +1033,24 @@ export default function Analysis() {
             {/* Scenario Matrix */}
             {activeTab === 'matrix' && (
               <div>
+                {/* Direction mismatch alert — most important warning */}
+                {(() => {
+                  const isCE = result.optType === 'CE';
+                  const belowPCB = result.lc < result.pcb;
+                  const wrongDir = (isCE && belowPCB) || (!isCE && !belowPCB);
+                  if (!wrongDir) return null;
+                  const rightOpt = isCE ? 'PE' : 'CE';
+                  const reason = isCE
+                    ? `Last close ₹${result.lc.toFixed(0)} is BELOW PCB ₹${result.pcb.toFixed(0)} — bearish signal`
+                    : `Last close ₹${result.lc.toFixed(0)} is ABOVE PCB ₹${result.pcb.toFixed(0)} — bullish signal`;
+                  return (
+                    <div className="bg-[#ff4d6d]/15 border-2 border-[#ff4d6d]/60 rounded-xl px-4 py-3 text-xs font-mono text-[#ff4d6d] mb-3">
+                      <div className="font-black text-sm mb-1">🚨 WRONG DIRECTION — This is a {rightOpt} day</div>
+                      <div className="text-[#ff4d6d]/80">{reason}. Buying {result.optType} against the direction risks full SL.</div>
+                      <div className="mt-1 text-[#ff4d6d] font-bold">→ Run analysis on the {result.strike} {rightOpt} instead.</div>
+                    </div>
+                  );
+                })()}
                 {result.dte <= 2 && (
                   <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl px-4 py-2 text-xs font-mono text-[#ff4d6d] mb-3">
                     ⚠️ {result.dte}d to expiry — Theta aggressive. Exit by 12:30 PM. No overnight.
