@@ -621,6 +621,13 @@ export function generateScenarioMatrix(
   const spotClose      = result.spotClose ?? 0;
   const strike         = result.strike ?? 0;
 
+  // Tight per-index SL in option premium points — what retail traders actually use
+  const SL_POINTS: Record<string, number> = {
+    NIFTY50: 30, BANKNIFTY: 50, FINNIFTY: 40, MIDCAPNIFTY: 40,
+    NIFTYNEXT50: 40, SENSEX: 100, BANKEX: 100,
+  };
+  const slPts = SL_POINTS[indexName] ?? 30;
+
   // Default IV per index when chain IV is unavailable (auto-fetch path has no IV stored)
   const DEFAULT_IV: Record<string, number> = {
     NIFTY50: 14, BANKNIFTY: 17, FINNIFTY: 16, MIDCAPNIFTY: 18,
@@ -774,42 +781,35 @@ export function generateScenarioMatrix(
       entryHigh = Math.max(Math.round(openEst * 1.17), entryLow  + 1);
     }
 
-    // ── Targets — STRICTLY above entryHigh ──
-    //
-    // R:R anchored to entryLow and sl for disciplined position sizing:
-    //   risk     = entryLow − sl  (worst-case loss from entry)
-    //   T1       = entryLow + 2 × risk  (2:1 R:R)    ← institutional standard
-    //   T2       = entryLow + 3.5 × risk (3.5:1 R:R) ← let winners run
-    //
-    // PCB overrides T1 when PCB is a meaningful target (above entryHigh).
-    // Theta discount (td) is applied for near-expiry options.
-    //
+    // ── Stop Loss — tight fixed points below entryLow (retail standard) ──
+    // SL is placed at entryLow minus per-index SL points.
+    // Nifty = 30 pts, BankNifty = 50 pts, etc.
+    const sl   = Math.max(entryLow - slPts, 1);
+    const risk = slPts; // fixed risk per unit
+
+    // ── Targets — 2:1 and 3.5:1 R:R from entryLow ──
+    // T1 = entryLow + 2 × slPts  (always exactly 2× the risk)
+    // T2 = entryLow + 3.5 × slPts
+    // PCB overrides T1 when it's a stronger natural magnet above entryHigh.
+    // Theta discount (td) applied for near-expiry.
     let target1: number;
     let target2: number;
-    const sl_for_rr = Math.round(openEst * 0.72); // same SL formula
-    const risk      = Math.max(entryLow - sl_for_rr, 1);
-
     const rrT1 = Math.round((entryLow + 2.0 * risk) * td);
     const rrT2 = Math.round((entryLow + 3.5 * risk) * td);
 
     if (isFav) {
-      // Favorable scenario: PCB may already be below entry; use R:R
       target1 = Math.max(rrT1, pcbGapFrac < 0 ? Math.round(pcb * 1.15 * td) : rrT1);
       target2 = Math.max(rrT2, target1 + 1);
     } else if (isNeutral) {
-      // Flat: PCB is the natural magnet; T1 = PCB if above entryHigh, else R:R
       target1 = pcb > entryHigh ? Math.round(Math.max(pcb, rrT1) * td) : rrT1;
       target2 = Math.max(rrT2, target1 + 1);
     } else {
-      // Adverse: conservative 1.5:1 and 2.5:1 R:R (option fighting the trend)
+      // Adverse: conservative 1.5:1 and 2.5:1
       target1 = Math.round((entryLow + 1.5 * risk) * td);
       target2 = Math.round((entryLow + 2.5 * risk) * td);
     }
     target1 = Math.max(target1, entryHigh + 1);
     target2 = Math.max(target2, target1  + 1);
-
-    // ── Stop Loss — STRICTLY below openEst ──
-    const sl = Math.max(Math.round(openEst * 0.72), 1);
 
     const isBest = gap === 0
       || (isCE  && gap > 0 && gap <= gapStep * 2)
@@ -818,7 +818,7 @@ export function generateScenarioMatrix(
     return {
       gap, label, openEst,
       entryLow, entryHigh,
-      target1, target2, sl,
+      target1, target2, sl, slPts,
       avoid: false, isFlat: gap === 0, isBest,
     };
   });
