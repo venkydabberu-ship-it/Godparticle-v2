@@ -1039,10 +1039,13 @@ export default function Analysis() {
                   </div>
                 )}
                 <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl px-4 py-2 text-xs font-mono text-[#f0c040] mb-3">
-                  ⚛ PCB ₹{result.pcb.toFixed(1)} · SL = entry − {scenarios.find(s => !s.avoid)?.slPts ?? 30} pts · Enter at entryLow (limit order) · T1 = 2:1 R:R
+                  <div>⚛ PCB ₹{result.pcb.toFixed(1)} · SL = entry − {scenarios.find(s => !s.avoid)?.slPts ?? 30} pts · T1 = entry + {(scenarios.find(s => !s.avoid)?.slPts ?? 30) * 2} pts (2:1 R:R)</div>
+                  <div className="mt-1 text-[#f0c040]/80">
+                    📌 Entry rule: Place limit order at <span className="text-[#f0c040]">entryLow</span>. Enter when premium touches or dips to entryLow — do NOT chase if premium is above entryHigh. If premium never reaches entryLow, skip the trade.
+                  </div>
                   {result.daysSinceClose > 0 && (
                     <span className="ml-2 text-[#ff8c42]">
-                      · {result.daysSinceClose}d theta decay applied
+                      · {result.daysSinceClose}d theta decay on open est
                     </span>
                   )}
                 </div>
@@ -1094,8 +1097,10 @@ export default function Analysis() {
                   </table>
                 </div>
                 <div className="mt-2 text-[10px] font-mono text-[#6b6b85] px-1">
-                  <span className="text-[#a855f7]">■</span> To T1 ≥ 60 pts from entryLow — place limit order at entryLow, SL = entryLow − {scenarios.find(s => !s.avoid)?.slPts ?? 30} pts
-                  &nbsp;·&nbsp; <span className="text-[#f0c040]">■</span> 40–59 pts
+                  <span className="text-[#a855f7]">■</span> To T1 ≥ 60 pts &nbsp;·&nbsp;
+                  <span className="text-[#f0c040]">■</span> 40–59 pts &nbsp;·&nbsp;
+                  SL = entryLow − {scenarios.find(s => !s.avoid)?.slPts ?? 30} pts &nbsp;·&nbsp;
+                  Enter only if premium ≤ entryHigh — never chase above it
                 </div>
               </div>
             )}
