@@ -1039,13 +1039,27 @@ export default function Analysis() {
                   </div>
                 )}
                 <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl px-4 py-2 text-xs font-mono text-[#f0c040] mb-3">
-                  ⚛ PCB ₹{result.pcb.toFixed(1)} = Key level · Gap step: {getGapStep(indexName)} pts · Range: ±{getMaxGap(indexName)} pts
+                  ⚛ PCB ₹{result.pcb.toFixed(1)} · SL = entry − {scenarios.find(s => !s.avoid)?.slPts ?? 30} pts · Enter at entryLow (limit order) · T1 = 2:1 R:R
                   {result.daysSinceClose > 0 && (
                     <span className="ml-2 text-[#ff8c42]">
-                      · {result.daysSinceClose}d theta decay applied to open estimates
+                      · {result.daysSinceClose}d theta decay applied
                     </span>
                   )}
                 </div>
+                {(() => {
+                  const gapStep = getGapStep(indexName);
+                  const bigGapThreshold = gapStep * 2;
+                  const flatSc = scenarios.find(s => s.gap === 0);
+                  const bestFav = scenarios.filter(s => s.isBest && !s.avoid && s.gap !== 0)[0];
+                  if (bestFav && Math.abs(bestFav.gap) >= bigGapThreshold) {
+                    return (
+                      <div className="bg-[#ff8c42]/10 border border-[#ff8c42]/30 rounded-xl px-4 py-2 text-xs font-mono text-[#ff8c42] mb-3">
+                        ⚠ Large gap scenario — wait 15 min at open. Gap fills are common. Enter only after a 15-min candle CLOSES inside the buy zone without recovering back.
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
                 <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-x-auto">
                   <table className="w-full text-xs font-mono">
                     <thead>
@@ -1057,7 +1071,7 @@ export default function Analysis() {
                     </thead>
                     <tbody>
                       {scenarios.map((sc, i) => {
-                        const toT1 = sc.avoid ? 0 : sc.target1 - sc.entryHigh;
+                        const toT1 = sc.avoid ? 0 : sc.target1 - sc.entryLow;
                         const is60 = !sc.avoid && toT1 >= 60;
                         const is40 = !sc.avoid && toT1 >= 40 && toT1 < 60;
                         return (
@@ -1080,7 +1094,7 @@ export default function Analysis() {
                   </table>
                 </div>
                 <div className="mt-2 text-[10px] font-mono text-[#6b6b85] px-1">
-                  <span className="text-[#a855f7]">■</span> To T1 ≥ 60 pts — 60-point trade possible if entered within buy zone
+                  <span className="text-[#a855f7]">■</span> To T1 ≥ 60 pts from entryLow — place limit order at entryLow, SL = entryLow − {scenarios.find(s => !s.avoid)?.slPts ?? 30} pts
                   &nbsp;·&nbsp; <span className="text-[#f0c040]">■</span> 40–59 pts
                 </div>
               </div>
