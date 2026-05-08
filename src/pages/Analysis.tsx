@@ -114,7 +114,7 @@ export default function Analysis() {
       const parsed = parseNSEOptionChain(text);
       const count = Object.keys(parsed).length;
       if (!count) { setUploadMsg('❌ No valid data found in CSV!'); return; }
-      // Store Nifty spot close with this day's data for Black-Scholes open estimates
+      // Manual override takes priority over auto-detected spot from CSV header
       if (uploadSpot && parseFloat(uploadSpot) > 0) {
         parsed['_spot_close'] = parseFloat(uploadSpot);
       }
@@ -413,11 +413,11 @@ export default function Analysis() {
             </div>
             <div>
               <label className="block text-xs font-mono text-[#6b6b85] uppercase mb-1">
-                {INDEX_DISPLAY[uploadIndex] ?? uploadIndex} Spot at Close <span className="text-[#f0c040]">(for open estimates)</span>
+                {INDEX_DISPLAY[uploadIndex] ?? uploadIndex} Spot at Close <span className="text-[#6b6b85]">(auto-detected from CSV · override if wrong)</span>
               </label>
               <input type="number" value={uploadSpot} onChange={e => setUploadSpot(e.target.value)}
-                placeholder={uploadIndex === 'SENSEX' ? 'e.g. 80500' : uploadIndex === 'BANKNIFTY' ? 'e.g. 52000' : 'e.g. 24350'}
-                className="w-full bg-[#16161f] border border-[#f0c040]/40 rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
+                placeholder="Auto-detected from CSV header"
+                className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]" />
             </div>
           </div>
 

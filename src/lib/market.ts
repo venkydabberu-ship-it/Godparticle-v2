@@ -217,6 +217,17 @@ export function formatExpiryDisplay(expiry: string): string {
 export function parseNSEOptionChain(csvText: string): Record<string, any> {
   const lines = csvText.split(/\r?\n/);
   const result: Record<string, any> = {};
+
+  // Extract underlying spot value from header row
+  // NSE CSV line 0 contains "Underlying Value : 24,050.05" somewhere
+  if (lines[0]) {
+    const spotMatch = lines[0].match(/Underlying Value\s*[:\-]\s*([\d,\.]+)/i);
+    if (spotMatch) {
+      const spotVal = parseFloat(spotMatch[1].replace(/,/g, ''));
+      if (spotVal > 0) result['_spot_close'] = spotVal;
+    }
+  }
+
   for (let i = 2; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
@@ -607,13 +618,21 @@ export function generateScenarioMatrix(
   const dte            = result.dte;
   const daysSinceClose = result.daysSinceClose ?? 0;
   const isCE           = result.optType === 'CE';
-  const latestIV       = result.latestIV ?? 0;
-  const avgIV          = result.avgIV ?? 0;
   const spotClose      = result.spotClose ?? 0;
   const strike         = result.strike ?? 0;
 
-  // Use Black-Scholes when we have spot price and IV — much more accurate
-  const useBSModel = spotClose > 0 && latestIV > 0 && strike > 0 && dte >= 0;
+  // Default IV per index when chain IV is unavailable (auto-fetch path has no IV stored)
+  const DEFAULT_IV: Record<string, number> = {
+    NIFTY50: 14, BANKNIFTY: 17, FINNIFTY: 16, MIDCAPNIFTY: 18,
+    NIFTYNEXT50: 16, SENSEX: 14, BANKEX: 17,
+  };
+  const rawIV     = result.latestIV ?? 0;
+  const latestIV  = rawIV > 0 ? rawIV : (DEFAULT_IV[indexName] ?? 15);
+  const rawAvgIV  = result.avgIV ?? 0;
+  const avgIV     = rawAvgIV > 0 ? rawAvgIV : latestIV;
+
+  // Use Black-Scholes when we have spot price — IV now always has a value
+  const useBSModel = spotClose > 0 && strike > 0 && dte >= 0;
 
   // Theta discount applied to targets
   const td = dte <= 0 ? 0.50
