@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+
+body {
+  background: #09090f;
+  color: #f1f5f9;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1e1e2e; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #7c3aed44; }
+
+.grad-text {
+  background: linear-gradient(135deg, #7c3aed, #f059da);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #7c3aed, #f059da);
+  color: white; font-weight: 700; border-radius: 12px;
+  padding: 10px 20px; cursor: pointer;
+  transition: opacity .15s, transform .1s; border: none;
+}
+.btn-primary:hover { opacity: .9; transform: translateY(-1px); }
+.btn-primary:active { transform: translateY(0); }
+.btn-primary:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+.card {
+  background: #111118;
+  border: 1px solid #1e1e2e;
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.badge-draft             { background: #1e1e2e; color: #64748b; }
+.badge-generating        { background: #7c3aed22; color: #a78bfa; }
+.badge-awaiting_approval { background: #f59e0b22; color: #fbbf24; }
+.badge-approved          { background: #10b98122; color: #34d399; }
+.badge-scheduled         { background: #3b82f622; color: #60a5fa; }
+.badge-posted            { background: #10b98133; color: #6ee7b7; }
+.badge-rejected          { background: #ef444422; color: #f87171; }
+.badge-failed            { background: #ef444433; color: #fca5a5; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  width: 18px; height: 18px;
+  border: 2px solid #7c3aed33;
+  border-top-color: #7c3aed;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  display: inline-block;
+}
+
+@keyframes pulse-ring {
+  0%   { transform: scale(.9); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+.live-dot::before {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: #10b981;
+  animation: pulse-ring 1.5s ease-out infinite;
+}
