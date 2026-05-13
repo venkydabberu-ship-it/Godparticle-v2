@@ -73,53 +73,63 @@ export default function Studio() {
     setError('');
     setStep('generating');
 
-    let imageUrls: string[] = [];
-    if (images.length > 0) {
-      setUploading(true);
-      imageUrls = await Promise.all(images.map(async (file) => {
-        const path = `content/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
-        const { error: upErr } = await supabase.storage.from('automarket').upload(path, file, { upsert: true });
-        if (upErr) throw upErr;
-        const { data } = supabase.storage.from('automarket').getPublicUrl(path);
-        return data.publicUrl;
-      }));
-      setUploading(false);
-    }
+    try {
+      // 1. Upload images to Supabase Storage
+      let imageUrls: string[] = [];
+      if (images.length > 0) {
+        setUploading(true);
+        imageUrls = await Promise.all(images.map(async (file) => {
+          const path = `content/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+          const { error: upErr } = await supabase.storage.from('automarket').upload(path, file, { upsert: true });
+          if (upErr) throw upErr;
+          const { data } = supabase.storage.from('automarket').getPublicUrl(path);
+          return data.publicUrl;
+        }));
+        setUploading(false);
+      }
 
-    const { data: record, error: dbErr } = await supabase
-      .from('am_content')
-      .insert({
-        idea_text: idea.trim(),
-        image_urls: imageUrls,
-        platform, content_type: contentType, tone,
-        status: 'draft',
-      })
-      .select()
-      .single();
+      // 2. Create DB record
+      const { data: record, error: dbErr } = await supabase
+        .from('am_content')
+        .insert({
+          idea_text: idea.trim(),
+          image_urls: imageUrls,
+          platform, content_type: contentType, tone,
+          status: 'draft',
+        })
+        .select()
+        .single();
 
-    if (dbErr || !record) {
-      setError('Failed to save content. Check Supabase config.');
+      if (dbErr || !record) {
+        setError('Failed to save content. Check Supabase config.');
+        setStep('input');
+        return;
+      }
+
+      setContentId(record.id as string);
+
+      // 3. Call Claude API
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contentId: record.id, idea: idea.trim(), platform, contentType, tone }),
+      });
+
+      let json: { content?: GeneratedContent; error?: string } = {};
+      try { json = await res.json(); } catch { /* empty body on timeout */ }
+
+      if (!res.ok || json.error) {
+        setError(json.error ?? `Generation failed (${res.status}). Please try again.`);
+        setStep('input');
+        return;
+      }
+
+      setGenerated(json.content!);
+      setStep('review');
+    } catch (err) {
+      setError(`Error: ${err instanceof Error ? err.message : 'Network issue. Please try again.'}`);
       setStep('input');
-      return;
     }
-
-    setContentId(record.id as string);
-
-    const res = await fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contentId: record.id, idea: idea.trim(), platform, contentType, tone }),
-    });
-    const json = await res.json() as { content?: GeneratedContent; error?: string };
-
-    if (!res.ok || json.error) {
-      setError(json.error ?? 'Generation failed');
-      setStep('input');
-      return;
-    }
-
-    setGenerated(json.content!);
-    setStep('review');
   }
 
   async function handleApprove() {
@@ -137,15 +147,18 @@ export default function Studio() {
   async function handleRegenSection(section: keyof GeneratedContent) {
     if (!contentId || !generated) return;
     setRegenLoading(section);
-    const res = await fetch('/api/generate', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contentId, section, currentContent: generated, idea, tone }),
-    });
-    const json = await res.json() as { value?: string | string[]; error?: string };
-    if (json.value !== undefined) {
-      setGenerated(prev => prev ? { ...prev, [section]: json.value } : prev);
-    }
+    try {
+      const res = await fetch('/api/generate', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contentId, section, currentContent: generated, idea, tone }),
+      });
+      let json: { value?: string | string[]; error?: string } = {};
+      try { json = await res.json(); } catch { /* ignore */ }
+      if (json.value !== undefined) {
+        setGenerated(prev => prev ? { ...prev, [section]: json.value } : prev);
+      }
+    } catch { /* ignore regen errors silently */ }
     setRegenLoading(null);
   }
 
@@ -178,6 +191,7 @@ export default function Studio() {
           </p>
         </div>
 
+        {/* Step indicator */}
         <div className="flex items-center gap-3 mb-8">
           {(['input', 'generating', 'review'] as Step[]).map((s, i) => (
             <div key={s} className="flex items-center gap-2">
@@ -201,9 +215,12 @@ export default function Studio() {
           </div>
         )}
 
+        {/* ── Step 1: Input ── */}
         {step === 'input' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Left: upload + idea */}
             <div className="flex flex-col gap-4">
+              {/* Drop zone */}
               <div
                 className="border-2 border-dashed border-[#1e1e2e] rounded-2xl p-6 text-center cursor-pointer
                   hover:border-[#7c3aed66] hover:bg-[#7c3aed08] transition-all"
@@ -237,6 +254,7 @@ export default function Studio() {
                 )}
               </div>
 
+              {/* Idea text */}
               <div>
                 <label className="text-xs font-bold text-[#94a3b8] uppercase tracking-wider mb-1.5 block">
                   Your Idea
@@ -252,7 +270,9 @@ export default function Studio() {
               </div>
             </div>
 
+            {/* Right: options */}
             <div className="flex flex-col gap-5">
+              {/* Platform */}
               <div>
                 <label className="text-xs font-bold text-[#94a3b8] uppercase tracking-wider mb-2 block">Platform</label>
                 <div className="flex gap-2">
@@ -269,6 +289,7 @@ export default function Studio() {
                 </div>
               </div>
 
+              {/* Content type */}
               <div>
                 <label className="text-xs font-bold text-[#94a3b8] uppercase tracking-wider mb-2 block">Content Type</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -287,6 +308,7 @@ export default function Studio() {
                 </div>
               </div>
 
+              {/* Tone */}
               <div>
                 <label className="text-xs font-bold text-[#94a3b8] uppercase tracking-wider mb-2 block">Tone</label>
                 <div className="flex flex-col gap-1.5">
@@ -308,6 +330,7 @@ export default function Studio() {
                 </div>
               </div>
 
+              {/* Generate button */}
               <button className="btn-primary w-full py-3 text-sm mt-auto" onClick={handleGenerate}>
                 ✨ Generate Viral Content
               </button>
@@ -315,6 +338,7 @@ export default function Studio() {
           </div>
         )}
 
+        {/* ── Step 2: Generating ── */}
         {step === 'generating' && (
           <div className="card flex flex-col items-center justify-center py-20 gap-6">
             <div className="relative">
@@ -328,21 +352,43 @@ export default function Studio() {
               <div className="font-black text-[#f1f5f9] text-lg mb-1">Claude is cooking...</div>
               <div className="text-[#64748b] text-sm">Writing your hook, caption, hashtags, and full video script</div>
             </div>
+            <div className="flex flex-col gap-2 w-full max-w-sm">
+              {['Analysing your idea...', 'Writing the viral hook...', 'Crafting caption + CTA...', 'Generating 30 hashtags...', 'Writing video script...'].map((msg, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs text-[#64748b]">
+                  <div className="w-4 h-4 rounded-full bg-[#7c3aed22] flex items-center justify-center">
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#7c3aed]" />
+                  </div>
+                  {msg}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
+        {/* ── Step 3: Review ── */}
         {step === 'review' && generated && (
           <div className="flex flex-col gap-4">
-            <ContentBlock icon="⚡" title="Hook (First 3 Seconds)" section="hook" value={generated.hook}
-              editMode={editMode} editVal={editVal} regenLoading={regenLoading}
-              onEdit={() => startEdit('hook')} onRegen={() => handleRegenSection('hook')}
-              onEditVal={setEditVal} onSaveEdit={saveEdit} onCancelEdit={() => setEditMode(null)} />
-
-            <ContentBlock icon="📝" title="Caption" section="caption" value={generated.caption}
-              editMode={editMode} editVal={editVal} regenLoading={regenLoading}
-              onEdit={() => startEdit('caption')} onRegen={() => handleRegenSection('caption')}
-              onEditVal={setEditVal} onSaveEdit={saveEdit} onCancelEdit={() => setEditMode(null)} multiline />
-
+            <ContentBlock
+              icon="⚡" title="Hook (First 3 Seconds)"
+              section="hook" value={generated.hook}
+              editMode={editMode} editVal={editVal}
+              regenLoading={regenLoading}
+              onEdit={() => startEdit('hook')}
+              onRegen={() => handleRegenSection('hook')}
+              onEditVal={setEditVal} onSaveEdit={saveEdit}
+              onCancelEdit={() => setEditMode(null)}
+            />
+            <ContentBlock
+              icon="📝" title="Caption"
+              section="caption" value={generated.caption}
+              editMode={editMode} editVal={editVal}
+              regenLoading={regenLoading}
+              onEdit={() => startEdit('caption')}
+              onRegen={() => handleRegenSection('caption')}
+              onEditVal={setEditVal} onSaveEdit={saveEdit}
+              onCancelEdit={() => setEditMode(null)}
+              multiline
+            />
             <div className="card">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
@@ -351,31 +397,45 @@ export default function Studio() {
                   <span className="text-xs text-[#64748b]">({generated.hashtags.length}/30)</span>
                 </div>
                 <div className="flex gap-2">
-                  <ActionBtn icon="✏️" label="Edit" onClick={() => startEdit('hashtags')} />
-                  <ActionBtn icon="🔄" label="Redo" onClick={() => handleRegenSection('hashtags')} loading={regenLoading === 'hashtags'} />
+                  <ActionBtn icon="✏️" label="Edit"  onClick={() => startEdit('hashtags')} />
+                  <ActionBtn icon="🔄" label="Redo"  onClick={() => handleRegenSection('hashtags')}
+                    loading={regenLoading === 'hashtags'} />
                 </div>
               </div>
               {editMode === 'hashtags' ? (
-                <EditInline value={editVal} onChange={setEditVal} onSave={saveEdit} onCancel={() => setEditMode(null)} />
+                <EditInline value={editVal} onChange={setEditVal}
+                  onSave={saveEdit} onCancel={() => setEditMode(null)} />
               ) : (
                 <div className="flex flex-wrap gap-1.5">
                   {generated.hashtags.map((h, i) => (
-                    <span key={i} className="text-xs px-2 py-1 rounded-full bg-[#7c3aed22] text-[#a78bfa] font-mono">#{h}</span>
+                    <span key={i} className="text-xs px-2 py-1 rounded-full bg-[#7c3aed22] text-[#a78bfa] font-mono">
+                      #{h}
+                    </span>
                   ))}
                 </div>
               )}
             </div>
-
-            <ContentBlock icon="🎬" title="Video Script (with timestamps)" section="script" value={generated.script}
-              editMode={editMode} editVal={editVal} regenLoading={regenLoading}
-              onEdit={() => startEdit('script')} onRegen={() => handleRegenSection('script')}
-              onEditVal={setEditVal} onSaveEdit={saveEdit} onCancelEdit={() => setEditMode(null)} multiline mono />
-
-            <ContentBlock icon="🎯" title="Call To Action" section="cta" value={generated.cta}
-              editMode={editMode} editVal={editVal} regenLoading={regenLoading}
-              onEdit={() => startEdit('cta')} onRegen={() => handleRegenSection('cta')}
-              onEditVal={setEditVal} onSaveEdit={saveEdit} onCancelEdit={() => setEditMode(null)} />
-
+            <ContentBlock
+              icon="🎬" title="Video Script (with timestamps)"
+              section="script" value={generated.script}
+              editMode={editMode} editVal={editVal}
+              regenLoading={regenLoading}
+              onEdit={() => startEdit('script')}
+              onRegen={() => handleRegenSection('script')}
+              onEditVal={setEditVal} onSaveEdit={saveEdit}
+              onCancelEdit={() => setEditMode(null)}
+              multiline mono
+            />
+            <ContentBlock
+              icon="🎯" title="Call To Action"
+              section="cta" value={generated.cta}
+              editMode={editMode} editVal={editVal}
+              regenLoading={regenLoading}
+              onEdit={() => startEdit('cta')}
+              onRegen={() => handleRegenSection('cta')}
+              onEditVal={setEditVal} onSaveEdit={saveEdit}
+              onCancelEdit={() => setEditMode(null)}
+            />
             <div className="flex gap-3 mt-2">
               <button onClick={() => { setStep('input'); setGenerated(null); }}
                 className="flex-1 py-3 rounded-xl border border-[#1e1e2e] text-sm text-[#64748b] hover:border-[#ffffff18] hover:text-[#f1f5f9] transition-all font-bold">
@@ -394,7 +454,8 @@ export default function Studio() {
   );
 }
 
-function ContentBlock({ icon, title, section, value, editMode, editVal, regenLoading,
+function ContentBlock({
+  icon, title, section, value, editMode, editVal, regenLoading,
   onEdit, onRegen, onEditVal, onSaveEdit, onCancelEdit, multiline, mono
 }: {
   icon: string; title: string; section: keyof GeneratedContent;
@@ -413,9 +474,9 @@ function ContentBlock({ icon, title, section, value, editMode, editVal, regenLoa
           <span className="font-bold text-sm text-[#f1f5f9]">{title}</span>
         </div>
         <div className="flex gap-2">
-          <ActionBtn icon="✏️" label="Edit" onClick={onEdit} />
-          <ActionBtn icon="🔄" label="Redo" onClick={onRegen} loading={regenLoading === section} />
-          <ActionBtn icon="📋" label="Copy" onClick={() => navigator.clipboard.writeText(value)} />
+          <ActionBtn icon="✏️" label="Edit"  onClick={onEdit} />
+          <ActionBtn icon="🔄" label="Redo"  onClick={onRegen} loading={regenLoading === section} />
+          <ActionBtn icon="📋" label="Copy"  onClick={() => navigator.clipboard.writeText(value)} />
         </div>
       </div>
       {isEditing ? (
@@ -460,9 +521,7 @@ function EditInline({ value, onChange, onSave, onCancel, multiline }: {
       )}
       <div className="flex gap-2">
         <button onClick={onSave} className="btn-primary px-4 py-1.5 text-xs">Save</button>
-        <button onClick={onCancel} className="px-4 py-1.5 rounded-lg border border-[#1e1e2e] text-xs text-[#64748b] hover:text-[#f1f5f9]">
-          Cancel
-        </button>
+        <button onClick={onCancel} className="px-4 py-1.5 text-xs rounded-lg border border-[#1e1e2e] text-[#64748b] hover:text-[#f1f5f9]">Cancel</button>
       </div>
     </div>
   );
