@@ -142,25 +142,40 @@ export default function Dashboard() {
     }
   }
 
-  // Load expiries when fcastIndex changes
+  // Load nearest expiry automatically when index changes
   useEffect(() => {
     setFcastExpiry('');
-    setFcastExpiries([]);
     setFcastForecast(null);
-    getAvailableExpiries(fcastIndex)
-      .then(e => { setFcastExpiries(e); if (e.length) setFcastExpiry(e[e.length - 1]); })
-      .catch(() => {});
+    getAvailableExpiries(fcastIndex).then(expiries => {
+      if (!expiries.length) return;
+      // Pick nearest expiry (smallest DTE >= 0)
+      const nearest = expiries
+        .map(e => ({ e, dte: getDTE(e) }))
+        .filter(x => x.dte >= 0)
+        .sort((a, b) => a.dte - b.dte)[0]?.e
+        ?? expiries[expiries.length - 1];
+      setFcastExpiry(nearest);
+    }).catch(() => {});
   }, [fcastIndex]);
 
   async function handleGenerateForecast() {
     const open = parseFloat(fcastOpen);
-    if (!open || open <= 0 || !fcastExpiry) return;
+    if (!open || open <= 0) return;
     setFcastLoading(true);
     setFcastError('');
     setFcastForecast(null);
     try {
-      const rows = await getMarketData(fcastIndex, fcastExpiry, 1);
-      if (!rows.length) { setFcastError('No data found for this index/expiry. Please upload option chain first.'); return; }
+      // Always use nearest expiry — re-fetch in case state is stale
+      const expiries = await getAvailableExpiries(fcastIndex);
+      if (!expiries.length) { setFcastError('No option chain data uploaded for this index yet.'); return; }
+      const nearest = expiries
+        .map(e => ({ e, dte: getDTE(e) }))
+        .filter(x => x.dte >= 0)
+        .sort((a, b) => a.dte - b.dte)[0]?.e
+        ?? expiries[expiries.length - 1];
+      setFcastExpiry(nearest);
+      const rows = await getMarketData(fcastIndex, nearest, 1);
+      if (!rows.length) { setFcastError('No chain data found. Please upload today\'s option chain first.'); return; }
       const last = rows[rows.length - 1];
       const chainData = last.strike_data ?? {};
       const spotClose = last.spot_close ?? 0;
@@ -168,7 +183,7 @@ export default function Dashboard() {
       setFcastChainData(chainData);
       setFcastSpotClose(spotClose);
       setFcastVix(vix);
-      const dte = getDTE(fcastExpiry);
+      const dte = getDTE(nearest);
       const f = computeIndexForecast(open, spotClose, chainData, vix, fcastIndex, dte);
       setFcastForecast(f);
     } catch (e: any) {
@@ -405,9 +420,11 @@ export default function Dashboard() {
           let svgContent: JSX.Element | null = null;
           if (fcastForecast) {
             const fc = fcastForecast;
-            const allPrices = [...fc.points.map(p => p.high), ...fc.points.map(p => p.low), ...fc.levels.map(l => l.price)];
-            const priceMin = Math.min(...allPrices) - 30;
-            const priceMax = Math.max(...allPrices) + 30;
+            // Y-axis zoomed to forecast path only — prevents Gamma Walls / Prev Close squishing the line
+            const pathPrices = [...fc.points.map(p => p.high), ...fc.points.map(p => p.low)];
+            const pad = Math.max(fc.dailyRange * 0.15, 30);
+            const priceMin = Math.min(...pathPrices) - pad;
+            const priceMax = Math.max(...pathPrices) + pad;
             const priceRange = priceMax - priceMin || 1;
             const yOf = (p: number) => PAD_T + ((priceMax - p) / priceRange) * chartH;
             const pts = fc.points;
@@ -465,8 +482,8 @@ export default function Dashboard() {
                 <span className="text-[10px] font-mono text-[#6b6b85] ml-1">Max Pain + Gamma Wall</span>
               </div>
 
-              {/* Controls */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+              {/* Controls — just index + open price */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                 <div>
                   <label className="block text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Index</label>
                   <select
@@ -475,19 +492,6 @@ export default function Dashboard() {
                     className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#a855f7]"
                   >
                     {FORECAST_INDICES.map(i => <option key={i.key} value={i.key}>{i.label}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Expiry</label>
-                  <select
-                    value={fcastExpiry}
-                    onChange={e => { setFcastExpiry(e.target.value); setFcastForecast(null); }}
-                    className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#a855f7]"
-                  >
-                    {fcastExpiries.length === 0
-                      ? <option value="">No data uploaded</option>
-                      : fcastExpiries.map(e => <option key={e} value={e}>{formatExpiryDisplay(e)}</option>)
-                    }
                   </select>
                 </div>
                 <div>
@@ -505,7 +509,7 @@ export default function Dashboard() {
               <div className="flex items-center gap-3 mb-4">
                 <button
                   onClick={handleGenerateForecast}
-                  disabled={fcastLoading || !fcastOpen || !fcastExpiry}
+                  disabled={fcastLoading || !fcastOpen}
                   className="px-5 py-2 rounded-lg text-sm font-black bg-[#a855f7] text-white disabled:opacity-40 hover:bg-[#9333ea] transition-all"
                 >
                   {fcastLoading ? '⏳ Loading...' : '🔮 Generate Forecast'}
@@ -514,6 +518,11 @@ export default function Dashboard() {
                   <span className="text-[10px] font-mono text-[#6b6b85]">
                     Prev close: <span className="text-[#f0c040]">{fcastSpotClose.toLocaleString('en-IN')}</span>
                     {fcastOpen && ` · Gap: ${parseFloat(fcastOpen) > fcastSpotClose ? '+' : ''}${Math.round(parseFloat(fcastOpen) - fcastSpotClose)} pts`}
+                  </span>
+                )}
+                {fcastExpiry && (
+                  <span className="text-[10px] font-mono text-[#6b6b85]">
+                    Using nearest expiry: <span className="text-[#a855f7]">{formatExpiryDisplay(fcastExpiry)}</span>
                   </span>
                 )}
               </div>

@@ -1420,13 +1420,11 @@ export default function Analysis() {
               // Build chart when forecast ready
               let svgContent: JSX.Element | null = null;
               if (forecast) {
-                const allPrices = [
-                  ...forecast.points.map(p => p.high),
-                  ...forecast.points.map(p => p.low),
-                  ...forecast.levels.map(l => l.price),
-                ];
-                const priceMin = Math.min(...allPrices) - 30;
-                const priceMax = Math.max(...allPrices) + 30;
+                // Zoom Y-axis to the forecast path — don't include Gamma Walls which squish the line
+                const pathPrices = [...forecast.points.map(p => p.high), ...forecast.points.map(p => p.low)];
+                const pad = Math.max(forecast.dailyRange * 0.15, 30);
+                const priceMin = Math.min(...pathPrices) - pad;
+                const priceMax = Math.max(...pathPrices) + pad;
                 const priceRange = priceMax - priceMin || 1;
                 const yOf = (p: number) => PAD_T + ((priceMax - p) / priceRange) * chartH;
 
