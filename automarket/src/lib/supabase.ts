@@ -1,14 +1,26 @@
 import { createClient } from '@supabase/supabase-js';
 
-const url  = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const svc  = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+// Client-side singleton (NEXT_PUBLIC_ vars baked at build time — OK for browser)
+export const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+);
 
-export const supabase = createClient(url, anon);
-
-export const supabaseAdmin = () => createClient(url, svc, {
-  auth: { autoRefreshToken: false, persistSession: false }
-});
+// Server-side admin client.
+// Uses SUPABASE_URL (non-NEXT_PUBLIC) so Next.js does NOT inline it at build
+// time — Vercel injects it at runtime, meaning no redeploy needed when changed.
+export const supabaseAdmin = () => {
+  const url = (process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim();
+  const svc = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
+  if (!url || !svc) {
+    throw new Error(
+      `Supabase env missing — SUPABASE_URL: ${url ? 'OK' : 'MISSING'}, SERVICE_ROLE_KEY: ${svc ? 'OK' : 'MISSING'}`,
+    );
+  }
+  return createClient(url, svc, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+};
 
 export type ContentStatus =
   | 'draft' | 'generating' | 'awaiting_approval'
