@@ -4,6 +4,10 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { signOut } from '../lib/auth';
 import { getStale, setCached } from '../lib/cache';
+import {
+  getAvailableExpiries, getMarketData, computeIndexForecast,
+  formatExpiryDisplay, type IndexForecast,
+} from '../lib/market';
 
 export default function Dashboard() {
   const { user, profile, refreshProfile } = useAuth();
@@ -22,6 +26,26 @@ export default function Dashboard() {
   const isAdmin = role === 'admin';
 
   const INDEX_KEYS = new Set(['NIFTY50', 'SENSEX', 'BANKNIFTY', 'FINNIFTY', 'MIDCAPNIFTY', 'NIFTYNEXT50', 'BANKEX']);
+
+  // ── FORECAST STATE ──
+  const FORECAST_INDICES = [
+    { key: 'NIFTY50', label: 'Nifty 50' },
+    { key: 'SENSEX', label: 'Sensex' },
+    { key: 'BANKNIFTY', label: 'Bank Nifty' },
+    { key: 'FINNIFTY', label: 'Fin Nifty' },
+    { key: 'MIDCAPNIFTY', label: 'Midcap Nifty' },
+    { key: 'BANKEX', label: 'Bankex' },
+  ];
+  const [fcastIndex, setFcastIndex] = useState('NIFTY50');
+  const [fcastExpiry, setFcastExpiry] = useState('');
+  const [fcastExpiries, setFcastExpiries] = useState<string[]>([]);
+  const [fcastOpen, setFcastOpen] = useState('');
+  const [fcastLoading, setFcastLoading] = useState(false);
+  const [fcastForecast, setFcastForecast] = useState<IndexForecast | null>(null);
+  const [fcastSpotClose, setFcastSpotClose] = useState(0);
+  const [fcastChainData, setFcastChainData] = useState<Record<string, any>>({});
+  const [fcastVix, setFcastVix] = useState(0);
+  const [fcastError, setFcastError] = useState('');
 
   function handleRevisit(a: any) {
     const isIndex = INDEX_KEYS.has(a.index_name);
@@ -115,6 +139,41 @@ export default function Dashboard() {
       setQueryMsg(`Error: ${err.message}`);
     } finally {
       setQuerySubmitting(false);
+    }
+  }
+
+  // Load expiries when fcastIndex changes
+  useEffect(() => {
+    setFcastExpiry('');
+    setFcastExpiries([]);
+    setFcastForecast(null);
+    getAvailableExpiries(fcastIndex)
+      .then(e => { setFcastExpiries(e); if (e.length) setFcastExpiry(e[e.length - 1]); })
+      .catch(() => {});
+  }, [fcastIndex]);
+
+  async function handleGenerateForecast() {
+    const open = parseFloat(fcastOpen);
+    if (!open || open <= 0 || !fcastExpiry) return;
+    setFcastLoading(true);
+    setFcastError('');
+    setFcastForecast(null);
+    try {
+      const rows = await getMarketData(fcastIndex, fcastExpiry, 1);
+      if (!rows.length) { setFcastError('No data found for this index/expiry. Please upload option chain first.'); return; }
+      const last = rows[rows.length - 1];
+      const chainData = last.strike_data ?? {};
+      const spotClose = last.spot_close ?? 0;
+      const vix = last.vix ?? 0;
+      setFcastChainData(chainData);
+      setFcastSpotClose(spotClose);
+      setFcastVix(vix);
+      const f = computeIndexForecast(open, spotClose, chainData, vix, fcastIndex);
+      setFcastForecast(f);
+    } catch (e: any) {
+      setFcastError(e.message ?? 'Failed to load data');
+    } finally {
+      setFcastLoading(false);
     }
   }
 
@@ -331,6 +390,217 @@ export default function Dashboard() {
             <div className="text-xs font-mono text-[#6b6b85]">Basic ₹99 / 28 days · Premium ₹299 / 28 days</div>
           </Link>
         </div>
+
+        {/* ── INDEX INTRADAY FORECAST ── */}
+        {(() => {
+          // SVG chart constants (reused from Analysis.tsx forecast tab)
+          const SVG_W = 700, SVG_H = 380;
+          const PAD_L = 80, PAD_R = 20, PAD_T = 30, PAD_B = 40;
+          const chartW = SVG_W - PAD_L - PAD_R;
+          const chartH = SVG_H - PAD_T - PAD_B;
+          const TOTAL_MIN = 375;
+          const xOf = (min: number) => PAD_L + (min / TOTAL_MIN) * chartW;
+
+          let svgContent: JSX.Element | null = null;
+          if (fcastForecast) {
+            const fc = fcastForecast;
+            const allPrices = [...fc.points.map(p => p.high), ...fc.points.map(p => p.low), ...fc.levels.map(l => l.price)];
+            const priceMin = Math.min(...allPrices) - 30;
+            const priceMax = Math.max(...allPrices) + 30;
+            const priceRange = priceMax - priceMin || 1;
+            const yOf = (p: number) => PAD_T + ((priceMax - p) / priceRange) * chartH;
+            const pts = fc.points;
+            const topPath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(p.minuteOffset).toFixed(1)},${yOf(p.high).toFixed(1)}`).join(' ');
+            const botPath = [...pts].reverse().map(p => `L${xOf(p.minuteOffset).toFixed(1)},${yOf(p.low).toFixed(1)}`).join(' ');
+            const bandPath = `${topPath} ${botPath} Z`;
+            const centralPath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(p.minuteOffset).toFixed(1)},${yOf(p.central).toFixed(1)}`).join(' ');
+            const biasCol = fc.bias === 'BEARISH' ? '#ff4d6d' : fc.bias === 'BULLISH' ? '#39d98a' : '#f0c040';
+
+            svgContent = (
+              <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} className="w-full" style={{ maxHeight: 380 }}>
+                {[0, 0.25, 0.5, 0.75, 1].map(f => {
+                  const p = priceMin + f * priceRange;
+                  const y = yOf(p);
+                  return (
+                    <g key={f}>
+                      <line x1={PAD_L} y1={y} x2={SVG_W - PAD_R} y2={y} stroke="#1e1e2e" strokeWidth="1" />
+                      <text x={PAD_L - 5} y={y + 4} textAnchor="end" fontSize="9" fill="#6b6b85">{Math.round(p).toLocaleString('en-IN')}</text>
+                    </g>
+                  );
+                })}
+                {fc.levels.map(lv => {
+                  const y = yOf(lv.price);
+                  if (y < PAD_T || y > PAD_T + chartH) return null;
+                  return (
+                    <g key={lv.label}>
+                      <line x1={PAD_L} y1={y} x2={SVG_W - PAD_R} y2={y} stroke={lv.color} strokeWidth="1.5" strokeDasharray={lv.type === 'open' ? '4,3' : '6,3'} opacity="0.8" />
+                      <text x={SVG_W - PAD_R + 2} y={y + 4} fontSize="8" fill={lv.color} opacity="0.9">{lv.price.toLocaleString('en-IN')}</text>
+                    </g>
+                  );
+                })}
+                <path d={bandPath} fill={biasCol} fillOpacity="0.08" />
+                <path d={centralPath} fill="none" stroke={biasCol} strokeWidth="2.5" strokeLinejoin="round" />
+                {pts.map(p => {
+                  const x = xOf(p.minuteOffset);
+                  const y = yOf(p.central);
+                  return (
+                    <g key={p.timeLabel}>
+                      <circle cx={x} cy={y} r="5" fill="#0a0a0f" stroke={biasCol} strokeWidth="2" />
+                      <text x={x} y={SVG_H - PAD_B + 14} textAnchor="middle" fontSize="9" fill="#6b6b85">{p.timeLabel.split(' ')[0]}</text>
+                      <text x={x} y={y - 10} textAnchor="middle" fontSize="9" fill={biasCol} fontWeight="bold">{p.central.toLocaleString('en-IN')}</text>
+                    </g>
+                  );
+                })}
+                <line x1={PAD_L} y1={PAD_T + chartH} x2={SVG_W - PAD_R} y2={PAD_T + chartH} stroke="#1e1e2e" strokeWidth="1" />
+              </svg>
+            );
+          }
+
+          return (
+            <div className="bg-[#111118] border border-[#a855f7]/30 rounded-2xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="w-1 h-5 bg-[#a855f7] rounded block" />
+                <span className="text-sm font-black text-[#a855f7]">🔮 Intraday Index Forecast</span>
+                <span className="text-[10px] font-mono text-[#6b6b85] ml-1">Max Pain + Gamma Wall</span>
+              </div>
+
+              {/* Controls */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                <div>
+                  <label className="block text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Index</label>
+                  <select
+                    value={fcastIndex}
+                    onChange={e => { setFcastIndex(e.target.value); setFcastForecast(null); setFcastOpen(''); }}
+                    className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#a855f7]"
+                  >
+                    {FORECAST_INDICES.map(i => <option key={i.key} value={i.key}>{i.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Expiry</label>
+                  <select
+                    value={fcastExpiry}
+                    onChange={e => { setFcastExpiry(e.target.value); setFcastForecast(null); }}
+                    className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#a855f7]"
+                  >
+                    {fcastExpiries.length === 0
+                      ? <option value="">No data uploaded</option>
+                      : fcastExpiries.map(e => <option key={e} value={e}>{formatExpiryDisplay(e)}</option>)
+                    }
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Today's Open Price</label>
+                  <input
+                    type="number"
+                    value={fcastOpen}
+                    onChange={e => { setFcastOpen(e.target.value); setFcastForecast(null); }}
+                    placeholder={fcastSpotClose > 0 ? `e.g. ${Math.round(fcastSpotClose)}` : 'e.g. 23500'}
+                    className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#a855f7]"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 mb-4">
+                <button
+                  onClick={handleGenerateForecast}
+                  disabled={fcastLoading || !fcastOpen || !fcastExpiry}
+                  className="px-5 py-2 rounded-lg text-sm font-black bg-[#a855f7] text-white disabled:opacity-40 hover:bg-[#9333ea] transition-all"
+                >
+                  {fcastLoading ? '⏳ Loading...' : '🔮 Generate Forecast'}
+                </button>
+                {fcastSpotClose > 0 && (
+                  <span className="text-[10px] font-mono text-[#6b6b85]">
+                    Prev close: <span className="text-[#f0c040]">{fcastSpotClose.toLocaleString('en-IN')}</span>
+                    {fcastOpen && ` · Gap: ${parseFloat(fcastOpen) > fcastSpotClose ? '+' : ''}${Math.round(parseFloat(fcastOpen) - fcastSpotClose)} pts`}
+                  </span>
+                )}
+              </div>
+
+              {fcastError && (
+                <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl px-4 py-3 text-xs font-mono text-[#ff4d6d] mb-4">
+                  {fcastError}
+                </div>
+              )}
+
+              {fcastForecast && (() => {
+                const fc = fcastForecast;
+                return (
+                  <>
+                    {/* Bias banner */}
+                    <div className={`rounded-xl px-4 py-3 mb-4 text-xs font-mono font-bold ${
+                      fc.bias === 'BEARISH' ? 'bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 text-[#ff4d6d]'
+                      : fc.bias === 'BULLISH' ? 'bg-[#39d98a]/10 border border-[#39d98a]/30 text-[#39d98a]'
+                      : 'bg-[#f0c040]/10 border border-[#f0c040]/30 text-[#f0c040]'
+                    }`}>
+                      <div className="text-sm mb-1">
+                        {fc.bias === 'BEARISH' ? '📉 BEARISH BIAS' : fc.bias === 'BULLISH' ? '📈 BULLISH BIAS' : '↔️ NEUTRAL — Range Bound'}
+                      </div>
+                      <div className="font-normal opacity-80">{fc.summary}</div>
+                    </div>
+
+                    {/* SVG Chart */}
+                    <div className="bg-[#0a0a0f] border border-[#1e1e2e] rounded-xl p-3 mb-4 overflow-x-auto">
+                      {svgContent}
+                    </div>
+
+                    {/* Legend */}
+                    <div className="flex flex-wrap gap-3 mb-4 px-1">
+                      {fc.levels.map(lv => (
+                        <div key={lv.label} className="flex items-center gap-1.5 text-[10px] font-mono">
+                          <div className="w-4 h-0.5" style={{ background: lv.color }} />
+                          <span style={{ color: lv.color }}>{lv.label}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Checkpoint table */}
+                    <div className="bg-[#0a0a0f] border border-[#1e1e2e] rounded-xl overflow-hidden mb-4">
+                      <table className="w-full text-xs font-mono">
+                        <thead>
+                          <tr className="border-b border-[#1e1e2e]">
+                            {['Time', 'Predicted Level', 'Range', 'What to Watch'].map(h => (
+                              <th key={h} className="text-left px-3 py-2.5 text-[#6b6b85] uppercase tracking-widest font-normal text-[10px]">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fc.points.map((p, i) => (
+                            <tr key={i} className="border-b border-[#1e1e2e]/50">
+                              <td className="px-3 py-2 text-[#f0c040] font-bold">{p.timeLabel}</td>
+                              <td className="px-3 py-2 text-[#e8e8f0] font-black">{p.central.toLocaleString('en-IN')}</td>
+                              <td className="px-3 py-2 text-[#6b6b85]">{p.low.toLocaleString('en-IN')} – {p.high.toLocaleString('en-IN')}</td>
+                              <td className="px-3 py-2 text-[#6b6b85]">{p.event}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Key levels */}
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { label: 'CE Gamma Wall', val: fc.ceWall, sub: 'Resistance', color: '#ff4d6d' },
+                        { label: 'Max Pain', val: fc.maxPain, sub: 'EOD gravity target', color: '#f0c040' },
+                        { label: 'PE Gamma Wall', val: fc.peWall, sub: 'Support', color: '#39d98a' },
+                      ].map(({ label, val, sub, color }) => (
+                        <div key={label} className="bg-[#0a0a0f] border border-[#1e1e2e] rounded-xl p-3 text-center">
+                          <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">{label}</div>
+                          <div className="text-lg font-black font-mono" style={{ color }}>{val.toLocaleString('en-IN')}</div>
+                          <div className="text-[9px] font-mono text-[#6b6b85] mt-0.5">{sub}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-3 text-[10px] font-mono text-[#6b6b85]">
+                      ⚠ Forecast based on Max Pain gravity + Gamma Wall theory. Not financial advice.
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          );
+        })()}
 
         {/* ADVANCED FEATURES */}
         <div>
