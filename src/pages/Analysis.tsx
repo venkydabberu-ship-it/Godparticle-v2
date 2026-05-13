@@ -1364,7 +1364,7 @@ export default function Analysis() {
               function generate() {
                 const open = parseFloat(forecastOpen);
                 if (!open || open <= 0) return;
-                const f = computeIndexForecast(open, spotClose, chainData, vix, indexName);
+                const f = computeIndexForecast(open, spotClose, chainData, vix, indexName, result.dte ?? 1);
                 setForecast(f);
               }
 
@@ -1625,7 +1625,17 @@ export default function Analysis() {
                           {forecast.bias === 'BEARISH' ? '📉 BEARISH BIAS' : forecast.bias === 'BULLISH' ? '📈 BULLISH BIAS' : '↔️ NEUTRAL — Range Bound'}
                         </div>
                         <div className="font-normal opacity-80">{forecast.summary}</div>
+                        <div className="mt-1 text-[10px] opacity-70">
+                          Max Pain gravity: <strong>{Math.round(forecast.mpGravity * 100)}%</strong> · DTE: {forecast.dte}d · EOD target: {Math.round(parseFloat(forecastOpen) + forecast.mpGravity * (forecast.maxPain - parseFloat(forecastOpen))).toLocaleString('en-IN')}
+                        </div>
                       </div>
+
+                      {/* IV Crush warning */}
+                      {forecast.ivCrushWarning && (
+                        <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl px-4 py-3 mb-4 text-xs font-mono text-[#f0c040]">
+                          {forecast.ivCrushWarning}
+                        </div>
+                      )}
 
                       {/* Dual charts: Index + Option Premium side by side on wide, stacked on mobile */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
