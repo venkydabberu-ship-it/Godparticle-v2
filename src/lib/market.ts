@@ -882,6 +882,9 @@ export interface IndexForecast {
   dailyRange: number;
   gapPts: number;
   summary: string;
+  ivCrushWarning: string | null;
+  mpGravity: number;
+  dte: number;
 }
 
 export function computeIndexForecast(
@@ -889,9 +892,9 @@ export function computeIndexForecast(
   spotClose: number,
   strikeData: Record<string, any>,
   vix: number,
-  indexName: string
+  indexName: string,
+  dte: number = 1,
 ): IndexForecast {
-  const gap = indexName ?? 50;
   const strikeGap = getGapStep(indexName);
 
   // ── 1. Max Pain: strike that minimises combined option pain ──
@@ -936,56 +939,81 @@ export function computeIndexForecast(
     : mpDist < -strikeGap ? 'BULLISH' // opened below max pain → gravity pulls up
     : 'NEUTRAL';
 
-  // ── 5. Intraday path: 6 checkpoints ──
-  // Theory: market tests a wall first, then max pain gravity takes over.
-  // Uncertainty widens through midday, narrows near close (gamma pin effect).
+  // ── 5. DTE-weighted Max Pain gravity ──
+  // On expiry day Max Pain is a strong attractor (MMs actively pin).
+  // Days out: gravity decays exponentially — market just range-trades.
+  // Calibrated from back-test: DTE=4 produced ~17% of Max Pain distance actually realised.
+  const mpGravity = Math.max(0.10, Math.min(0.85, 0.85 * Math.exp(-0.45 * Math.max(dte, 0))));
 
-  const mp = maxPain; // shorthand
+  // EOD target: open + gravity-weighted move toward Max Pain
+  const mp = maxPain;
+  const eodTarget = Math.round(openPrice + mpGravity * (mp - openPrice));
 
+  // ── 6. Intraday path: 6 checkpoints ──
   function pt(timeLabel: string, minuteOffset: number, central: number, halfRange: number, event: string): ForecastPoint {
     return { timeLabel, minuteOffset, central: Math.round(central), low: Math.round(central - halfRange), high: Math.round(central + halfRange), event };
   }
 
+  // 9:45 AM: wall test (small initial counter-move before the main direction)
   const t1central = bias === 'BEARISH'
-    ? Math.min(openPrice + dailyRange * 0.30, ceWall)    // test resistance
+    ? Math.min(openPrice + dailyRange * 0.25, ceWall)
     : bias === 'BULLISH'
-    ? Math.max(openPrice - dailyRange * 0.30, peWall)    // test support
-    : openPrice + (Math.random() > 0.5 ? 1 : -1) * dailyRange * 0.15;
+    ? Math.max(openPrice - dailyRange * 0.25, peWall)
+    : openPrice + dailyRange * 0.10 * (mpDist > 0 ? 1 : -1);
 
-  const t2central = openPrice + (mp - openPrice) * 0.35; // 35% of the way to max pain
-  const t3central = openPrice + (mp - openPrice) * 0.55;
-  const t4central = openPrice + (mp - openPrice) * 0.75;
-  const t5central = mp; // EOD pin
+  // Checkpoints 2-5: interpolate from open toward eodTarget (gravity-scaled)
+  const t2central = openPrice + (eodTarget - openPrice) * 0.35;
+  const t3central = openPrice + (eodTarget - openPrice) * 0.55;
+  const t4central = openPrice + (eodTarget - openPrice) * 0.75;
+  const t5central = eodTarget;
+
+  // Uncertainty band narrows as DTE decreases (gamma pin tightens near expiry)
+  const bandScale = dte <= 0 ? 0.5 : dte <= 1 ? 0.7 : 1.0;
 
   const points: ForecastPoint[] = [
-    pt('9:15 AM',   0,   openPrice,        15,  'Market open'),
-    pt('9:45 AM',  30,   t1central,        35,  bias === 'BEARISH' ? 'Tests CE Gamma Wall resistance' : bias === 'BULLISH' ? 'Tests PE Gamma Wall support' : 'Opening range'),
-    pt('11:00 AM', 105,  t2central,        45,  'Max Pain pull begins'),
-    pt('12:30 PM', 195,  t3central,        40,  'Midday consolidation'),
-    pt('2:00 PM',  285,  t4central,        45,  'Gamma window — acceleration'),
-    pt('3:30 PM',  375,  t5central,        20,  'Expiry pin zone'),
+    pt('9:15 AM',   0,   openPrice,               Math.round(15 * bandScale),  'Market open'),
+    pt('9:45 AM',  30,   t1central,               Math.round(35 * bandScale),  bias === 'BEARISH' ? 'Tests CE Gamma Wall resistance' : bias === 'BULLISH' ? 'Tests PE Gamma Wall support' : 'Opening range'),
+    pt('11:00 AM', 105,  t2central,               Math.round(40 * bandScale),  'Max Pain pull begins'),
+    pt('12:30 PM', 195,  t3central,               Math.round(35 * bandScale),  'Midday consolidation'),
+    pt('2:00 PM',  285,  t4central,               Math.round(30 * bandScale),  dte <= 1 ? 'Gamma squeeze — acceleration' : 'Gamma window'),
+    pt('3:30 PM',  375,  t5central,               Math.round(15 * bandScale),  dte <= 1 ? `Expiry pin zone near ${mp.toLocaleString('en-IN')}` : 'End-of-day gravity target'),
   ];
 
-  // ── 6. Levels for chart ──
+  // ── 7. Levels for chart ──
   const levels: ForecastLevel[] = [
-    { price: ceWall,    label: `CE Gamma Wall ${ceWall.toLocaleString('en-IN')}`,    color: '#ff4d6d', type: 'resistance' },
-    { price: mp,        label: `Max Pain ${mp.toLocaleString('en-IN')}`,              color: '#f0c040', type: 'target'     },
-    { price: peWall,    label: `PE Gamma Wall ${peWall.toLocaleString('en-IN')}`,    color: '#39d98a', type: 'support'    },
-    { price: openPrice, label: `Open ${openPrice.toLocaleString('en-IN')}`,          color: '#a855f7', type: 'open'       },
-    { price: spotClose, label: `Prev Close ${spotClose.toLocaleString('en-IN')}`,   color: '#6b6b85', type: 'close'      },
-  ].filter((l, i, arr) => {
-    // deduplicate prices that are too close together
-    return !arr.slice(0, i).some(prev => Math.abs(prev.price - l.price) < strikeGap * 0.5);
-  }).sort((a, b) => b.price - a.price);
+    { price: ceWall,    label: `CE Gamma Wall ${ceWall.toLocaleString('en-IN')}`,   color: '#ff4d6d', type: 'resistance' },
+    { price: mp,        label: `Max Pain ${mp.toLocaleString('en-IN')}`,             color: '#f0c040', type: 'target'     },
+    { price: peWall,    label: `PE Gamma Wall ${peWall.toLocaleString('en-IN')}`,   color: '#39d98a', type: 'support'    },
+    { price: openPrice, label: `Open ${openPrice.toLocaleString('en-IN')}`,         color: '#a855f7', type: 'open'       },
+    { price: spotClose, label: `Prev Close ${spotClose.toLocaleString('en-IN')}`,  color: '#6b6b85', type: 'close'      },
+  ].filter((l, i, arr) =>
+    !arr.slice(0, i).some(prev => Math.abs(prev.price - l.price) < strikeGap * 0.5)
+  ).sort((a, b) => b.price - a.price);
 
-  // ── 7. Summary text ──
+  // ── 8. IV Crush warning ──
+  const ivCrushWarning: string | null = (() => {
+    if (dte <= 0) return null; // expiry day — IV is near zero anyway, not a crush risk
+    const isLowVIX = effectiveVIX < 15;
+    const isFlatGap = Math.abs(gapPts) < strikeGap;
+    const isFarFromExpiry = dte >= 3;
+    if (isLowVIX && isFarFromExpiry)
+      return `⚠ Low VIX (${effectiveVIX}%) with ${dte} DTE — option premiums may compress even if direction is correct. Enter only after a confirmed 9:45 candle move. Avoid buying at open.`;
+    if (isFlatGap && isFarFromExpiry)
+      return `⚠ Flat open with ${dte} DTE — range-bound day likely. Both CE and PE will bleed time value. Wait for breakout above/below Gamma Walls before entering.`;
+    if (isFlatGap && dte >= 1)
+      return `⚠ Flat open — wait for the 9:45 AM candle to confirm direction before buying.`;
+    return null;
+  })();
+
+  // ── 9. Summary text ──
   const biasWord = bias === 'BEARISH' ? 'bearish' : bias === 'BULLISH' ? 'bullish' : 'neutral';
   const mpGapStr = Math.abs(Math.round(mpDist));
+  const gravityPct = Math.round(mpGravity * 100);
   const summary = bias === 'NEUTRAL'
     ? `Market opened near Max Pain (${mp.toLocaleString('en-IN')}). Expect range-bound action between PE wall (${peWall.toLocaleString('en-IN')}) and CE wall (${ceWall.toLocaleString('en-IN')}). Watch for breakout after 1 PM.`
-    : `Market has a ${biasWord} bias — opened ${mpGapStr} pts ${mpDist > 0 ? 'above' : 'below'} Max Pain (${mp.toLocaleString('en-IN')}). Expect ${bias === 'BEARISH' ? `initial test of CE wall (${ceWall.toLocaleString('en-IN')}) then gradual pull down to ${mp.toLocaleString('en-IN')} by close` : `initial test of PE wall (${peWall.toLocaleString('en-IN')}) then gradual recovery to ${mp.toLocaleString('en-IN')} by close`}.`;
+    : `${biasWord.charAt(0).toUpperCase() + biasWord.slice(1)} bias — opened ${mpGapStr} pts ${mpDist > 0 ? 'above' : 'below'} Max Pain (${mp.toLocaleString('en-IN')}). With ${dte} DTE, Max Pain gravity is ${gravityPct}% — EOD target ~${eodTarget.toLocaleString('en-IN')}. ${dte >= 3 ? 'Intraday moves may not sustain — trade with tight SL.' : 'Expiry pressure strengthening.'}`;
 
-  return { points, levels, bias, maxPain: mp, ceWall, peWall, dailyRange, gapPts, summary };
+  return { points, levels, bias, maxPain: mp, ceWall, peWall, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
 }
 
 

@@ -6,7 +6,7 @@ import { signOut } from '../lib/auth';
 import { getStale, setCached } from '../lib/cache';
 import {
   getAvailableExpiries, getMarketData, computeIndexForecast,
-  formatExpiryDisplay, type IndexForecast,
+  formatExpiryDisplay, getDTE, type IndexForecast,
 } from '../lib/market';
 
 export default function Dashboard() {
@@ -168,7 +168,8 @@ export default function Dashboard() {
       setFcastChainData(chainData);
       setFcastSpotClose(spotClose);
       setFcastVix(vix);
-      const f = computeIndexForecast(open, spotClose, chainData, vix, fcastIndex);
+      const dte = getDTE(fcastExpiry);
+      const f = computeIndexForecast(open, spotClose, chainData, vix, fcastIndex, dte);
       setFcastForecast(f);
     } catch (e: any) {
       setFcastError(e.message ?? 'Failed to load data');
@@ -537,7 +538,17 @@ export default function Dashboard() {
                         {fc.bias === 'BEARISH' ? '📉 BEARISH BIAS' : fc.bias === 'BULLISH' ? '📈 BULLISH BIAS' : '↔️ NEUTRAL — Range Bound'}
                       </div>
                       <div className="font-normal opacity-80">{fc.summary}</div>
+                      <div className="mt-1 text-[10px] opacity-70">
+                        Max Pain gravity: <strong>{Math.round(fc.mpGravity * 100)}%</strong> · DTE: {fc.dte}d
+                      </div>
                     </div>
+
+                    {/* IV Crush warning */}
+                    {fc.ivCrushWarning && (
+                      <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl px-4 py-3 mb-4 text-xs font-mono text-[#f0c040]">
+                        {fc.ivCrushWarning}
+                      </div>
+                    )}
 
                     {/* SVG Chart */}
                     <div className="bg-[#0a0a0f] border border-[#1e1e2e] rounded-xl p-3 mb-4 overflow-x-auto">
