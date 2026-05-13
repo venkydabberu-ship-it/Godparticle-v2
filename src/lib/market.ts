@@ -18,7 +18,7 @@ function normPdf(x: number): number {
   return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
 }
 
-function bsPrice(S: number, K: number, T: number, sigma: number, type: 'CE' | 'PE'): number {
+export function bsPrice(S: number, K: number, T: number, sigma: number, type: 'CE' | 'PE'): number {
   const r = 0.065;
   if (T <= 0 || sigma <= 0) return type === 'CE' ? Math.max(0, S - K) : Math.max(0, K - S);
   const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));

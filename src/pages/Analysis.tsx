@@ -8,7 +8,7 @@ import {
   saveAnalysis, generateScenarioMatrix, normalizeIndexName,
   normalizeExpiry, formatExpiryDisplay, getDTE,
   getGapStep, getMaxGap, INDEX_DISPLAY, useCredits,
-  computeIndexForecast, type IndexForecast,
+  computeIndexForecast, type IndexForecast, bsPrice,
 } from '../lib/market';
 
 const INDICES = [
@@ -1383,6 +1383,40 @@ export default function Analysis() {
               const times = [0, 30, 105, 195, 285, 375];
               const timeLabels = ['9:15', '9:45', '11:00', '12:30', '2:00', '3:30'];
 
+              // ── Option premium path using BS model ──
+              // For each checkpoint: DTE decreases as the day progresses.
+              // At open (0 min) DTE is full; at close (375 min) DTE = DTE - 1.
+              const optionIV = (() => {
+                const rawIV = result.latestIV ?? 0;
+                if (rawIV > 0) return rawIV / 100;
+                // back-calc from last close if no chain IV
+                const lc = result.lc ?? 0;
+                const spotClose = result.spotClose ?? 0;
+                const strike = result.strike ?? 0;
+                const dte = result.dte ?? 1;
+                if (lc > 0 && spotClose > 0 && strike > 0) {
+                  let lo = 0.01, hi = 5.0;
+                  for (let i = 0; i < 60; i++) {
+                    const mid = (lo + hi) / 2;
+                    const p = bsPrice(spotClose, strike, dte / 365, mid, result.optType === 'CE' ? 'CE' : 'PE');
+                    if (Math.abs(p - lc) < 0.05) return mid;
+                    if (p < lc) lo = mid; else hi = mid;
+                  }
+                  return (lo + hi) / 2;
+                }
+                return 0.15;
+              })();
+
+              // Find best matching scenario for targets (closest gap to actual forecastOpen gap)
+              const actualGap = forecastOpen ? Math.round(parseFloat(forecastOpen) - (result.spotClose ?? 0)) : 0;
+              const bestSc = scenarios.length > 0
+                ? scenarios.reduce((best: any, sc: any) =>
+                    Math.abs(sc.gap - actualGap) < Math.abs(best.gap - actualGap) ? sc : best
+                  , scenarios[0])
+                : null;
+
+              let optSvgContent: JSX.Element | null = null;
+
               // Build chart when forecast ready
               let svgContent: JSX.Element | null = null;
               if (forecast) {
@@ -1457,6 +1491,94 @@ export default function Analysis() {
                     <line x1={PAD_L} y1={PAD_T + chartH} x2={SVG_W - PAD_R} y2={PAD_T + chartH} stroke="#1e1e2e" strokeWidth="1" />
                   </svg>
                 );
+
+                // ── Option premium chart ──
+                const strike = result.strike ?? 0;
+                const dte = result.dte ?? 1;
+                const isCE = result.optType === 'CE';
+                const optCol = isCE ? '#39d98a' : '#ff4d6d';
+                const TOTAL_MIN = 375;
+
+                // Compute option price at each checkpoint
+                interface OptPt { minuteOffset: number; timeLabel: string; central: number; high: number; low: number; }
+                const optPts: OptPt[] = forecast.points.map(p => {
+                  const dteRemaining = Math.max(dte - p.minuteOffset / TOTAL_MIN, 0.001);
+                  const T = dteRemaining / 365;
+                  const optC = bsPrice(p.central, strike, T, optionIV, isCE ? 'CE' : 'PE');
+                  const optH = bsPrice(p.high,    strike, T, optionIV, isCE ? 'CE' : 'PE');
+                  const optL = bsPrice(p.low,     strike, T, optionIV, isCE ? 'CE' : 'PE');
+                  return {
+                    minuteOffset: p.minuteOffset,
+                    timeLabel: p.timeLabel,
+                    central: Math.round(optC),
+                    high: Math.round(Math.max(optH, optL)),
+                    low: Math.round(Math.min(optH, optL)),
+                  };
+                });
+
+                // Y scale for option chart
+                const optLevels: number[] = [
+                  ...optPts.map(p => p.high), ...optPts.map(p => p.low),
+                ];
+                if (bestSc) {
+                  optLevels.push(bestSc.entryLow, bestSc.sl, bestSc.target1, bestSc.target2);
+                }
+                const optMin = Math.min(...optLevels) - 10;
+                const optMax = Math.max(...optLevels) + 10;
+                const optRange = optMax - optMin || 1;
+                const yOpt = (p: number) => PAD_T + ((optMax - p) / optRange) * chartH;
+                const xOpt = (min: number) => PAD_L + (min / TOTAL_MIN) * chartW;
+
+                const optTopPath = optPts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOpt(p.minuteOffset).toFixed(1)},${yOpt(p.high).toFixed(1)}`).join(' ');
+                const optBotPath = [...optPts].reverse().map(p => `L${xOpt(p.minuteOffset).toFixed(1)},${yOpt(p.low).toFixed(1)}`).join(' ');
+                const optBandPath = `${optTopPath} ${optBotPath} Z`;
+                const optCentralPath = optPts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOpt(p.minuteOffset).toFixed(1)},${yOpt(p.central).toFixed(1)}`).join(' ');
+
+                const targetLines = bestSc ? [
+                  { price: bestSc.target2, label: 'T2', color: '#f0c040', dash: '6,3' },
+                  { price: bestSc.target1, label: 'T1', color: '#39d98a', dash: '6,3' },
+                  { price: bestSc.entryLow, label: 'Entry', color: '#4d9fff', dash: '4,3' },
+                  { price: bestSc.sl, label: 'SL', color: '#ff4d6d', dash: '4,3' },
+                ] : [];
+
+                optSvgContent = (
+                  <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} className="w-full" style={{ maxHeight: 380 }}>
+                    {[0, 0.25, 0.5, 0.75, 1].map(f => {
+                      const p = optMin + f * optRange;
+                      const y = yOpt(p);
+                      return (
+                        <g key={f}>
+                          <line x1={PAD_L} y1={y} x2={SVG_W - PAD_R} y2={y} stroke="#1e1e2e" strokeWidth="1" />
+                          <text x={PAD_L - 5} y={y + 4} textAnchor="end" fontSize="9" fill="#6b6b85">{Math.round(p)}</text>
+                        </g>
+                      );
+                    })}
+                    {targetLines.map(tl => {
+                      const y = yOpt(tl.price);
+                      if (y < PAD_T || y > PAD_T + chartH) return null;
+                      return (
+                        <g key={tl.label}>
+                          <line x1={PAD_L} y1={y} x2={SVG_W - PAD_R} y2={y} stroke={tl.color} strokeWidth="1.5" strokeDasharray={tl.dash} opacity="0.9" />
+                          <text x={SVG_W - PAD_R + 2} y={y + 4} fontSize="8" fill={tl.color} opacity="0.9">{tl.label} {tl.price}</text>
+                        </g>
+                      );
+                    })}
+                    <path d={optBandPath} fill={optCol} fillOpacity="0.08" />
+                    <path d={optCentralPath} fill="none" stroke={optCol} strokeWidth="2.5" strokeLinejoin="round" />
+                    {optPts.map(p => {
+                      const x = xOpt(p.minuteOffset);
+                      const y = yOpt(p.central);
+                      return (
+                        <g key={p.timeLabel}>
+                          <circle cx={x} cy={y} r="5" fill="#0a0a0f" stroke={optCol} strokeWidth="2" />
+                          <text x={x} y={SVG_H - PAD_B + 14} textAnchor="middle" fontSize="9" fill="#6b6b85">{p.timeLabel.split(' ')[0]}</text>
+                          <text x={x} y={y - 10} textAnchor="middle" fontSize="9" fill={optCol} fontWeight="bold">{p.central}</text>
+                        </g>
+                      );
+                    })}
+                    <line x1={PAD_L} y1={PAD_T + chartH} x2={SVG_W - PAD_R} y2={PAD_T + chartH} stroke="#1e1e2e" strokeWidth="1" />
+                  </svg>
+                );
               }
 
               return (
@@ -1505,9 +1627,35 @@ export default function Analysis() {
                         <div className="font-normal opacity-80">{forecast.summary}</div>
                       </div>
 
-                      {/* SVG Chart */}
-                      <div className="bg-[#0a0a0f] border border-[#1e1e2e] rounded-xl p-3 mb-4 overflow-x-auto">
-                        {svgContent}
+                      {/* Dual charts: Index + Option Premium side by side on wide, stacked on mobile */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                        <div className="bg-[#0a0a0f] border border-[#1e1e2e] rounded-xl p-3 overflow-x-auto">
+                          <div className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-2">
+                            📈 {INDEX_DISPLAY[indexName] ?? indexName} Index Path
+                          </div>
+                          {svgContent}
+                        </div>
+                        <div className="bg-[#0a0a0f] border border-[#1e1e2e] rounded-xl p-3 overflow-x-auto">
+                          <div className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-2">
+                            🎯 {result.strike} {result.optType} Premium Path · IV {Math.round(optionIV * 100)}%
+                          </div>
+                          {optSvgContent}
+                          {bestSc && (
+                            <div className="flex flex-wrap gap-3 mt-2 px-1">
+                              {[
+                                { label: `T2 ${bestSc.target2}`, color: '#f0c040' },
+                                { label: `T1 ${bestSc.target1}`, color: '#39d98a' },
+                                { label: `Entry ${bestSc.entryLow}`, color: '#4d9fff' },
+                                { label: `SL ${bestSc.sl}`, color: '#ff4d6d' },
+                              ].map(l => (
+                                <div key={l.label} className="flex items-center gap-1 text-[10px] font-mono">
+                                  <div className="w-3 h-0.5" style={{ background: l.color }} />
+                                  <span style={{ color: l.color }}>{l.label}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {/* Legend */}
