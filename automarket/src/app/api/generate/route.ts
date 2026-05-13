@@ -8,16 +8,32 @@ export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as {
-      contentId: string;
       idea: string;
       platform: Platform;
       contentType: ContentType;
       tone: Tone;
+      imageUrls?: string[];
     };
 
     const db = supabaseAdmin();
 
-    await db.from('am_content').update({ status: 'generating' }).eq('id', body.contentId);
+    // Create DB record server-side (avoids needing NEXT_PUBLIC_SUPABASE_URL on client)
+    const { data: record, error: dbErr } = await db
+      .from('am_content')
+      .insert({
+        idea_text: body.idea,
+        image_urls: body.imageUrls ?? [],
+        platform: body.platform,
+        content_type: body.contentType,
+        tone: body.tone,
+        status: 'generating',
+      })
+      .select()
+      .single();
+
+    if (dbErr || !record) {
+      return NextResponse.json({ error: `DB insert failed: ${dbErr?.message}` }, { status: 500 });
+    }
 
     const result = await generateContent({
       idea: body.idea,
@@ -35,9 +51,9 @@ export async function POST(req: NextRequest) {
       ai_generated_at: new Date().toISOString(),
       status: 'awaiting_approval',
       updated_at: new Date().toISOString(),
-    }).eq('id', body.contentId);
+    }).eq('id', record.id);
 
-    return NextResponse.json({ success: true, content: result });
+    return NextResponse.json({ success: true, contentId: record.id, content: result });
   } catch (e) {
     console.error('Generate error:', e);
     return NextResponse.json({ error: String(e) }, { status: 500 });

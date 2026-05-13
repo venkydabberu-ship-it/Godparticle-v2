@@ -1,7 +1,6 @@
 'use client';
 import { useState, useRef, useCallback } from 'react';
 import AppShell from '@/components/AppShell';
-import { supabase } from '@/lib/supabase';
 import type { Platform, ContentType, Tone } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 
@@ -47,7 +46,6 @@ export default function Studio() {
   const [tone, setTone]           = useState<Tone>('viral');
   const [images, setImages]       = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
-  const [uploading, setUploading] = useState(false);
   const [generated, setGenerated] = useState<GeneratedContent | null>(null);
   const [contentId, setContentId] = useState<string | null>(null);
   const [editMode, setEditMode]   = useState<keyof GeneratedContent | null>(null);
@@ -74,48 +72,14 @@ export default function Studio() {
     setStep('generating');
 
     try {
-      // 1. Upload images to Supabase Storage
-      let imageUrls: string[] = [];
-      if (images.length > 0) {
-        setUploading(true);
-        imageUrls = await Promise.all(images.map(async (file) => {
-          const path = `content/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
-          const { error: upErr } = await supabase.storage.from('automarket').upload(path, file, { upsert: true });
-          if (upErr) throw new Error(`Storage: ${upErr.message}`);
-          const { data } = supabase.storage.from('automarket').getPublicUrl(path);
-          return data.publicUrl;
-        }));
-        setUploading(false);
-      }
-
-      // 2. Create DB record
-      const { data: record, error: dbErr } = await supabase
-        .from('am_content')
-        .insert({
-          idea_text: idea.trim(),
-          image_urls: imageUrls,
-          platform, content_type: contentType, tone,
-          status: 'draft',
-        })
-        .select()
-        .single();
-
-      if (dbErr || !record) {
-        setError(`DB error: ${dbErr?.message ?? dbErr?.code ?? 'unknown — check SUPABASE env vars in Vercel'}`);
-        setStep('input');
-        return;
-      }
-
-      setContentId(record.id as string);
-
-      // 3. Call Claude API
+      // Call API — server handles DB insert + Claude generation
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contentId: record.id, idea: idea.trim(), platform, contentType, tone }),
+        body: JSON.stringify({ idea: idea.trim(), platform, contentType, tone, imageUrls: [] }),
       });
 
-      let json: { content?: GeneratedContent; error?: string } = {};
+      let json: { contentId?: string; content?: GeneratedContent; error?: string } = {};
       try { json = await res.json(); } catch { /* empty body on timeout */ }
 
       if (!res.ok || json.error) {
@@ -124,6 +88,7 @@ export default function Studio() {
         return;
       }
 
+      setContentId(json.contentId ?? null);
       setGenerated(json.content!);
       setStep('review');
     } catch (err) {
@@ -135,11 +100,18 @@ export default function Studio() {
   async function handleApprove() {
     if (!contentId) return;
     setSaving(true);
-    await supabase.from('am_content').update({
-      status: 'approved',
-      final_caption: generated?.caption,
-      final_hashtags: generated?.hashtags,
-    }).eq('id', contentId);
+    await fetch('/api/generate', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contentId,
+        section: 'caption',
+        currentContent: generated,
+        idea,
+        tone,
+        approve: true,
+      }),
+    });
     setSaving(false);
     router.push('/queue');
   }
@@ -158,7 +130,7 @@ export default function Studio() {
       if (json.value !== undefined) {
         setGenerated(prev => prev ? { ...prev, [section]: json.value } : prev);
       }
-    } catch { /* ignore regen errors silently */ }
+    } catch { /* ignore */ }
     setRegenLoading(null);
   }
 
@@ -186,9 +158,7 @@ export default function Studio() {
       <div className="p-8 max-w-4xl">
         <div className="mb-6">
           <h1 className="text-2xl font-black text-[#f1f5f9]">🎬 Content Studio</h1>
-          <p className="text-[#64748b] text-sm mt-1">
-            Drop a photo + your idea → AI builds a full viral content package
-          </p>
+          <p className="text-[#64748b] text-sm mt-1">Drop a photo + your idea → AI builds a full viral content package</p>
         </div>
 
         <div className="flex items-center gap-3 mb-8">
@@ -196,8 +166,7 @@ export default function Studio() {
             <div key={s} className="flex items-center gap-2">
               <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black
                 ${step === s ? 'bg-gradient-to-br from-[#7c3aed] to-[#f059da] text-white'
-                  : i < ['input','generating','review'].indexOf(step)
-                    ? 'bg-[#10b981] text-white' : 'bg-[#1e1e2e] text-[#64748b]'}`}>
+                  : i < ['input','generating','review'].indexOf(step) ? 'bg-[#10b981] text-white' : 'bg-[#1e1e2e] text-[#64748b]'}`}>
                 {i < ['input','generating','review'].indexOf(step) ? '✓' : i + 1}
               </div>
               <span className={`text-xs font-medium capitalize ${step === s ? 'text-[#a78bfa]' : 'text-[#64748b]'}`}>
@@ -209,40 +178,28 @@ export default function Studio() {
         </div>
 
         {error && (
-          <div className="mb-4 p-3 rounded-xl bg-[#ef444422] border border-[#ef444444] text-sm text-[#f87171]">
-            {error}
-          </div>
+          <div className="mb-4 p-3 rounded-xl bg-[#ef444422] border border-[#ef444444] text-sm text-[#f87171]">{error}</div>
         )}
 
         {step === 'input' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="flex flex-col gap-4">
-              <div
-                className="border-2 border-dashed border-[#1e1e2e] rounded-2xl p-6 text-center cursor-pointer hover:border-[#7c3aed66] hover:bg-[#7c3aed08] transition-all"
-                onDragOver={e => e.preventDefault()}
-                onDrop={onDrop}
-                onClick={() => fileRef.current?.click()}>
+              <div className="border-2 border-dashed border-[#1e1e2e] rounded-2xl p-6 text-center cursor-pointer hover:border-[#7c3aed66] hover:bg-[#7c3aed08] transition-all"
+                onDragOver={e => e.preventDefault()} onDrop={onDrop} onClick={() => fileRef.current?.click()}>
                 <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
                   onChange={e => addImages(Array.from(e.target.files ?? []))} />
                 {imagePreviews.length === 0 ? (
-                  <>
-                    <div className="text-4xl mb-2">📸</div>
-                    <div className="text-sm font-medium text-[#f1f5f9]">Drop your photos here</div>
-                    <div className="text-xs text-[#64748b] mt-1">or click to browse · max 10 images</div>
-                  </>
+                  <><div className="text-4xl mb-2">📸</div><div className="text-sm font-medium text-[#f1f5f9]">Drop your photos here</div><div className="text-xs text-[#64748b] mt-1">or click to browse · max 10 images</div></>
                 ) : (
                   <div className="grid grid-cols-3 gap-2">
                     {imagePreviews.map((src, i) => (
                       <div key={i} className="relative aspect-square rounded-lg overflow-hidden">
                         <img src={src} alt="" className="w-full h-full object-cover" />
-                        <button
-                          onClick={e => { e.stopPropagation(); const next = images.filter((_,j)=>j!==i); setImages(next); setImagePreviews(next.map(f=>URL.createObjectURL(f))); }}
+                        <button onClick={e => { e.stopPropagation(); const next = images.filter((_,j)=>j!==i); setImages(next); setImagePreviews(next.map(f=>URL.createObjectURL(f))); }}
                           className="absolute top-1 right-1 w-5 h-5 bg-black/70 rounded-full text-white text-xs flex items-center justify-center">✕</button>
                       </div>
                     ))}
-                    {imagePreviews.length < 10 && (
-                      <div className="aspect-square rounded-lg border-2 border-dashed border-[#1e1e2e] flex items-center justify-center text-[#64748b] text-xl">+</div>
-                    )}
+                    {imagePreviews.length < 10 && <div className="aspect-square rounded-lg border-2 border-dashed border-[#1e1e2e] flex items-center justify-center text-[#64748b] text-xl">+</div>}
                   </div>
                 )}
               </div>
@@ -250,8 +207,7 @@ export default function Studio() {
                 <label className="text-xs font-bold text-[#94a3b8] uppercase tracking-wider mb-1.5 block">Your Idea</label>
                 <textarea value={idea} onChange={e => setIdea(e.target.value)}
                   placeholder="e.g. Show how the God Particle predicts where market reverses every expiry..."
-                  rows={4}
-                  className="w-full bg-[#111118] border border-[#1e1e2e] rounded-xl p-3 text-sm text-[#f1f5f9] placeholder-[#3f3f5a] resize-none focus:outline-none focus:border-[#7c3aed66]" />
+                  rows={4} className="w-full bg-[#111118] border border-[#1e1e2e] rounded-xl p-3 text-sm text-[#f1f5f9] placeholder-[#3f3f5a] resize-none focus:outline-none focus:border-[#7c3aed66]" />
               </div>
             </div>
             <div className="flex flex-col gap-5">
@@ -317,27 +273,19 @@ export default function Studio() {
             <ContentBlock icon="📝" title="Caption" section="caption" value={generated.caption} editMode={editMode} editVal={editVal} regenLoading={regenLoading} onEdit={() => startEdit('caption')} onRegen={() => handleRegenSection('caption')} onEditVal={setEditVal} onSaveEdit={saveEdit} onCancelEdit={() => setEditMode(null)} multiline />
             <div className="card">
               <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-base">#️⃣</span>
-                  <span className="font-bold text-sm text-[#f1f5f9]">Hashtags</span>
-                  <span className="text-xs text-[#64748b]">({generated.hashtags.length}/30)</span>
-                </div>
+                <div className="flex items-center gap-2"><span>#️⃣</span><span className="font-bold text-sm text-[#f1f5f9]">Hashtags</span><span className="text-xs text-[#64748b]">({generated.hashtags.length}/30)</span></div>
                 <div className="flex gap-2">
                   <ActionBtn icon="✏️" label="Edit" onClick={() => startEdit('hashtags')} />
                   <ActionBtn icon="🔄" label="Redo" onClick={() => handleRegenSection('hashtags')} loading={regenLoading === 'hashtags'} />
                 </div>
               </div>
-              {editMode === 'hashtags' ? (
-                <EditInline value={editVal} onChange={setEditVal} onSave={saveEdit} onCancel={() => setEditMode(null)} />
-              ) : (
+              {editMode === 'hashtags' ? <EditInline value={editVal} onChange={setEditVal} onSave={saveEdit} onCancel={() => setEditMode(null)} /> : (
                 <div className="flex flex-wrap gap-1.5">
-                  {generated.hashtags.map((h, i) => (
-                    <span key={i} className="text-xs px-2 py-1 rounded-full bg-[#7c3aed22] text-[#a78bfa] font-mono">#{h}</span>
-                  ))}
+                  {generated.hashtags.map((h, i) => <span key={i} className="text-xs px-2 py-1 rounded-full bg-[#7c3aed22] text-[#a78bfa] font-mono">#{h}</span>)}
                 </div>
               )}
             </div>
-            <ContentBlock icon="🎬" title="Video Script (with timestamps)" section="script" value={generated.script} editMode={editMode} editVal={editVal} regenLoading={regenLoading} onEdit={() => startEdit('script')} onRegen={() => handleRegenSection('script')} onEditVal={setEditVal} onSaveEdit={saveEdit} onCancelEdit={() => setEditMode(null)} multiline mono />
+            <ContentBlock icon="🎬" title="Video Script" section="script" value={generated.script} editMode={editMode} editVal={editVal} regenLoading={regenLoading} onEdit={() => startEdit('script')} onRegen={() => handleRegenSection('script')} onEditVal={setEditVal} onSaveEdit={saveEdit} onCancelEdit={() => setEditMode(null)} multiline mono />
             <ContentBlock icon="🎯" title="Call To Action" section="cta" value={generated.cta} editMode={editMode} editVal={editVal} regenLoading={regenLoading} onEdit={() => startEdit('cta')} onRegen={() => handleRegenSection('cta')} onEditVal={setEditVal} onSaveEdit={saveEdit} onCancelEdit={() => setEditMode(null)} />
             <div className="flex gap-3 mt-2">
               <button onClick={() => { setStep('input'); setGenerated(null); }} className="flex-1 py-3 rounded-xl border border-[#1e1e2e] text-sm text-[#64748b] hover:border-[#ffffff18] hover:text-[#f1f5f9] transition-all font-bold">← Start Over</button>
