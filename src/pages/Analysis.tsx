@@ -1041,24 +1041,43 @@ export default function Analysis() {
             {/* Scenario Matrix */}
             {activeTab === 'matrix' && (
               <div>
-                {/* Direction mismatch alert — most important warning */}
+                {/* Direction signal — ALWAYS shown, positive or negative */}
                 {(() => {
                   const isCE = result.optType === 'CE';
-                  // Rule: lc < pcb means this option is BELOW its God Particle level.
-                  // For CE: below PCB = underlying falling = CE depreciating = wrong side.
-                  // For PE: below PCB = underlying rising = PE depreciating = wrong side.
-                  // Both use the same symmetric rule.
                   const belowPCB = result.lc < result.pcb;
-                  if (!belowPCB) return null; // option is above PCB = correct direction
                   const rightOpt = isCE ? 'PE' : 'CE';
-                  const signal = isCE ? 'bearish — CE is depreciating' : 'bullish — PE is depreciating';
-                  return (
-                    <div className="bg-[#ff4d6d]/15 border-2 border-[#ff4d6d]/60 rounded-xl px-4 py-3 text-xs font-mono text-[#ff4d6d] mb-3">
-                      <div className="font-black text-sm mb-1">🚨 WRONG DIRECTION — This is a {rightOpt} day</div>
-                      <div className="text-[#ff4d6d]/80">
-                        Last close ₹{result.lc.toFixed(0)} is BELOW PCB ₹{result.pcb.toFixed(0)} — {signal}. Buying {result.optType} against the direction risks full SL.
+                  const gapStep = getGapStep(indexName);
+                  const bestGap = scenarios.filter(s => !s.avoid && s.isBest)[0]?.gap ?? null;
+                  const isFlatDay = bestGap !== null && Math.abs(bestGap) < gapStep;
+
+                  if (belowPCB) {
+                    // Wrong direction — hard stop
+                    const signal = isCE ? 'bearish — CE is depreciating' : 'bullish — PE is depreciating';
+                    return (
+                      <div className="bg-[#ff4d6d]/15 border-2 border-[#ff4d6d]/60 rounded-xl px-4 py-3 text-xs font-mono text-[#ff4d6d] mb-3">
+                        <div className="font-black text-sm mb-1">🚨 WRONG DIRECTION — Do NOT trade {result.optType} today</div>
+                        <div className="text-[#ff4d6d]/80 mb-1">
+                          Last close ₹{result.lc.toFixed(0)} is BELOW PCB ₹{result.pcb.toFixed(0)} — {signal}. Buying this option against the direction means your SL will be hit before T1.
+                        </div>
+                        <div className="text-[#ff4d6d] font-bold">→ Analyse the {result.strike} {rightOpt} instead. That is today's trade.</div>
                       </div>
-                      <div className="mt-1 text-[#ff4d6d] font-bold">→ Run analysis on the {result.strike} {rightOpt} instead.</div>
+                    );
+                  }
+
+                  // Correct direction — confirm + flat open caution
+                  return (
+                    <div className={`rounded-xl px-4 py-3 text-xs font-mono mb-3 ${isFlatDay ? 'bg-[#f0c040]/10 border-2 border-[#f0c040]/50' : 'bg-[#39d98a]/10 border border-[#39d98a]/30'}`}>
+                      <div className={`font-black text-sm mb-1 ${isFlatDay ? 'text-[#f0c040]' : 'text-[#39d98a]'}`}>
+                        {isFlatDay ? '⚠️ FLAT OPEN — Direction unclear, wait for confirmation' : `✅ CORRECT DIRECTION — Trade ${result.optType} today`}
+                      </div>
+                      <div className={`${isFlatDay ? 'text-[#f0c040]/80' : 'text-[#39d98a]/80'}`}>
+                        {isFlatDay
+                          ? `Last close ₹${result.lc.toFixed(0)} is above PCB ₹${result.pcb.toFixed(0)} — direction confirmed for ${result.optType}. BUT flat open means market can go either way. Wait for the 9:45 AM candle to close. If Nifty moves ${isCE ? 'up' : 'down'}, enter ${result.optType}. If it moves ${isCE ? 'down' : 'up'}, switch to ${rightOpt}.`
+                          : `Last close ₹${result.lc.toFixed(0)} is above PCB ₹${result.pcb.toFixed(0)}. This ${result.optType} is gaining — the underlying is moving in your favour.`}
+                      </div>
+                      <div className={`mt-1 font-bold ${isFlatDay ? 'text-[#f0c040]' : 'text-[#39d98a]'}`}>
+                        Trade ONE option per day only — never buy both CE and PE simultaneously.
+                      </div>
                     </div>
                   );
                 })()}
