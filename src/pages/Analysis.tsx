@@ -7,7 +7,8 @@ import {
   parseNSEOptionChain, uploadMarketData, computeGodParticle,
   saveAnalysis, generateScenarioMatrix, normalizeIndexName,
   normalizeExpiry, formatExpiryDisplay, getDTE,
-  getGapStep, getMaxGap, INDEX_DISPLAY, useCredits
+  getGapStep, getMaxGap, INDEX_DISPLAY, useCredits,
+  computeIndexForecast, type IndexForecast,
 } from '../lib/market';
 
 const INDICES = [
@@ -48,6 +49,9 @@ export default function Analysis() {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('raw');
   const [planBGap, setPlanBGap] = useState(0);
+  const [forecastOpen, setForecastOpen] = useState('');
+  const [forecast, setForecast] = useState<IndexForecast | null>(null);
+  const [chainData, setChainData] = useState<Record<string, any>>({});
   const [rowsData, setRowsData] = useState<any[]>([]);
   const [gctAiInsight, setGctAiInsight] = useState('');
   const [gctAiLoading, setGctAiLoading] = useState(false);
@@ -182,6 +186,9 @@ export default function Analysis() {
       setRowsData(rows);
       setResult(computed);
       setScenarios(matrix);
+      setChainData(rows[rows.length - 1]?.strike_data ?? {});
+      setForecast(null);
+      setForecastOpen('');
       setActiveTab('verdict');
     } catch (err: any) {
       setError(err.message || 'Analysis failed!');
@@ -346,6 +353,7 @@ export default function Analysis() {
     { id: 'story', label: '📖 Story' },
     { id: 'matrix', label: '🎯 Matrix' },
     { id: 'planb', label: '🔀 Plan B' },
+    { id: 'forecast', label: '🔮 Forecast' },
     ...(isAdmin ? [{ id: 'ig', label: '📸 Instagram' }] : []),
   ];
 
@@ -1325,6 +1333,217 @@ export default function Analysis() {
                       })}
                     </div>
                   </div>
+                </div>
+              );
+            })()}
+
+            {/* ── FORECAST TAB ── */}
+            {activeTab === 'forecast' && (() => {
+              const spotClose = result.spotClose ?? 0;
+              const vix = result.vix ?? 0;
+
+              function generate() {
+                const open = parseFloat(forecastOpen);
+                if (!open || open <= 0) return;
+                const f = computeIndexForecast(open, spotClose, chainData, vix, indexName);
+                setForecast(f);
+              }
+
+              // SVG chart constants
+              const SVG_W = 700;
+              const SVG_H = 380;
+              const PAD_L = 80;
+              const PAD_R = 20;
+              const PAD_T = 30;
+              const PAD_B = 40;
+              const chartW = SVG_W - PAD_L - PAD_R;
+              const chartH = SVG_H - PAD_T - PAD_B;
+              const TOTAL_MIN = 375; // 9:15 to 15:30
+
+              const xOf = (min: number) => PAD_L + (min / TOTAL_MIN) * chartW;
+              const times = [0, 30, 105, 195, 285, 375];
+              const timeLabels = ['9:15', '9:45', '11:00', '12:30', '2:00', '3:30'];
+
+              // Build chart when forecast ready
+              let svgContent: JSX.Element | null = null;
+              if (forecast) {
+                const allPrices = [
+                  ...forecast.points.map(p => p.high),
+                  ...forecast.points.map(p => p.low),
+                  ...forecast.levels.map(l => l.price),
+                ];
+                const priceMin = Math.min(...allPrices) - 30;
+                const priceMax = Math.max(...allPrices) + 30;
+                const priceRange = priceMax - priceMin || 1;
+                const yOf = (p: number) => PAD_T + ((priceMax - p) / priceRange) * chartH;
+
+                const pts = forecast.points;
+
+                // Polygon for uncertainty band
+                const topPath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(p.minuteOffset).toFixed(1)},${yOf(p.high).toFixed(1)}`).join(' ');
+                const botPath = [...pts].reverse().map((p, i) => `L${xOf(p.minuteOffset).toFixed(1)},${yOf(p.low).toFixed(1)}`).join(' ');
+                const bandPath = `${topPath} ${botPath} Z`;
+
+                // Central path
+                const centralPath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(p.minuteOffset).toFixed(1)},${yOf(p.central).toFixed(1)}`).join(' ');
+
+                const biasCol = forecast.bias === 'BEARISH' ? '#ff4d6d' : forecast.bias === 'BULLISH' ? '#39d98a' : '#f0c040';
+
+                svgContent = (
+                  <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} className="w-full" style={{ maxHeight: 380 }}>
+                    {/* Grid lines */}
+                    {[0, 0.25, 0.5, 0.75, 1].map(f => {
+                      const p = priceMin + f * priceRange;
+                      const y = yOf(p);
+                      return (
+                        <g key={f}>
+                          <line x1={PAD_L} y1={y} x2={SVG_W - PAD_R} y2={y} stroke="#1e1e2e" strokeWidth="1" />
+                          <text x={PAD_L - 5} y={y + 4} textAnchor="end" fontSize="9" fill="#6b6b85">{Math.round(p).toLocaleString('en-IN')}</text>
+                        </g>
+                      );
+                    })}
+
+                    {/* Key level lines */}
+                    {forecast.levels.map((lv) => {
+                      const y = yOf(lv.price);
+                      if (y < PAD_T || y > PAD_T + chartH) return null;
+                      return (
+                        <g key={lv.label}>
+                          <line x1={PAD_L} y1={y} x2={SVG_W - PAD_R} y2={y} stroke={lv.color} strokeWidth="1.5" strokeDasharray={lv.type === 'open' ? '4,3' : '6,3'} opacity="0.8" />
+                          <text x={SVG_W - PAD_R + 2} y={y + 4} fontSize="8" fill={lv.color} opacity="0.9">{lv.price.toLocaleString('en-IN')}</text>
+                        </g>
+                      );
+                    })}
+
+                    {/* Uncertainty band */}
+                    <path d={bandPath} fill={biasCol} fillOpacity="0.08" />
+
+                    {/* Central predicted path */}
+                    <path d={centralPath} fill="none" stroke={biasCol} strokeWidth="2.5" strokeLinejoin="round" />
+
+                    {/* Dots + time labels */}
+                    {pts.map((p) => {
+                      const x = xOf(p.minuteOffset);
+                      const y = yOf(p.central);
+                      return (
+                        <g key={p.timeLabel}>
+                          <circle cx={x} cy={y} r="5" fill="#0a0a0f" stroke={biasCol} strokeWidth="2" />
+                          <text x={x} y={SVG_H - PAD_B + 14} textAnchor="middle" fontSize="9" fill="#6b6b85">{p.timeLabel.split(' ')[0]}</text>
+                          <text x={x} y={y - 10} textAnchor="middle" fontSize="9" fill={biasCol} fontWeight="bold">{p.central.toLocaleString('en-IN')}</text>
+                        </g>
+                      );
+                    })}
+
+                    {/* X-axis line */}
+                    <line x1={PAD_L} y1={PAD_T + chartH} x2={SVG_W - PAD_R} y2={PAD_T + chartH} stroke="#1e1e2e" strokeWidth="1" />
+                  </svg>
+                );
+              }
+
+              return (
+                <div>
+                  {/* Input row */}
+                  <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 mb-4">
+                    <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-3">🔮 Intraday Index Forecast</div>
+                    <div className="flex gap-3 items-end flex-wrap">
+                      <div className="flex-1 min-w-[160px]">
+                        <label className="block text-[10px] font-mono text-[#6b6b85] mb-1">INDEX OPEN PRICE</label>
+                        <input
+                          type="number"
+                          value={forecastOpen}
+                          onChange={e => { setForecastOpen(e.target.value); setForecast(null); }}
+                          placeholder={spotClose > 0 ? `e.g. ${Math.round(spotClose)}` : 'Enter open price'}
+                          className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#a855f7]"
+                        />
+                      </div>
+                      <button
+                        onClick={generate}
+                        disabled={!forecastOpen}
+                        className="px-5 py-2 rounded-lg text-sm font-black font-mono bg-[#a855f7] text-white disabled:opacity-40 hover:bg-[#9333ea] transition-all"
+                      >
+                        Generate Forecast
+                      </button>
+                    </div>
+                    {spotClose > 0 && (
+                      <div className="mt-2 text-[10px] font-mono text-[#6b6b85]">
+                        Prev close: <span className="text-[#f0c040]">{spotClose.toLocaleString('en-IN')}</span>
+                        {forecastOpen && ` · Gap: ${parseFloat(forecastOpen) > spotClose ? '+' : ''}${Math.round(parseFloat(forecastOpen) - spotClose)} pts`}
+                      </div>
+                    )}
+                  </div>
+
+                  {forecast && (
+                    <>
+                      {/* Bias banner */}
+                      <div className={`rounded-xl px-4 py-3 mb-4 text-xs font-mono font-bold ${
+                        forecast.bias === 'BEARISH' ? 'bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 text-[#ff4d6d]'
+                        : forecast.bias === 'BULLISH' ? 'bg-[#39d98a]/10 border border-[#39d98a]/30 text-[#39d98a]'
+                        : 'bg-[#f0c040]/10 border border-[#f0c040]/30 text-[#f0c040]'
+                      }`}>
+                        <div className="text-sm mb-1">
+                          {forecast.bias === 'BEARISH' ? '📉 BEARISH BIAS' : forecast.bias === 'BULLISH' ? '📈 BULLISH BIAS' : '↔️ NEUTRAL — Range Bound'}
+                        </div>
+                        <div className="font-normal opacity-80">{forecast.summary}</div>
+                      </div>
+
+                      {/* SVG Chart */}
+                      <div className="bg-[#0a0a0f] border border-[#1e1e2e] rounded-xl p-3 mb-4 overflow-x-auto">
+                        {svgContent}
+                      </div>
+
+                      {/* Legend */}
+                      <div className="flex flex-wrap gap-3 mb-4 px-1">
+                        {forecast.levels.map(lv => (
+                          <div key={lv.label} className="flex items-center gap-1.5 text-[10px] font-mono">
+                            <div className="w-4 h-0.5" style={{ background: lv.color }} />
+                            <span style={{ color: lv.color }}>{lv.label}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Key levels table */}
+                      <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl overflow-hidden mb-4">
+                        <table className="w-full text-xs font-mono">
+                          <thead>
+                            <tr className="border-b border-[#1e1e2e]">
+                              {['Time', 'Predicted Level', 'Range', 'What to Watch'].map(h => (
+                                <th key={h} className="text-left px-3 py-2.5 text-[#6b6b85] uppercase tracking-widest font-normal text-[10px]">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {forecast.points.map((p, i) => (
+                              <tr key={i} className="border-b border-[#1e1e2e]/50">
+                                <td className="px-3 py-2 text-[#f0c040] font-bold">{p.timeLabel}</td>
+                                <td className="px-3 py-2 text-[#e8e8f0] font-black">{p.central.toLocaleString('en-IN')}</td>
+                                <td className="px-3 py-2 text-[#6b6b85]">{p.low.toLocaleString('en-IN')} – {p.high.toLocaleString('en-IN')}</td>
+                                <td className="px-3 py-2 text-[#6b6b85]">{p.event}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Key levels quick ref */}
+                      <div className="grid grid-cols-3 gap-3">
+                        {[
+                          { label: 'CE Gamma Wall', val: forecast.ceWall, sub: 'Resistance — sellers defend', color: '#ff4d6d' },
+                          { label: 'Max Pain', val: forecast.maxPain, sub: 'Gravity center — EOD target', color: '#f0c040' },
+                          { label: 'PE Gamma Wall', val: forecast.peWall, sub: 'Support — buyers defend', color: '#39d98a' },
+                        ].map(({ label, val, sub, color }) => (
+                          <div key={label} className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-3 text-center">
+                            <div className="text-[9px] font-mono text-[#6b6b85] uppercase mb-1">{label}</div>
+                            <div className="text-lg font-black font-mono" style={{ color }}>{val.toLocaleString('en-IN')}</div>
+                            <div className="text-[9px] font-mono text-[#6b6b85] mt-0.5">{sub}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-3 text-[10px] font-mono text-[#6b6b85] px-1">
+                        ⚠ Forecast based on Max Pain gravity + Gamma Wall theory. Not financial advice. Actual movement depends on macro events, FII flow, and news.
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })()}

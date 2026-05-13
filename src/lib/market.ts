@@ -851,3 +851,141 @@ export function generateScenarioMatrix(
   });
 }
 
+// ══════════════════════════════════════════════════
+// INDEX INTRADAY FORECAST ENGINE
+// Based on Max Pain gravity + Gamma Wall theory
+// ══════════════════════════════════════════════════
+
+export interface ForecastLevel {
+  price: number;
+  label: string;
+  color: string;
+  type: 'resistance' | 'support' | 'target' | 'open' | 'close';
+}
+
+export interface ForecastPoint {
+  timeLabel: string;
+  minuteOffset: number; // minutes from 9:15 AM (market open)
+  central: number;
+  low: number;
+  high: number;
+  event: string;
+}
+
+export interface IndexForecast {
+  points: ForecastPoint[];
+  levels: ForecastLevel[];
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  maxPain: number;
+  ceWall: number;
+  peWall: number;
+  dailyRange: number;
+  gapPts: number;
+  summary: string;
+}
+
+export function computeIndexForecast(
+  openPrice: number,
+  spotClose: number,
+  strikeData: Record<string, any>,
+  vix: number,
+  indexName: string
+): IndexForecast {
+  const gap = indexName ?? 50;
+  const strikeGap = getGapStep(indexName);
+
+  // ── 1. Max Pain: strike that minimises combined option pain ──
+  const allStrikes = Object.keys(strikeData).map(Number).filter(s => s > 0 && s > openPrice * 0.85 && s < openPrice * 1.15);
+  let minPain = Infinity;
+  let maxPain = Math.round(openPrice / strikeGap) * strikeGap;
+
+  for (const testSk of allStrikes) {
+    let pain = 0;
+    for (const sk of allStrikes) {
+      const d = strikeData[String(sk)];
+      if (!d) continue;
+      pain += Math.max(0, testSk - sk) * ((d.ce_oi ?? 0));
+      pain += Math.max(0, sk - testSk) * ((d.pe_oi ?? 0));
+    }
+    if (pain < minPain) { minPain = pain; maxPain = testSk; }
+  }
+
+  // ── 2. Gamma Walls: highest OI strikes (market maker hedging anchors) ──
+  let maxCEOI = 0, ceWall = 0;
+  let maxPEOI = 0, peWall = 0;
+  for (const sk of allStrikes) {
+    const d = strikeData[String(sk)];
+    if (!d) continue;
+    const ceOI = d.ce_oi ?? 0;
+    const peOI = d.pe_oi ?? 0;
+    if (ceOI > maxCEOI) { maxCEOI = ceOI; ceWall = sk; }
+    if (peOI > maxPEOI) { maxPEOI = peOI; peWall = sk; }
+  }
+  if (!ceWall) ceWall = maxPain + strikeGap * 4;
+  if (!peWall) peWall = maxPain - strikeGap * 4;
+
+  // ── 3. Daily range estimate from VIX (1σ move) ──
+  const effectiveVIX = vix > 0 ? vix : 14;
+  const dailyRange = Math.round(openPrice * (effectiveVIX / 100) / Math.sqrt(252));
+
+  // ── 4. Bias & gap ──
+  const gapPts = Math.round(openPrice - spotClose);
+  const mpDist = openPrice - maxPain;
+  const bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
+    mpDist > strikeGap ? 'BEARISH'   // opened above max pain → gravity pulls down
+    : mpDist < -strikeGap ? 'BULLISH' // opened below max pain → gravity pulls up
+    : 'NEUTRAL';
+
+  // ── 5. Intraday path: 6 checkpoints ──
+  // Theory: market tests a wall first, then max pain gravity takes over.
+  // Uncertainty widens through midday, narrows near close (gamma pin effect).
+
+  const mp = maxPain; // shorthand
+
+  function pt(timeLabel: string, minuteOffset: number, central: number, halfRange: number, event: string): ForecastPoint {
+    return { timeLabel, minuteOffset, central: Math.round(central), low: Math.round(central - halfRange), high: Math.round(central + halfRange), event };
+  }
+
+  const t1central = bias === 'BEARISH'
+    ? Math.min(openPrice + dailyRange * 0.30, ceWall)    // test resistance
+    : bias === 'BULLISH'
+    ? Math.max(openPrice - dailyRange * 0.30, peWall)    // test support
+    : openPrice + (Math.random() > 0.5 ? 1 : -1) * dailyRange * 0.15;
+
+  const t2central = openPrice + (mp - openPrice) * 0.35; // 35% of the way to max pain
+  const t3central = openPrice + (mp - openPrice) * 0.55;
+  const t4central = openPrice + (mp - openPrice) * 0.75;
+  const t5central = mp; // EOD pin
+
+  const points: ForecastPoint[] = [
+    pt('9:15 AM',   0,   openPrice,        15,  'Market open'),
+    pt('9:45 AM',  30,   t1central,        35,  bias === 'BEARISH' ? 'Tests CE Gamma Wall resistance' : bias === 'BULLISH' ? 'Tests PE Gamma Wall support' : 'Opening range'),
+    pt('11:00 AM', 105,  t2central,        45,  'Max Pain pull begins'),
+    pt('12:30 PM', 195,  t3central,        40,  'Midday consolidation'),
+    pt('2:00 PM',  285,  t4central,        45,  'Gamma window — acceleration'),
+    pt('3:30 PM',  375,  t5central,        20,  'Expiry pin zone'),
+  ];
+
+  // ── 6. Levels for chart ──
+  const levels: ForecastLevel[] = [
+    { price: ceWall,    label: `CE Gamma Wall ${ceWall.toLocaleString('en-IN')}`,    color: '#ff4d6d', type: 'resistance' },
+    { price: mp,        label: `Max Pain ${mp.toLocaleString('en-IN')}`,              color: '#f0c040', type: 'target'     },
+    { price: peWall,    label: `PE Gamma Wall ${peWall.toLocaleString('en-IN')}`,    color: '#39d98a', type: 'support'    },
+    { price: openPrice, label: `Open ${openPrice.toLocaleString('en-IN')}`,          color: '#a855f7', type: 'open'       },
+    { price: spotClose, label: `Prev Close ${spotClose.toLocaleString('en-IN')}`,   color: '#6b6b85', type: 'close'      },
+  ].filter((l, i, arr) => {
+    // deduplicate prices that are too close together
+    return !arr.slice(0, i).some(prev => Math.abs(prev.price - l.price) < strikeGap * 0.5);
+  }).sort((a, b) => b.price - a.price);
+
+  // ── 7. Summary text ──
+  const biasWord = bias === 'BEARISH' ? 'bearish' : bias === 'BULLISH' ? 'bullish' : 'neutral';
+  const mpGapStr = Math.abs(Math.round(mpDist));
+  const summary = bias === 'NEUTRAL'
+    ? `Market opened near Max Pain (${mp.toLocaleString('en-IN')}). Expect range-bound action between PE wall (${peWall.toLocaleString('en-IN')}) and CE wall (${ceWall.toLocaleString('en-IN')}). Watch for breakout after 1 PM.`
+    : `Market has a ${biasWord} bias — opened ${mpGapStr} pts ${mpDist > 0 ? 'above' : 'below'} Max Pain (${mp.toLocaleString('en-IN')}). Expect ${bias === 'BEARISH' ? `initial test of CE wall (${ceWall.toLocaleString('en-IN')}) then gradual pull down to ${mp.toLocaleString('en-IN')} by close` : `initial test of PE wall (${peWall.toLocaleString('en-IN')}) then gradual recovery to ${mp.toLocaleString('en-IN')} by close`}.`;
+
+  return { points, levels, bias, maxPain: mp, ceWall, peWall, dailyRange, gapPts, summary };
+}
+
+
