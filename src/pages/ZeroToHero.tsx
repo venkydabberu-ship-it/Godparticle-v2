@@ -68,7 +68,25 @@ export default function ZeroToHero() {
     if (!expiry) return;
     setResult(null);
     setError('');
-    loadSnapshots(); // always load — DAY_BEFORE may be available even on non-expiry days
+    loadSnapshots();
+  }, [expiry, index]);
+
+  // Anti-staleness: when user returns to the tab, silently refresh auth + reload snapshots
+  useEffect(() => {
+    let hiddenAt = 0;
+    function onVisibility() {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+      } else {
+        const awayMs = Date.now() - hiddenAt;
+        if (awayMs > 3 * 60 * 1000 && expiry) { // away > 3 min
+          supabase.auth.getSession(); // refreshes token if expired
+          loadSnapshots();            // silently reload snapshot data
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
   }, [expiry, index]);
 
   // Load today's expiry setups across all indices — morning briefing
@@ -703,144 +721,136 @@ export default function ZeroToHero() {
             {/* RESULT */}
             {result && (
               <div>
-                {result.signal === 'NO_TRADE' ? (
-                  <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-2xl p-8 text-center">
-                    <div className="text-4xl mb-4">🚫</div>
-                    <div className="text-xl font-black mb-2 text-[#ff4d6d]">NO TRADE TODAY</div>
-                    <div className="text-sm font-mono text-[#6b6b85] mb-4">{result.reason}</div>
-                    <div className="text-xs font-mono text-[#6b6b85]">Forces aligned: {result.forces?.count ?? 0}/5 · Direction: {result.direction}</div>
-                    <div className="mt-4 text-xs font-mono text-[#f0c040]">⭐ Patience is the edge. Wait for next expiry with 4+ forces.</div>
+                {/* Low-force warning (but still show both setups) */}
+                {result.signal === 'NO_TRADE' && (
+                  <div className="bg-[#ff8c42]/10 border border-[#ff8c42]/30 rounded-xl px-4 py-3 text-xs font-mono text-[#ff8c42] mb-4">
+                    ⚠️ Only {result.forces?.count ?? 0}/5 forces aligned — trade with caution or skip. Both setups shown below for reference.
                   </div>
-                ) : (
-                  <>
-                    {(() => {
-                      const isBull = result.direction === 'BULLISH';
-                      const col = isBull ? '#39d98a' : '#ff4d6d';
-                      const entryLTP = result.entryLTPRef ?? 0;
-                      const sl = Math.round(entryLTP * (result.stopLossPct ?? 0.5));
-                      const t1 = Math.round(entryLTP * (result.target1x ?? 3));
-                      const t2 = Math.round(entryLTP * (result.target2x ?? 5));
-                      const hero = Math.round(entryLTP * (result.heroX ?? 10));
-                      return (
-                        <div className="relative rounded-2xl overflow-hidden p-8 mb-6"
-                          style={{
-                            background: isBull ? 'linear-gradient(135deg,#0a0a0f 0%,#0a1a0a 50%,#0a0a0f 100%)' : 'linear-gradient(135deg,#0a0a0f 0%,#1a0a0a 50%,#0a0a0f 100%)',
-                            border: `1px solid ${col}4d`,
-                            boxShadow: `0 0 60px ${col}14`
-                          }}>
-                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
-                            <div className="text-[180px] font-black opacity-[0.03]" style={{ color: col }}>🚀</div>
+                )}
+
+                {/* Primary signal header */}
+                {(() => {
+                  const isPrimBull = result.direction === 'BULLISH';
+                  const col = isPrimBull ? '#39d98a' : '#ff4d6d';
+                  return (
+                    <div className="text-center mb-4">
+                      <div className="text-xs font-mono tracking-[3px] mb-1 text-[#6b6b85]">🚀 ZERO TO HERO SIGNAL</div>
+                      <div className="text-xs font-mono text-[#6b6b85]">{index} · Expiry: {expiry}</div>
+                      <div className="mt-2 inline-block px-4 py-1 rounded-full text-xs font-bold"
+                        style={{ background: `${col}1a`, color: col, border: `1px solid ${col}4d` }}>
+                        {isPrimBull ? '📈 BULLISH' : '📉 BEARISH'} BIAS · {result.forces?.count ?? 0}/5 Forces · Entry 1:15 PM
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Both PE and CE signal cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                  {(['peSetup', 'ceSetup'] as const).map(key => {
+                    const setup = result[key] as any;
+                    if (!setup) return null;
+                    const isPE = key === 'peSetup';
+                    const isPrimary = (isPE && result.direction === 'BEARISH') || (!isPE && result.direction === 'BULLISH');
+                    const col = isPE ? '#ff4d6d' : '#39d98a';
+                    const ltp = setup.entryLTP ?? 0;
+                    return (
+                      <div key={key} className="relative rounded-2xl overflow-hidden p-5"
+                        style={{
+                          background: isPE ? 'linear-gradient(135deg,#0a0a0f 0%,#1a0a0a 100%)' : 'linear-gradient(135deg,#0a0a0f 0%,#0a1a0a 100%)',
+                          border: `${isPrimary ? 2 : 1}px solid ${col}${isPrimary ? '80' : '33'}`,
+                          boxShadow: isPrimary ? `0 0 40px ${col}1a` : 'none',
+                        }}>
+                        {isPrimary && (
+                          <div className="absolute top-3 right-3 text-[9px] font-black font-mono px-2 py-0.5 rounded-full"
+                            style={{ background: `${col}33`, color: col }}>★ PRIMARY</div>
+                        )}
+                        {/* Strike & type */}
+                        <div className="mb-4">
+                          <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-1">{isPE ? '📉 Put Option' : '📈 Call Option'}</div>
+                          <div className="text-2xl font-black" style={{ color: col }}>
+                            {setup.strike > 0 ? `${setup.strike} ${isPE ? 'PE' : 'CE'}` : '—'}
                           </div>
-                          <div className="relative z-10">
-                            <div className="text-center mb-8">
-                              <div className="text-xs font-mono tracking-[3px] mb-2" style={{ color: col }}>🚀 ZERO TO HERO SIGNAL</div>
-                              <div className="text-3xl font-black mb-1" style={{ color: col }}>{result.selectedStrike} {result.optionType}</div>
-                              <div className="text-sm font-mono text-[#6b6b85]">{index} · Expiry: {expiry}</div>
-                              <div className="mt-2 inline-block px-4 py-1 rounded-full text-xs font-bold"
-                                style={{ background: `${col}1a`, color: col, border: `1px solid ${col}4d` }}>
-                                {isBull ? '📈 BULLISH' : '📉 BEARISH'} · {result.forces?.count ?? 0}/5 Forces
-                              </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4 mb-6">
-                              <div className="bg-black/20 rounded-xl p-4 text-center">
-                                <div className="text-xs font-mono text-[#6b6b85] mb-1 uppercase tracking-widest">⏰ Entry Time</div>
-                                <div className="text-2xl font-black text-[#f0c040]">1:15 PM</div>
-                                <div className="text-xs font-mono text-[#6b6b85] mt-1">Gamma window opens</div>
-                              </div>
-                              <div className="bg-black/20 rounded-xl p-4 text-center">
-                                <div className="text-xs font-mono text-[#6b6b85] mb-1 uppercase tracking-widest">💰 Entry Zone</div>
-                                <div className="text-2xl font-black" style={{ color: col }}>{entryLTP > 0 ? `₹${entryLTP}` : 'At Market'}</div>
-                                <div className="text-xs font-mono text-[#6b6b85] mt-1">LTP ref at 11:15 AM</div>
-                              </div>
-                            </div>
-                            <div className="rounded-xl overflow-hidden mb-6" style={{ border: `1px solid ${col}33` }}>
-                              <table className="w-full font-mono text-sm">
-                                <thead>
-                                  <tr style={{ borderBottom: `1px solid ${col}33`, background: 'rgba(0,0,0,0.3)' }}>
-                                    {['LEVEL','PRICE','RETURN','ACTION'].map(h => (
-                                      <th key={h} className="text-left px-4 py-3 text-xs tracking-widest font-bold text-[#6b6b85]">{h}</th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {[
-                                    { level: '🛑 Stop Loss',   price: sl,   ret: '-50%', action: 'EXIT ALL',     color: '#ff4d6d' },
-                                    { level: '🎯 Target 1',    price: t1,   ret: '3x',   action: 'Exit 50%',     color: '#f0c040' },
-                                    { level: '🎯 Target 2',    price: t2,   ret: '5x',   action: 'Exit 30%',     color: '#39d98a' },
-                                    { level: '💎 Hero Target', price: hero, ret: '10x',  action: 'Let 20% ride', color: '#4d9fff' },
-                                  ].map((row, i) => (
-                                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                                      <td className="px-4 py-3 font-bold text-xs" style={{ color: row.color }}>{row.level}</td>
-                                      <td className="px-4 py-3 font-black text-sm" style={{ color: row.color }}>₹{row.price}</td>
-                                      <td className="px-4 py-3 text-xs" style={{ color: row.color }}>{row.ret}</td>
-                                      <td className="px-4 py-3 text-xs text-[#6b6b85]">{row.action}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                            {result.skipConditions?.length > 0 && (
-                              <div className="bg-black/20 rounded-xl p-4 mb-6">
-                                <div className="text-xs font-mono text-[#ff4d6d] font-bold mb-2 uppercase tracking-widest">⚠️ Skip Trade If</div>
-                                {result.skipConditions.map((c: string, i: number) => (
-                                  <div key={i} className="text-xs font-mono text-[#6b6b85] mb-1">→ {c}</div>
-                                ))}
-                              </div>
-                            )}
-                            {isPremiumPlus && result.forces && (
-                              <div className="bg-black/20 rounded-xl p-4 mb-6">
-                                <div className="text-xs font-mono text-[#f0c040] font-bold mb-3 uppercase tracking-widest">🔬 5-Force Analysis</div>
-                                <div className="grid grid-cols-1 gap-2">
-                                  {[
-                                    { label: 'Force 1 — Direction (200pt move)', ok: result.forces.direction },
-                                    { label: 'Force 2 — OI Accumulation',        ok: result.forces.oi       },
-                                    { label: 'Force 3 — PCB / God Particle',     ok: result.forces.pcb      },
-                                    { label: 'Force 4 — Max Pain Gravity',       ok: result.forces.maxPain  },
-                                    { label: 'Force 5 — VIX + Gamma Window',    ok: result.forces.vix      },
-                                  ].map((f, i) => (
-                                    <div key={i} className="flex items-center justify-between text-xs font-mono">
-                                      <span className="text-[#6b6b85]">{f.label}</span>
-                                      <span className={f.ok ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}>{f.ok ? '✅ CONFIRMED' : '❌ NOT MET'}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                                <div className="mt-3 pt-3 border-t border-[#1e1e2e] flex items-center justify-between">
-                                  <span className="text-xs font-mono text-[#6b6b85]">Forces Aligned</span>
-                                  <span className={`text-sm font-black ${result.forces.count >= 4 ? 'text-[#39d98a]' : result.forces.count >= 3 ? 'text-[#f0c040]' : 'text-[#ff4d6d]'}`}>
-                                    {result.forces.count}/5
-                                  </span>
-                                </div>
-                              </div>
-                            )}
-                            {isAdmin && (
-                              <div className="bg-black/20 rounded-xl p-4 mb-6">
-                                <div className="text-xs font-mono text-[#f0c040] font-bold mb-3 uppercase tracking-widest">📊 Market Context</div>
-                                <div className="grid grid-cols-3 gap-4 text-xs font-mono">
-                                  <div>
-                                    <div className="text-[#6b6b85] mb-1">Spot Move</div>
-                                    <div className={`font-bold ${result.spotMove < 0 ? 'text-[#ff4d6d]' : 'text-[#39d98a]'}`}>{result.spotMove > 0 ? '+' : ''}{Math.round(result.spotMove)} pts</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-[#6b6b85] mb-1">Max Pain</div>
-                                    <div className="font-bold">{result.maxPain1115?.toLocaleString()}</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-[#6b6b85] mb-1">VIX</div>
-                                    <div className={`font-bold ${result.vix1115 >= 18 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>{result.vix1115}</div>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                            <div className="text-center space-y-2">
-                              <div className="text-xs font-mono text-[#6b6b85]">⭐ Entry only between 1:15 PM – 2:00 PM · Not Financial Advice</div>
-                              <div className="text-xs font-black tracking-widest" style={{ color: col }}>DEVELOPED BY GOD PARTICLE ⚛</div>
-                            </div>
+                          <div className="text-xs font-mono text-[#6b6b85] mt-0.5">
+                            {setup.forces?.count ?? 0}/5 forces · LTP ref at 11:15 AM
                           </div>
                         </div>
-                      );
-                    })()}
-                  </>
+                        {/* Price table */}
+                        <div className="rounded-xl overflow-hidden mb-3" style={{ border: `1px solid ${col}22` }}>
+                          <table className="w-full font-mono text-xs">
+                            <tbody>
+                              {ltp > 0 ? [
+                                { label: '💰 Entry Ref', val: `₹${ltp}`, color: col },
+                                { label: '🛑 Stop Loss', val: `₹${setup.sl} (−50%)`, color: '#ff4d6d' },
+                                { label: '🎯 Target 1',  val: `₹${setup.target1} (3×)`, color: '#f0c040' },
+                                { label: '🎯 Target 2',  val: `₹${setup.target2} (5×)`, color: '#39d98a' },
+                                { label: '💎 Hero',      val: `₹${setup.hero} (10×)`, color: '#4d9fff' },
+                              ] : [
+                                { label: 'Entry Ref', val: 'Check live LTP', color: col },
+                                { label: 'Stop Loss', val: '−50% of entry', color: '#ff4d6d' },
+                                { label: 'Target 1',  val: '3× entry', color: '#f0c040' },
+                                { label: 'Target 2',  val: '5× entry', color: '#39d98a' },
+                              ].map((r, i) => (
+                                <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                  <td className="px-3 py-2 text-[#6b6b85]">{r.label}</td>
+                                  <td className="px-3 py-2 font-black" style={{ color: r.color }}>{r.val}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {/* Force pills */}
+                        <div className="flex flex-wrap gap-1">
+                          {[
+                            { label: 'Direction', ok: setup.forces?.direction },
+                            { label: 'OI', ok: setup.forces?.oi },
+                            { label: 'PCB', ok: setup.forces?.pcb },
+                            { label: 'MaxPain', ok: setup.forces?.maxPain },
+                            { label: 'VIX', ok: setup.forces?.vix },
+                          ].map(f => (
+                            <span key={f.label} className="text-[9px] font-mono px-1.5 py-0.5 rounded"
+                              style={{ background: f.ok ? '#39d98a22' : '#ff4d6d11', color: f.ok ? '#39d98a' : '#6b6b85' }}>
+                              {f.ok ? '✓' : '✗'} {f.label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Skip conditions for primary */}
+                {result.skipConditions?.length > 0 && (
+                  <div className="bg-black/20 border border-[#ff4d6d]/20 rounded-xl p-4 mb-4">
+                    <div className="text-xs font-mono text-[#ff4d6d] font-bold mb-2 uppercase tracking-widest">⚠️ Skip Primary Trade If</div>
+                    {result.skipConditions.map((c: string, i: number) => (
+                      <div key={i} className="text-xs font-mono text-[#6b6b85] mb-1">→ {c}</div>
+                    ))}
+                  </div>
                 )}
+
+                {isAdmin && (
+                  <div className="bg-black/20 border border-[#1e1e2e] rounded-xl p-4 mb-4">
+                    <div className="text-xs font-mono text-[#f0c040] font-bold mb-2 uppercase tracking-widest">📊 Market Context</div>
+                    <div className="grid grid-cols-3 gap-4 text-xs font-mono">
+                      <div>
+                        <div className="text-[#6b6b85] mb-1">Spot Move</div>
+                        <div className={`font-bold ${result.spotMove < 0 ? 'text-[#ff4d6d]' : 'text-[#39d98a]'}`}>{result.spotMove > 0 ? '+' : ''}{Math.round(result.spotMove)} pts</div>
+                      </div>
+                      <div>
+                        <div className="text-[#6b6b85] mb-1">Max Pain</div>
+                        <div className="font-bold">{result.maxPain1115?.toLocaleString()}</div>
+                      </div>
+                      <div>
+                        <div className="text-[#6b6b85] mb-1">VIX</div>
+                        <div className={`font-bold ${result.vix1115 >= 18 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>{result.vix1115}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="text-center text-xs font-mono text-[#6b6b85]">
+                  ⭐ Entry only between 1:15 PM – 2:00 PM · Not Financial Advice · God Particle ⚛
+                </div>
               </div>
             )}
           </>

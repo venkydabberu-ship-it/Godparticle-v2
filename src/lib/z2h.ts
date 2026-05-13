@@ -265,6 +265,17 @@ export interface PCBDetails {
   inProfit: boolean;
 }
 
+export interface Z2HStrikeSetup {
+  strike: number;
+  optionType: 'PE' | 'CE';
+  entryLTP: number;      // LTP at 11:15 for reference
+  sl: number;            // 50% of entryLTP
+  target1: number;       // 3x entryLTP
+  target2: number;       // 5x entryLTP
+  hero: number;          // 10x entryLTP
+  forces: Z2HForces;
+}
+
 export interface Z2HAnalysis {
   signal: 'TRADE' | 'NO_TRADE';
   direction: 'BEARISH' | 'BULLISH' | 'UNCLEAR';
@@ -279,6 +290,9 @@ export interface Z2HAnalysis {
   target2x: number;     // 5
   heroX: number;        // 10
   skipConditions: string[];
+  // Both-direction setups (always computed regardless of gap size)
+  peSetup?: Z2HStrikeSetup;
+  ceSetup?: Z2HStrikeSetup;
   // Market context
   spot930: number;
   spot1115: number;
@@ -291,6 +305,85 @@ export interface Z2HAnalysis {
   // OI data
   topStrikes?: TopStrikeInfo[];
   pcbDetails?: PCBDetails;
+}
+
+// Compute forces + best strike for ONE direction. Returns a Z2HStrikeSetup.
+function computeSetupForDirection(
+  dir: 'BEARISH' | 'BULLISH',
+  s930: Record<string, any>,
+  s1115: Record<string, any>,
+  sDayBefore: Record<string, any>,
+  spot930: number,
+  spot1115: number,
+  spotMove: number,
+  mp1115: number,
+  vix930: number,
+  vix1115: number,
+  indexKey: string
+): Z2HStrikeSetup {
+  const ltpF = dir === 'BEARISH' ? 'pe_ltp' : 'ce_ltp';
+  const optionType: 'PE' | 'CE' = dir === 'BEARISH' ? 'PE' : 'CE';
+
+  // Force 1: spot moved in this direction
+  const f1 = dir === 'BEARISH' ? spotMove < -20 : spotMove > 20;
+
+  // Force 2: OI accumulation
+  const oiAnalysis = analyzeOIAccumulation(s930, s1115, dir, spot1115, indexKey);
+  const f2 = oiAnalysis.freshBuyRatio >= 0.5;
+
+  // Strike selection: OI analysis → selectBestStrike → fallback ATM
+  let bestStrike: number | null =
+    oiAnalysis.bestStrike
+    ?? selectBestStrike(s930, s1115, dir, spot1115, mp1115, indexKey);
+
+  let entryLTP = bestStrike
+    ? ((s1115[String(bestStrike)] as any)?.[ltpF] ?? 0)
+    : 0;
+
+  // If LTP is still 0, use the ATM fallback — always show a real price
+  if (entryLTP === 0 || !bestStrike) {
+    const fb = fallbackStrike(s1115, dir, spot1115, indexKey);
+    if (fb) { bestStrike = fb.strike; entryLTP = fb.ltp; }
+  }
+
+  // Force 3: PCB (God Particle) — current LTP > yesterday close LTP
+  let f3 = true;
+  if (bestStrike) {
+    const sk = String(bestStrike);
+    const pcb = (sDayBefore[sk] as any)?.[ltpF] ?? 0;
+    const ltp1115v = (s1115[sk] as any)?.[ltpF] ?? 0;
+    f3 = pcb > 0 ? ltp1115v > pcb : true;
+  }
+
+  // Force 4: Max Pain Gravity
+  const mpGap = spot1115 - mp1115;
+  const maxGap = (INDEX_CONFIG[indexKey]?.strikeGap ?? 50) * 12;
+  const f4 = dir === 'BEARISH'
+    ? (mpGap > 0 && mpGap < maxGap)
+    : (mpGap < 0 && Math.abs(mpGap) < maxGap);
+
+  // Force 5: VIX
+  const f5 = vix1115 === 0
+    ? true
+    : (vix1115 >= 15 && (vix1115 > vix930 || vix1115 >= 18));
+
+  const forces: Z2HForces = {
+    direction: f1, oi: f2, pcb: f3, maxPain: f4, vix: f5,
+    count: [f1, f2, f3, f4, f5].filter(Boolean).length,
+  };
+
+  const sl      = Math.round(entryLTP * 0.50);
+  const target1 = Math.round(entryLTP * 3);
+  const target2 = Math.round(entryLTP * 5);
+  const hero    = Math.round(entryLTP * 10);
+
+  return {
+    strike: bestStrike ?? 0,
+    optionType,
+    entryLTP,
+    sl, target1, target2, hero,
+    forces,
+  };
 }
 
 export function computeZ2H(
@@ -313,92 +406,57 @@ export function computeZ2H(
   const spotMove = spot1115 - spot930;
   const mpMove = mp1115 - mp930;
 
-  // ── Force 1: Direction — need 200+ point directional move ──
-  let direction: 'BEARISH' | 'BULLISH' | 'UNCLEAR' = 'UNCLEAR';
-  if (spotMove <= -200) direction = 'BEARISH';
-  else if (spotMove >= 200) direction = 'BULLISH';
+  // Always compute BOTH PE and CE setups so traders can see both options
+  const peSetup = computeSetupForDirection(
+    'BEARISH', s930, s1115, sDayBefore,
+    spot930, spot1115, spotMove, mp1115, vix930, vix1115, indexKey
+  );
+  const ceSetup = computeSetupForDirection(
+    'BULLISH', s930, s1115, sDayBefore,
+    spot930, spot1115, spotMove, mp1115, vix930, vix1115, indexKey
+  );
 
-  const f1 = direction !== 'UNCLEAR';
+  // Primary direction: whichever has more forces. Spot move breaks ties.
+  const primaryDir: 'BEARISH' | 'BULLISH' =
+    peSetup.forces.count > ceSetup.forces.count ? 'BEARISH'
+    : ceSetup.forces.count > peSetup.forces.count ? 'BULLISH'
+    : spotMove <= 0 ? 'BEARISH' : 'BULLISH';
 
-  if (!f1) {
-    return {
-      signal: 'NO_TRADE',
-      direction: 'UNCLEAR',
-      forces: { direction: false, oi: false, pcb: false, maxPain: false, vix: false, count: 0 },
-      reason: `Market moved only ${Math.abs(Math.round(spotMove))} pts between 9:30 and 11:15 AM (need 200+ pts). No clear directional edge — skip trade today.`,
-      stopLossPct: 0.5, target1x: 3, target2x: 5, heroX: 10, skipConditions: [],
-      spot930, spot1115, spotMove, maxPain930: mp930, maxPain1115: mp1115, maxPainMove: mpMove,
-      vix930, vix1115,
-    };
-  }
+  const primary = primaryDir === 'BEARISH' ? peSetup : ceSetup;
+  const direction = primaryDir;
 
-  const isCall = direction === 'BULLISH';
-  const ltpF = isCall ? 'ce_ltp' : 'pe_ltp';
-  const oiF = isCall ? 'ce_oi' : 'pe_oi';
-
-  // ── Force 2: OI Accumulation — LTP rising + OI rising = fresh buying ──
   const oiAnalysis = analyzeOIAccumulation(s930, s1115, direction, spot1115, indexKey);
-  const f2 = oiAnalysis.freshBuyRatio >= 0.5;
-
-  // ── Force 3: PCB (God Particle) — current LTP > yesterday close LTP ──
-  const bestStrike = oiAnalysis.bestStrike
-    ?? selectBestStrike(s930, s1115, direction, spot1115, mp1115, indexKey);
+  const bestStrike = primary.strike || null;
+  const ltpF = direction === 'BEARISH' ? 'pe_ltp' : 'pe_ltp';
 
   let pcbDetails: PCBDetails | undefined;
-  let f3 = false;
   if (bestStrike) {
     const sk = String(bestStrike);
-    const pcb = (sDayBefore[sk] as any)?.[ltpF] ?? 0;
-    const ltp930v = (s930[sk] as any)?.[ltpF] ?? 0;
-    const ltp1115v = (s1115[sk] as any)?.[ltpF] ?? 0;
-    f3 = pcb > 0 ? ltp1115v > pcb : true; // if no day_before data, benefit of doubt
-    pcbDetails = { strike: bestStrike, pcb, ltp930: ltp930v, ltp1115: ltp1115v, inProfit: f3 };
-  } else {
-    f3 = true; // no candidate found = benefit of doubt
+    const lF = direction === 'BEARISH' ? 'pe_ltp' : 'ce_ltp';
+    const pcb = (sDayBefore[sk] as any)?.[lF] ?? 0;
+    const ltp930v = (s930[sk] as any)?.[lF] ?? 0;
+    const ltp1115v = (s1115[sk] as any)?.[lF] ?? 0;
+    pcbDetails = { strike: bestStrike, pcb, ltp930: ltp930v, ltp1115: ltp1115v, inProfit: primary.forces.pcb };
   }
 
-  // ── Force 4: Max Pain Gravity — spot on wrong side of max pain ──
-  const mpGap = spot1115 - mp1115;
-  const maxGap = (INDEX_CONFIG[indexKey]?.strikeGap ?? 50) * 12;
-  const f4 = direction === 'BEARISH'
-    ? (mpGap > 0 && mpGap < maxGap)   // spot above max pain → gravity pulls down
-    : (mpGap < 0 && Math.abs(mpGap) < maxGap); // spot below max pain → gravity pulls up
+  const forces = primary.forces;
+  const signal: 'TRADE' | 'NO_TRADE' = forces.count >= 3 ? 'TRADE' : 'NO_TRADE';
+  const reason = signal === 'NO_TRADE'
+    ? `Only ${forces.count}/5 forces aligned. Minimum 3 needed for a trade. Both CE and PE setups shown below for reference.`
+    : undefined;
 
-  // ── Force 5: VIX — fear index must be elevated ──
-  const f5 = vix1115 === 0
-    ? true  // data unavailable = benefit of doubt
-    : (vix1115 >= 15 && (vix1115 > vix930 || vix1115 >= 18));
-
-  const forces: Z2HForces = {
-    direction: f1, oi: f2, pcb: f3, maxPain: f4, vix: f5,
-    count: [f1, f2, f3, f4, f5].filter(Boolean).length,
-  };
-
-  if (forces.count < 3) {
-    return {
-      signal: 'NO_TRADE', direction, forces,
-      reason: `Only ${forces.count}/5 forces aligned. Minimum 3 needed. Weak signals: ${describeWeakForces(forces)}`,
-      stopLossPct: 0.5, target1x: 3, target2x: 5, heroX: 10, skipConditions: [],
-      spot930, spot1115, spotMove, maxPain930: mp930, maxPain1115: mp1115, maxPainMove: mpMove,
-      vix930, vix1115, pcbDetails,
-      topStrikes: oiAnalysis.topStrikes.map(s => ({ ...s, isBest: s.strike === bestStrike })),
-    };
-  }
-
-  const optionType: 'PE' | 'CE' = isCall ? 'CE' : 'PE';
-  const entryLTPRef = bestStrike
-    ? ((s1115[String(bestStrike)] as any)?.[ltpF] ?? 0)
-    : 0;
-
-  const skipConditions = buildSkipConditions(direction, spot1115, vix1115, bestStrike, entryLTPRef);
+  const skipConditions = buildSkipConditions(
+    direction, spot1115, vix1115, bestStrike, primary.entryLTP
+  );
 
   return {
-    signal: 'TRADE', direction, forces,
+    signal, direction, forces, reason,
     selectedStrike: bestStrike ?? undefined,
-    optionType,
-    entryLTPRef,
+    optionType: primary.optionType,
+    entryLTPRef: primary.entryLTP,
     stopLossPct: 0.5, target1x: 3, target2x: 5, heroX: 10,
     skipConditions,
+    peSetup, ceSetup,
     spot930, spot1115, spotMove, maxPain930: mp930, maxPain1115: mp1115, maxPainMove: mpMove,
     vix930, vix1115, pcbDetails,
     topStrikes: oiAnalysis.topStrikes.map(s => ({ ...s, isBest: s.strike === bestStrike })),
@@ -468,6 +526,29 @@ function analyzeOIAccumulation(
     bestStrike: top[0]?.strike ?? null,
     topStrikes: top.slice(0, 8),
   };
+}
+
+// Guaranteed fallback: ATM/near-ATM strike with a valid LTP (no OI filter).
+// Used when OI analysis finds no qualifying strike — ensures prices are never ₹0.
+function fallbackStrike(
+  s1115: Record<string, any>,
+  direction: 'BEARISH' | 'BULLISH',
+  spot: number,
+  indexKey: string
+): { strike: number; ltp: number } | null {
+  const gap = INDEX_CONFIG[indexKey]?.strikeGap ?? 50;
+  const ltpF = direction === 'BEARISH' ? 'pe_ltp' : 'ce_ltp';
+  const atm = Math.round(spot / gap) * gap;
+  const candidates = direction === 'BEARISH'
+    ? [atm, atm - gap, atm - gap * 2, atm + gap]
+    : [atm, atm + gap, atm + gap * 2, atm - gap];
+  for (const sk of candidates) {
+    const d = s1115[String(sk)];
+    if (!d) continue;
+    const ltp = (d as any)[ltpF] ?? 0;
+    if (ltp >= 5) return { strike: sk, ltp };
+  }
+  return null;
 }
 
 function selectBestStrike(
