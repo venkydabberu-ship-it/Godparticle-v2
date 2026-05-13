@@ -985,9 +985,9 @@ export function computeIndexForecast(
     { price: mp,        label: `Max Pain ${mp.toLocaleString('en-IN')}`,             color: '#f0c040', type: 'target'     },
     { price: peWall,    label: `PE Gamma Wall ${peWall.toLocaleString('en-IN')}`,   color: '#39d98a', type: 'support'    },
     { price: openPrice, label: `Open ${openPrice.toLocaleString('en-IN')}`,         color: '#a855f7', type: 'open'       },
-    { price: spotClose, label: `Prev Close ${spotClose.toLocaleString('en-IN')}`,  color: '#6b6b85', type: 'close'      },
+    ...(spotClose > 0 ? [{ price: spotClose, label: `Prev Close ${spotClose.toLocaleString('en-IN')}`, color: '#6b6b85', type: 'close' as const }] : []),
   ].filter((l, i, arr) =>
-    !arr.slice(0, i).some(prev => Math.abs(prev.price - l.price) < strikeGap * 0.5)
+    l.price > 0 && !arr.slice(0, i).some(prev => Math.abs(prev.price - l.price) < strikeGap * 0.5)
   ).sort((a, b) => b.price - a.price);
 
   // ── 8. IV Crush warning ──
