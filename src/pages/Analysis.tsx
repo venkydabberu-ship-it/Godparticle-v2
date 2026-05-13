@@ -1036,17 +1036,20 @@ export default function Analysis() {
                 {/* Direction mismatch alert — most important warning */}
                 {(() => {
                   const isCE = result.optType === 'CE';
+                  // Rule: lc < pcb means this option is BELOW its God Particle level.
+                  // For CE: below PCB = underlying falling = CE depreciating = wrong side.
+                  // For PE: below PCB = underlying rising = PE depreciating = wrong side.
+                  // Both use the same symmetric rule.
                   const belowPCB = result.lc < result.pcb;
-                  const wrongDir = (isCE && belowPCB) || (!isCE && !belowPCB);
-                  if (!wrongDir) return null;
+                  if (!belowPCB) return null; // option is above PCB = correct direction
                   const rightOpt = isCE ? 'PE' : 'CE';
-                  const reason = isCE
-                    ? `Last close ₹${result.lc.toFixed(0)} is BELOW PCB ₹${result.pcb.toFixed(0)} — bearish signal`
-                    : `Last close ₹${result.lc.toFixed(0)} is ABOVE PCB ₹${result.pcb.toFixed(0)} — bullish signal`;
+                  const signal = isCE ? 'bearish — CE is depreciating' : 'bullish — PE is depreciating';
                   return (
                     <div className="bg-[#ff4d6d]/15 border-2 border-[#ff4d6d]/60 rounded-xl px-4 py-3 text-xs font-mono text-[#ff4d6d] mb-3">
                       <div className="font-black text-sm mb-1">🚨 WRONG DIRECTION — This is a {rightOpt} day</div>
-                      <div className="text-[#ff4d6d]/80">{reason}. Buying {result.optType} against the direction risks full SL.</div>
+                      <div className="text-[#ff4d6d]/80">
+                        Last close ₹{result.lc.toFixed(0)} is BELOW PCB ₹{result.pcb.toFixed(0)} — {signal}. Buying {result.optType} against the direction risks full SL.
+                      </div>
                       <div className="mt-1 text-[#ff4d6d] font-bold">→ Run analysis on the {result.strike} {rightOpt} instead.</div>
                     </div>
                   );

@@ -127,6 +127,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    // Refresh Supabase session when user returns to the tab after being away.
+    // Prevents "stale" state where the JWT has expired silently in the background.
+    let hiddenAt = 0;
+    function onVisibility() {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+      } else if (Date.now() - hiddenAt > 3 * 60 * 1000) { // away > 3 min
+        supabase.auth.getSession(); // triggers onAuthStateChange if token was refreshed
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         const currentUser = session?.user ?? null;
@@ -149,6 +161,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       clearTimeout(safetyTimer);
       subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', onVisibility);
       if (channelRef.current) supabase.removeChannel(channelRef.current);
     };
   }, []);
