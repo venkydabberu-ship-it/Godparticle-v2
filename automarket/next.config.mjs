@@ -9,6 +9,15 @@ const config = {
   },
   experimental: {
     serverActions: { allowedOrigins: ['localhost:3000'] },
+    serverComponentsExternalPackages: [
+      '@remotion/bundler',
+      '@remotion/renderer',
+      '@remotion/media-utils',
+      '@remotion/studio',
+      'fluent-ffmpeg',
+      '@ffmpeg-installer/ffmpeg',
+      'esbuild',
+    ],
   },
 };
 
