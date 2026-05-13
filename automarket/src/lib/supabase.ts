@@ -1,14 +1,27 @@
 import { createClient } from '@supabase/supabase-js';
 
-const url  = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const svc  = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-export const supabase = createClient(url, anon);
+// Client-side singleton (uses NEXT_PUBLIC_ vars baked at build time)
+export const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  anon,
+);
 
-export const supabaseAdmin = () => createClient(url, svc, {
-  auth: { autoRefreshToken: false, persistSession: false }
-});
+// Server-side admin client — reads URL fresh at call-time so it works
+// even when NEXT_PUBLIC_SUPABASE_URL was not baked into the server bundle
+export const supabaseAdmin = () => {
+  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const svc = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !svc) {
+    throw new Error(
+      `Missing Supabase env vars — SUPABASE_URL: ${url ? 'OK' : 'MISSING'}, SUPABASE_SERVICE_ROLE_KEY: ${svc ? 'OK' : 'MISSING'}`,
+    );
+  }
+  return createClient(url, svc, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+};
 
 export type ContentStatus =
   | 'draft' | 'generating' | 'awaiting_approval'
