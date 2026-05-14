@@ -184,7 +184,7 @@ export default function Dashboard() {
       setFcastSpotClose(spotClose);
       setFcastVix(vix);
       const dte = getDTE(nearest);
-      const f = computeIndexForecast(open, spotClose, chainData, vix, fcastIndex, dte);
+      const f = computeIndexForecast(open, spotClose, chainData, vix, fcastIndex, dte, []);
       setFcastForecast(f);
     } catch (e: any) {
       setFcastError(e.message ?? 'Failed to load data');
