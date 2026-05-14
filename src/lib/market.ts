@@ -897,11 +897,21 @@ export interface IndexForecast {
 // Sector indices that best represent each main index's constituent weight.
 // These are fetched separately and blended into the conviction score.
 const SECTOR_INDEX_MAP: Record<string, { sectorIndex: string; weight: number }[]> = {
-  NIFTY50:     [{ sectorIndex: 'BANKNIFTY', weight: 0.35 }], // BFSI ~35% of Nifty 50
-  SENSEX:      [{ sectorIndex: 'BANKEX',    weight: 0.38 }], // BFSI ~38% of Sensex
+  // Nifty 50: BFSI ~35%, so BankNifty sentiment is the strongest sub-signal
+  NIFTY50:     [{ sectorIndex: 'BANKNIFTY', weight: 0.35 }],
+  // Sensex: BFSI ~38% via BANKEX
+  SENSEX:      [{ sectorIndex: 'BANKEX',    weight: 0.38 }],
+  // Nifty Next 50: banks have ~28% weight
   NIFTYNEXT50: [{ sectorIndex: 'BANKNIFTY', weight: 0.28 }],
+  // Midcap Nifty: banking ~22%
   MIDCAPNIFTY: [{ sectorIndex: 'BANKNIFTY', weight: 0.22 }],
-  // BANKNIFTY and FINNIFTY ARE sector indices — no sub-sector mapping needed
+  // BankNifty: use FinNifty as a broader financial services cross-signal
+  // FinNifty includes NBFCs + insurers that drive banking sentiment
+  BANKNIFTY:   [{ sectorIndex: 'FINNIFTY',  weight: 0.40 }],
+  // FinNifty: use BankNifty — pure banks are ~60% of FinNifty
+  FINNIFTY:    [{ sectorIndex: 'BANKNIFTY', weight: 0.60 }],
+  // BANKEX (BSE): cross-signal with BankNifty (same universe, different exchange)
+  BANKEX:      [{ sectorIndex: 'BANKNIFTY', weight: 0.90 }],
 };
 
 // Fetch the most recent available chain_data for a given index (any expiry).
