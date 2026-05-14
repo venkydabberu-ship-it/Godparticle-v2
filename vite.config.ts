@@ -21,26 +21,35 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Pre-cache all JS/CSS/HTML/font bundles — app shell loads instantly on revisit
-        globPatterns: ['**/*.{js,css,html,woff2,svg,ico,png}'],
+        // New SW activates immediately on all open tabs — critical for Android users
+        // who never close browser tabs and would otherwise run the old app indefinitely.
+        skipWaiting: true,
+        clientsClaim: true,
+        // Precache JS/CSS/fonts only — NOT html.
+        // index.html must always be fetched from the network so users get new code
+        // after every deploy without having to manually clear cache or close tabs.
+        globPatterns: ['**/*.{js,css,woff2,svg,ico,png}'],
         runtimeCaching: [
           {
-            // Supabase REST + Auth: serve stale immediately, revalidate in background
+            // Supabase REST + Auth: NetworkFirst — always fetch live data first.
+            // Cache is only used as offline fallback (financial data must never be stale).
             urlPattern: ({ url }) => url.hostname.includes('supabase.co'),
-            handler: 'StaleWhileRevalidate',
+            handler: 'NetworkFirst',
             options: {
-              cacheName: 'supabase-api-v1',
-              expiration: { maxEntries: 60, maxAgeSeconds: 300 },
+              cacheName: 'supabase-api-v2',
+              networkTimeoutSeconds: 8,
+              expiration: { maxEntries: 60, maxAgeSeconds: 60 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },
           {
-            // Edge functions (Trending stocks, smooth-endpoint)
+            // Edge functions: NetworkFirst for the same reason
             urlPattern: ({ url }) => url.pathname.includes('functions/v1'),
-            handler: 'StaleWhileRevalidate',
+            handler: 'NetworkFirst',
             options: {
-              cacheName: 'edge-fn-v1',
-              expiration: { maxEntries: 20, maxAgeSeconds: 600 },
+              cacheName: 'edge-fn-v2',
+              networkTimeoutSeconds: 8,
+              expiration: { maxEntries: 20, maxAgeSeconds: 60 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },
