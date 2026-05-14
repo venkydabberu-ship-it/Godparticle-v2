@@ -349,6 +349,19 @@ export default function DailyFocus() {
                     </span>
                   ) : null}
                   <span className="text-[9px] font-mono text-[#6b6b85]">ATM {fmtStrike(card.atm)}</span>
+                  {(() => {
+                    const today = new Date().toISOString().split('T')[0];
+                    const isStale = card.tradeDate < today;
+                    return (
+                      <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full ${
+                        isStale
+                          ? 'bg-[#f0a030]/10 border border-[#f0a030]/30 text-[#f0a030]'
+                          : 'bg-[#39d98a]/10 border border-[#39d98a]/25 text-[#39d98a]'
+                      }`}>
+                        {isStale ? `⚠ data ${card.tradeDate.slice(5)}` : `✓ ${card.tradeDate.slice(5)}`}
+                      </span>
+                    );
+                  })()}
                 </div>
                 {/* Expiry tabs */}
                 <div className="flex items-center gap-1.5 flex-wrap">

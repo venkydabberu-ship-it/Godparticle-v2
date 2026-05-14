@@ -494,11 +494,23 @@ export default function Analysis() {
             </div>
           </div>
 
-          {availableDates.length > 0 && (
-            <div className="text-xs font-mono text-[#39d98a] mb-3">
-              ✅ {availableDates.length} day{availableDates.length > 1 ? 's' : ''} of data available: {availableDates.map(d => d.slice(5)).join(', ')}
-            </div>
-          )}
+          {availableDates.length > 0 && (() => {
+            const today = new Date().toISOString().split('T')[0];
+            const latest = availableDates[availableDates.length - 1];
+            const isStale = latest < today;
+            return (
+              <>
+                <div className="text-xs font-mono text-[#39d98a] mb-1">
+                  ✅ {availableDates.length} day{availableDates.length > 1 ? 's' : ''} of data available: {availableDates.map(d => d.slice(5)).join(', ')}
+                </div>
+                {isStale && (
+                  <div className="bg-[#f0a030]/10 border border-[#f0a030]/40 rounded-lg px-3 py-2 text-xs font-mono text-[#f0a030] mb-3">
+                    ⚠ Latest data is from {latest.slice(5)} — upload today's option chain CSV to include today's data in analysis
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           {error && (
             <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#ff4d6d] mb-3">{error}</div>
