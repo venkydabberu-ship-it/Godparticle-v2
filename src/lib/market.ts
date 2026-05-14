@@ -992,7 +992,7 @@ export function computeIndexForecast(
   const gapPts = Math.round(openPrice - spotClose);
   const mpDist = openPrice - mp;
 
-  // PCR signal: -40 to +40 (most important — put writing dominant = bullish)
+  // PCR signal: -40 to +40 (put writing dominant = bullish)
   const pcrSignal = Math.max(-40, Math.min(40, (pcr - 1.0) * 80));
   // Max Pain gravity: above MP = bearish gravity, below = bullish gravity
   const mpSignal = Math.max(-25, Math.min(25, -(mpDist / strikeGap) * 12));
@@ -1002,8 +1002,13 @@ export function computeIndexForecast(
   const roomSignal = Math.max(-20, Math.min(20, ((ceDist - peDist) / strikeGap) * 3));
   // Historical trend: -15 to +15
   const trendSignal = trendSig * 15;
+  // Near-wall proximity: if open lands within 1 strike-gap of near support, put writers
+  // defend that level hard → strong bullish signal. Reverse for resistance.
+  const atNearSupport = nearSupport > 0 && (openPrice - nearSupport) <= strikeGap;
+  const atNearResistance = nearResistance > 0 && (nearResistance - openPrice) <= strikeGap;
+  const proximitySignal = atNearSupport ? 25 : atNearResistance ? -25 : 0;
 
-  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal);
+  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal);
   const bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
     convictionScore > 15 ? 'BULLISH'
     : convictionScore < -15 ? 'BEARISH'
@@ -1013,13 +1018,15 @@ export function computeIndexForecast(
   const mpGravity = Math.max(0.10, Math.min(0.85, 0.85 * Math.exp(-0.45 * Math.max(dte, 0))));
 
   // ── 6. EOD target: blend Max Pain gravity with directional momentum ──
+  // convictionWeight capped at 0.75 so strong-conviction days move decisively toward directional target.
+  // dailyRange * 1.0 (not 0.8) — the VIX range is already 1-sigma; don't under-target.
   const mpTarget = Math.round(openPrice + mpGravity * (mp - openPrice));
   const directionalTarget = bias === 'BULLISH'
-    ? Math.min(Math.round((nearResistance + ceWall) / 2), openPrice + dailyRange * 0.8)
+    ? Math.min(Math.round((nearResistance + ceWall) / 2), openPrice + dailyRange)
     : bias === 'BEARISH'
-    ? Math.max(Math.round((nearSupport + peWall) / 2), openPrice - dailyRange * 0.8)
+    ? Math.max(Math.round((nearSupport + peWall) / 2), openPrice - dailyRange)
     : mpTarget;
-  const convictionWeight = Math.min(0.5, Math.abs(convictionScore) / 100);
+  const convictionWeight = Math.min(0.75, Math.abs(convictionScore) / 80);
   const eodTarget = Math.round(mpTarget * (1 - convictionWeight) + directionalTarget * convictionWeight);
 
   // ── 7. Morning dip/pop target (where market tests first before the main move) ──
