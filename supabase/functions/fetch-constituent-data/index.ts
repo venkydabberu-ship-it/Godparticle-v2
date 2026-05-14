@@ -7,7 +7,7 @@
 // Can also be triggered manually:
 //   POST https://<project>.supabase.co/functions/v1/fetch-constituent-data
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
