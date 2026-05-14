@@ -1376,7 +1376,10 @@ export default function Analysis() {
               function generate() {
                 const open = parseFloat(forecastOpen);
                 if (!open || open <= 0) return;
-                const f = computeIndexForecast(open, spotClose, chainData, vix, indexName, result.dte ?? 1);
+                const historicalSpotCloses = rowsData
+                  .map((r: any) => r.strike_data?.['_spot_close'] ?? 0)
+                  .filter((c: number) => c > 0);
+                const f = computeIndexForecast(open, spotClose, chainData, vix, indexName, result.dte ?? 1, historicalSpotCloses);
                 setForecast(f);
               }
 
@@ -1526,13 +1529,36 @@ export default function Analysis() {
                   };
                 });
 
+                // Index-path-derived option levels (not scenario matrix)
+                // Entry = option price when Nifty at morningDipTarget (the dip buy level)
+                // T1 = option price when Nifty at nearResistance (first take profit)
+                // T2 = option price when Nifty at eodTarget
+                // SL = option price when Nifty breaks 1 strike below nearSupport (CE) or above nearResistance (PE)
+                const strikeGapIdx = getGapStep(indexName);
+                const dipBuyOptPrice = Math.round(bsPrice(forecast.morningDipTarget, strike, Math.max(dte - 0.05, 0.001) / 365, optionIV, isCE ? 'CE' : 'PE'));
+                const t1NiftyLevel = isCE ? forecast.nearResistance : forecast.nearSupport;
+                const t1OptPrice = Math.round(bsPrice(t1NiftyLevel, strike, Math.max(dte - 0.35, 0.001) / 365, optionIV, isCE ? 'CE' : 'PE'));
+                const eodNifty = Math.round(parseFloat(forecastOpen) + forecast.mpGravity * (forecast.maxPain - parseFloat(forecastOpen)));
+                const blendedEod = forecast.convictionScore > 20
+                  ? Math.round(eodNifty * 0.6 + forecast.nearResistance * 0.4)
+                  : forecast.convictionScore < -20
+                  ? Math.round(eodNifty * 0.6 + forecast.nearSupport * 0.4)
+                  : eodNifty;
+                const t2OptPrice = Math.round(bsPrice(isCE ? Math.max(blendedEod, t1NiftyLevel + strikeGapIdx) : Math.min(blendedEod, t1NiftyLevel - strikeGapIdx), strike, Math.max(dte - 0.8, 0.001) / 365, optionIV, isCE ? 'CE' : 'PE'));
+                const slNiftyLevel = isCE ? forecast.nearSupport - strikeGapIdx : forecast.nearResistance + strikeGapIdx;
+                const slOptPrice = Math.round(bsPrice(slNiftyLevel, strike, Math.max(dte - 0.2, 0.001) / 365, optionIV, isCE ? 'CE' : 'PE'));
+                const targetLines = [
+                  { price: Math.max(t2OptPrice, t1OptPrice + 1), label: 'T2', color: '#f0c040', dash: '6,3' },
+                  { price: t1OptPrice, label: 'T1', color: '#39d98a', dash: '6,3' },
+                  { price: dipBuyOptPrice, label: 'Entry', color: '#4d9fff', dash: '4,3' },
+                  { price: Math.min(slOptPrice, dipBuyOptPrice - 1), label: 'SL', color: '#ff4d6d', dash: '4,3' },
+                ];
+
                 // Y scale for option chart
                 const optLevels: number[] = [
                   ...optPts.map(p => p.high), ...optPts.map(p => p.low),
+                  Math.max(t2OptPrice, t1OptPrice + 1), t1OptPrice, dipBuyOptPrice, Math.min(slOptPrice, dipBuyOptPrice - 1),
                 ];
-                if (bestSc) {
-                  optLevels.push(bestSc.entryLow, bestSc.sl, bestSc.target1, bestSc.target2);
-                }
                 const optMin = Math.min(...optLevels) - 10;
                 const optMax = Math.max(...optLevels) + 10;
                 const optRange = optMax - optMin || 1;
@@ -1543,13 +1569,6 @@ export default function Analysis() {
                 const optBotPath = [...optPts].reverse().map(p => `L${xOpt(p.minuteOffset).toFixed(1)},${yOpt(p.low).toFixed(1)}`).join(' ');
                 const optBandPath = `${optTopPath} ${optBotPath} Z`;
                 const optCentralPath = optPts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOpt(p.minuteOffset).toFixed(1)},${yOpt(p.central).toFixed(1)}`).join(' ');
-
-                const targetLines = bestSc ? [
-                  { price: bestSc.target2, label: 'T2', color: '#f0c040', dash: '6,3' },
-                  { price: bestSc.target1, label: 'T1', color: '#39d98a', dash: '6,3' },
-                  { price: bestSc.entryLow, label: 'Entry', color: '#4d9fff', dash: '4,3' },
-                  { price: bestSc.sl, label: 'SL', color: '#ff4d6d', dash: '4,3' },
-                ] : [];
 
                 optSvgContent = (
                   <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} className="w-full" style={{ maxHeight: 380 }}>
@@ -1636,7 +1655,7 @@ export default function Analysis() {
                         </div>
                         <div className="font-normal opacity-80">{forecast.summary}</div>
                         <div className="mt-1 text-[10px] opacity-70">
-                          Max Pain gravity: <strong>{Math.round(forecast.mpGravity * 100)}%</strong> · DTE: {forecast.dte}d · EOD target: {Math.round(parseFloat(forecastOpen) + forecast.mpGravity * (forecast.maxPain - parseFloat(forecastOpen))).toLocaleString('en-IN')}
+                          PCR: <strong>{forecast.pcr.toFixed(2)}</strong> · Signal: <strong>{forecast.convictionScore > 0 ? '+' : ''}{forecast.convictionScore}</strong> · Gravity: <strong>{Math.round(forecast.mpGravity * 100)}%</strong> · DTE: {forecast.dte}d · Near support: <strong>{forecast.nearSupport.toLocaleString('en-IN')}</strong> · Near resistance: <strong>{forecast.nearResistance.toLocaleString('en-IN')}</strong>
                         </div>
                       </div>
 
@@ -1660,21 +1679,39 @@ export default function Analysis() {
                             🎯 {result.strike} {result.optType} Premium Path · IV {Math.round(optionIV * 100)}%
                           </div>
                           {optSvgContent}
-                          {bestSc && (
-                            <div className="flex flex-wrap gap-3 mt-2 px-1">
-                              {[
-                                { label: `T2 ${bestSc.target2}`, color: '#f0c040' },
-                                { label: `T1 ${bestSc.target1}`, color: '#39d98a' },
-                                { label: `Entry ${bestSc.entryLow}`, color: '#4d9fff' },
-                                { label: `SL ${bestSc.sl}`, color: '#ff4d6d' },
-                              ].map(l => (
-                                <div key={l.label} className="flex items-center gap-1 text-[10px] font-mono">
-                                  <div className="w-3 h-0.5" style={{ background: l.color }} />
-                                  <span style={{ color: l.color }}>{l.label}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
+                          {forecast && (() => {
+                            const _strike = result.strike ?? 0;
+                            const _dte = result.dte ?? 1;
+                            const _isCE = result.optType === 'CE';
+                            const _strikeGapIdx = getGapStep(indexName);
+                            const _dipBuyOptPrice = Math.round(bsPrice(forecast.morningDipTarget, _strike, Math.max(_dte - 0.05, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                            const _t1NiftyLevel = _isCE ? forecast.nearResistance : forecast.nearSupport;
+                            const _t1OptPrice = Math.round(bsPrice(_t1NiftyLevel, _strike, Math.max(_dte - 0.35, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                            const _eodNifty = Math.round(parseFloat(forecastOpen) + forecast.mpGravity * (forecast.maxPain - parseFloat(forecastOpen)));
+                            const _blendedEod = forecast.convictionScore > 20
+                              ? Math.round(_eodNifty * 0.6 + forecast.nearResistance * 0.4)
+                              : forecast.convictionScore < -20
+                              ? Math.round(_eodNifty * 0.6 + forecast.nearSupport * 0.4)
+                              : _eodNifty;
+                            const _t2OptPrice = Math.round(bsPrice(_isCE ? Math.max(_blendedEod, _t1NiftyLevel + _strikeGapIdx) : Math.min(_blendedEod, _t1NiftyLevel - _strikeGapIdx), _strike, Math.max(_dte - 0.8, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                            const _slNiftyLevel = _isCE ? forecast.nearSupport - _strikeGapIdx : forecast.nearResistance + _strikeGapIdx;
+                            const _slOptPrice = Math.round(bsPrice(_slNiftyLevel, _strike, Math.max(_dte - 0.2, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                            return (
+                              <div className="flex flex-wrap gap-3 mt-2 px-1">
+                                {[
+                                  { label: `T2 ${Math.max(_t2OptPrice, _t1OptPrice + 1)}`, color: '#f0c040' },
+                                  { label: `T1 ${_t1OptPrice}`, color: '#39d98a' },
+                                  { label: `Entry ${_dipBuyOptPrice}`, color: '#4d9fff' },
+                                  { label: `SL ${Math.min(_slOptPrice, _dipBuyOptPrice - 1)}`, color: '#ff4d6d' },
+                                ].map(l => (
+                                  <div key={l.label} className="flex items-center gap-1 text-[10px] font-mono">
+                                    <div className="w-3 h-0.5" style={{ background: l.color }} />
+                                    <span style={{ color: l.color }}>{l.label}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
 
@@ -1725,6 +1762,77 @@ export default function Analysis() {
                           </div>
                         ))}
                       </div>
+
+                      {/* ── TRADE PLAN (plain English) ── */}
+                      {(() => {
+                        const _strike = result.strike ?? 0;
+                        const _dte = result.dte ?? 1;
+                        const _isCE = result.optType === 'CE';
+                        const _strikeGapIdx = getGapStep(indexName);
+                        const _dipBuyOptPrice = Math.round(bsPrice(forecast.morningDipTarget, _strike, Math.max(_dte - 0.05, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                        const _t1NiftyLevel = _isCE ? forecast.nearResistance : forecast.nearSupport;
+                        const _t1OptPrice = Math.round(bsPrice(_t1NiftyLevel, _strike, Math.max(_dte - 0.35, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                        const _eodNifty = Math.round(parseFloat(forecastOpen) + forecast.mpGravity * (forecast.maxPain - parseFloat(forecastOpen)));
+                        const _blendedEod = forecast.convictionScore > 20
+                          ? Math.round(_eodNifty * 0.6 + forecast.nearResistance * 0.4)
+                          : forecast.convictionScore < -20
+                          ? Math.round(_eodNifty * 0.6 + forecast.nearSupport * 0.4)
+                          : _eodNifty;
+                        const _t2OptPrice = Math.round(bsPrice(_isCE ? Math.max(_blendedEod, _t1NiftyLevel + _strikeGapIdx) : Math.min(_blendedEod, _t1NiftyLevel - _strikeGapIdx), _strike, Math.max(_dte - 0.8, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                        const _slNiftyLevel = _isCE ? forecast.nearSupport - _strikeGapIdx : forecast.nearResistance + _strikeGapIdx;
+                        const _slOptPrice = Math.round(bsPrice(_slNiftyLevel, _strike, Math.max(_dte - 0.2, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                        return (
+                          <div className="bg-[#0d0d14] border border-[#1e1e2e] rounded-xl p-4 mt-4">
+                            <div className="text-[10px] font-black uppercase tracking-widest text-[#f0c040] mb-3">
+                              📋 Trade Plan — {result.strike} {result.optType} (Buy the {_isCE ? 'Dip' : 'Pop'})
+                            </div>
+                            <div className="space-y-3 text-xs font-mono">
+                              <div className="flex gap-3">
+                                <div className="w-6 h-6 rounded-full bg-[#ff4d6d]/15 flex items-center justify-center shrink-0 text-[10px] text-[#ff4d6d] font-black">1</div>
+                                <div>
+                                  <div className="text-[#e8e8f0] font-black mb-0.5">Wait — do NOT buy at 9:15 AM open ({_isCE ? `~₹${Math.round(bsPrice(parseFloat(forecastOpen), _strike, _dte / 365, optionIV, 'CE'))}` : `~₹${Math.round(bsPrice(parseFloat(forecastOpen), _strike, _dte / 365, optionIV, 'PE'))}`})</div>
+                                  <div className="text-[#6b6b85]">Opening price is volatile. Wait for the {_isCE ? 'morning dip' : 'morning pop'}.</div>
+                                </div>
+                              </div>
+                              <div className="flex gap-3">
+                                <div className="w-6 h-6 rounded-full bg-[#4d9fff]/15 flex items-center justify-center shrink-0 text-[10px] text-[#4d9fff] font-black">2</div>
+                                <div>
+                                  <div className="text-[#e8e8f0] font-black mb-0.5">
+                                    {_isCE ? `Buy when Nifty dips to ~${forecast.nearSupport.toLocaleString('en-IN')}` : `Buy when Nifty pops to ~${forecast.nearResistance.toLocaleString('en-IN')}`}
+                                  </div>
+                                  <div className="text-[#4d9fff]">
+                                    {_isCE ? `BUY ${result.strike} CE at ₹${_dipBuyOptPrice} (near support — cheapest point)` : `BUY ${result.strike} PE at ₹${_dipBuyOptPrice} (near resistance — cheapest point)`}
+                                  </div>
+                                  <div className="text-[#6b6b85] mt-0.5">Confirmation: wait for Nifty to bounce {_isCE ? 'above' : 'below'} {_isCE ? forecast.nearSupport.toLocaleString('en-IN') : forecast.nearResistance.toLocaleString('en-IN')} before entering</div>
+                                </div>
+                              </div>
+                              <div className="flex gap-3">
+                                <div className="w-6 h-6 rounded-full bg-[#ff4d6d]/15 flex items-center justify-center shrink-0 text-[10px] text-[#ff4d6d] font-black">3</div>
+                                <div>
+                                  <div className="text-[#e8e8f0] font-black mb-0.5">Stop Loss: ₹{Math.min(_slOptPrice, _dipBuyOptPrice - 1)}</div>
+                                  <div className="text-[#6b6b85]">
+                                    Exit immediately if Nifty breaks {_isCE ? `below ${(forecast.nearSupport - getGapStep(indexName)).toLocaleString('en-IN')}` : `above ${(forecast.nearResistance + getGapStep(indexName)).toLocaleString('en-IN')}`}. No second-guessing.
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex gap-3">
+                                <div className="w-6 h-6 rounded-full bg-[#39d98a]/15 flex items-center justify-center shrink-0 text-[10px] text-[#39d98a] font-black">4</div>
+                                <div>
+                                  <div className="text-[#e8e8f0] font-black mb-0.5">Target 1: ₹{_t1OptPrice} — take 50% profit</div>
+                                  <div className="text-[#6b6b85]">When Nifty {_isCE ? `reaches ${forecast.nearResistance.toLocaleString('en-IN')} (near resistance)` : `drops to ${forecast.nearSupport.toLocaleString('en-IN')} (near support)`}</div>
+                                </div>
+                              </div>
+                              <div className="flex gap-3">
+                                <div className="w-6 h-6 rounded-full bg-[#f0c040]/15 flex items-center justify-center shrink-0 text-[10px] text-[#f0c040] font-black">5</div>
+                                <div>
+                                  <div className="text-[#e8e8f0] font-black mb-0.5">Target 2: ₹{Math.max(_t2OptPrice, _t1OptPrice + 1)} — let the rest ride</div>
+                                  <div className="text-[#6b6b85]">EOD target level — exit by 3:15 PM regardless</div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       <div className="mt-3 text-[10px] font-mono text-[#6b6b85] px-1">
                         ⚠ Forecast based on Max Pain gravity + Gamma Wall theory. Not financial advice. Actual movement depends on macro events, FII flow, and news.
