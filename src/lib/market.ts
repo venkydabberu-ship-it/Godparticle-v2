@@ -896,7 +896,7 @@ export interface IndexForecast {
 
 // Sector indices that best represent each main index's constituent weight.
 // These are fetched separately and blended into the conviction score.
-const SECTOR_INDEX_MAP: Record<string, { sectorIndex: string; weight: number }[]> = {
+export const SECTOR_INDEX_MAP: Record<string, { sectorIndex: string; weight: number }[]> = {
   // Nifty 50: BFSI ~35%, so BankNifty sentiment is the strongest sub-signal
   NIFTY50:     [{ sectorIndex: 'BANKNIFTY', weight: 0.35 }],
   // Sensex: BFSI ~38% via BANKEX
