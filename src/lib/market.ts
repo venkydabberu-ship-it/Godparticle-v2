@@ -153,11 +153,11 @@ export async function getMarketData(
     .select('*')
     .eq('index_name', normalizedName)
     .eq('expiry', normalizedExpiry)
-    .order('trade_date', { ascending: true })
-    .limit(days * 3); // get more, take last N
+    .order('trade_date', { ascending: false })
+    .limit(days);
 
   if (error) throw new Error(error.message);
-  return (data || []).slice(-days);
+  return (data || []).reverse(); // return oldest-first for time-series analysis
 }
 
 // ── GET AVAILABLE EXPIRIES FOR AN INDEX ──
