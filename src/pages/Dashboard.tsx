@@ -148,11 +148,11 @@ export default function Dashboard() {
     setFcastForecast(null);
     getAvailableExpiries(fcastIndex).then(expiries => {
       if (!expiries.length) return;
-      // Pick nearest expiry (smallest DTE >= 0)
+      // Pick nearest future expiry by date string comparison (getDTE clamps to 0 so can't be used for filtering)
+      const today = new Date().toISOString().split('T')[0];
       const nearest = expiries
-        .map(e => ({ e, dte: getDTE(e) }))
-        .filter(x => x.dte >= 0)
-        .sort((a, b) => a.dte - b.dte)[0]?.e
+        .filter(e => e >= today)
+        .sort((a, b) => a.localeCompare(b))[0]
         ?? expiries[expiries.length - 1];
       setFcastExpiry(nearest);
     }).catch(() => {});
@@ -168,10 +168,10 @@ export default function Dashboard() {
       // Always use nearest expiry — re-fetch in case state is stale
       const expiries = await getAvailableExpiries(fcastIndex);
       if (!expiries.length) { setFcastError('No option chain data uploaded for this index yet.'); return; }
+      const today = new Date().toISOString().split('T')[0];
       const nearest = expiries
-        .map(e => ({ e, dte: getDTE(e) }))
-        .filter(x => x.dte >= 0)
-        .sort((a, b) => a.dte - b.dte)[0]?.e
+        .filter(e => e >= today)
+        .sort((a, b) => a.localeCompare(b))[0]
         ?? expiries[expiries.length - 1];
       setFcastExpiry(nearest);
       const rows = await getMarketData(fcastIndex, nearest, 1);
