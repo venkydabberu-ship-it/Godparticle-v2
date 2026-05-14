@@ -909,7 +909,7 @@ function findNearGammaWalls(
   spot: number,
   strikeGap: number,
 ): { nearResistance: number; nearSupport: number } {
-  const proximity = strikeGap * 10;
+  const proximity = strikeGap * 6;
   let nearResistance = 0, maxNearCEOI = 0;
   let nearSupport = 0, maxNearPEOI = 0;
   for (const [key, val] of Object.entries(strikeData)) {
@@ -957,7 +957,7 @@ export function computeIndexForecast(
   const strikeGap = getGapStep(indexName);
 
   // ── 1. Max Pain ──
-  const allStrikes = Object.keys(strikeData).map(Number).filter(s => s > 0 && s > openPrice * 0.85 && s < openPrice * 1.15);
+  const allStrikes = Object.keys(strikeData).map(Number).filter(s => s > 0 && s > openPrice * 0.90 && s < openPrice * 1.10);
   let minPain = Infinity;
   let mp = Math.round(openPrice / strikeGap) * strikeGap;
   for (const testSk of allStrikes) {

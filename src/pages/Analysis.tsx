@@ -1684,18 +1684,28 @@ export default function Analysis() {
                             const _dte = result.dte ?? 1;
                             const _isCE = result.optType === 'CE';
                             const _strikeGapIdx = getGapStep(indexName);
+                            const _open = parseFloat(forecastOpen);
                             const _dipBuyOptPrice = Math.round(bsPrice(forecast.morningDipTarget, _strike, Math.max(_dte - 0.05, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
-                            const _t1NiftyLevel = _isCE ? forecast.nearResistance : forecast.nearSupport;
-                            const _t1OptPrice = Math.round(bsPrice(_t1NiftyLevel, _strike, Math.max(_dte - 0.35, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
-                            const _eodNifty = Math.round(parseFloat(forecastOpen) + forecast.mpGravity * (forecast.maxPain - parseFloat(forecastOpen)));
+                            const _eodNifty = Math.round(_open + forecast.mpGravity * (forecast.maxPain - _open));
                             const _blendedEod = forecast.convictionScore > 20
                               ? Math.round(_eodNifty * 0.6 + forecast.nearResistance * 0.4)
                               : forecast.convictionScore < -20
                               ? Math.round(_eodNifty * 0.6 + forecast.nearSupport * 0.4)
                               : _eodNifty;
-                            const _t2OptPrice = Math.round(bsPrice(_isCE ? Math.max(_blendedEod, _t1NiftyLevel + _strikeGapIdx) : Math.min(_blendedEod, _t1NiftyLevel - _strikeGapIdx), _strike, Math.max(_dte - 0.8, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                            // T1 = midpoint between dip entry and EOD target, capped at near wall
+                            const _t1NiftyLevel = _isCE
+                              ? Math.min(forecast.nearResistance, Math.round((forecast.morningDipTarget + _blendedEod) / 2))
+                              : Math.max(forecast.nearSupport, Math.round((forecast.morningDipTarget + _blendedEod) / 2));
+                            // T2 = EOD target, capped at near wall (push through only if strong conviction)
+                            const _t2NiftyLevel = _isCE
+                              ? (forecast.convictionScore > 20 ? Math.min(forecast.nearResistance, _blendedEod + _strikeGapIdx) : Math.min(forecast.nearResistance, _blendedEod))
+                              : (forecast.convictionScore < -20 ? Math.max(forecast.nearSupport, _blendedEod - _strikeGapIdx) : Math.max(forecast.nearSupport, _blendedEod));
+                            const _t1OptPrice = Math.round(bsPrice(_t1NiftyLevel, _strike, Math.max(_dte - 0.35, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                            const _t2OptPrice = Math.round(bsPrice(_t2NiftyLevel, _strike, Math.max(_dte - 0.8, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
                             const _slNiftyLevel = _isCE ? forecast.nearSupport - _strikeGapIdx : forecast.nearResistance + _strikeGapIdx;
-                            const _slOptPrice = Math.round(bsPrice(_slNiftyLevel, _strike, Math.max(_dte - 0.2, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                            const _slOptPriceBS = Math.round(bsPrice(_slNiftyLevel, _strike, Math.max(_dte - 0.2, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                            // SL must be at least 17% below entry (prevents theta-triggered SL)
+                            const _slOptPrice = Math.min(_slOptPriceBS, Math.round(_dipBuyOptPrice * 0.83));
                             return (
                               <div className="flex flex-wrap gap-3 mt-2 px-1">
                                 {[
@@ -1769,28 +1779,67 @@ export default function Analysis() {
                         const _dte = result.dte ?? 1;
                         const _isCE = result.optType === 'CE';
                         const _strikeGapIdx = getGapStep(indexName);
+                        const _open = parseFloat(forecastOpen);
+                        const _openOptPrice = Math.round(bsPrice(_open, _strike, _dte / 365, optionIV, _isCE ? 'CE' : 'PE'));
                         const _dipBuyOptPrice = Math.round(bsPrice(forecast.morningDipTarget, _strike, Math.max(_dte - 0.05, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
-                        const _t1NiftyLevel = _isCE ? forecast.nearResistance : forecast.nearSupport;
-                        const _t1OptPrice = Math.round(bsPrice(_t1NiftyLevel, _strike, Math.max(_dte - 0.35, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
-                        const _eodNifty = Math.round(parseFloat(forecastOpen) + forecast.mpGravity * (forecast.maxPain - parseFloat(forecastOpen)));
+                        const _eodNifty = Math.round(_open + forecast.mpGravity * (forecast.maxPain - _open));
                         const _blendedEod = forecast.convictionScore > 20
                           ? Math.round(_eodNifty * 0.6 + forecast.nearResistance * 0.4)
                           : forecast.convictionScore < -20
                           ? Math.round(_eodNifty * 0.6 + forecast.nearSupport * 0.4)
                           : _eodNifty;
-                        const _t2OptPrice = Math.round(bsPrice(_isCE ? Math.max(_blendedEod, _t1NiftyLevel + _strikeGapIdx) : Math.min(_blendedEod, _t1NiftyLevel - _strikeGapIdx), _strike, Math.max(_dte - 0.8, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                        // T1 = midpoint between dip entry and EOD target, capped at near wall
+                        const _t1NiftyLevel = _isCE
+                          ? Math.min(forecast.nearResistance, Math.round((forecast.morningDipTarget + _blendedEod) / 2))
+                          : Math.max(forecast.nearSupport, Math.round((forecast.morningDipTarget + _blendedEod) / 2));
+                        // T2 = EOD target capped at near wall (push through only on strong conviction)
+                        const _t2NiftyLevel = _isCE
+                          ? (forecast.convictionScore > 20 ? Math.min(forecast.nearResistance, _blendedEod + _strikeGapIdx) : Math.min(forecast.nearResistance, _blendedEod))
+                          : (forecast.convictionScore < -20 ? Math.max(forecast.nearSupport, _blendedEod - _strikeGapIdx) : Math.max(forecast.nearSupport, _blendedEod));
+                        const _t1OptPrice = Math.round(bsPrice(_t1NiftyLevel, _strike, Math.max(_dte - 0.35, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                        const _t2OptPrice = Math.round(bsPrice(_t2NiftyLevel, _strike, Math.max(_dte - 0.8, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
                         const _slNiftyLevel = _isCE ? forecast.nearSupport - _strikeGapIdx : forecast.nearResistance + _strikeGapIdx;
-                        const _slOptPrice = Math.round(bsPrice(_slNiftyLevel, _strike, Math.max(_dte - 0.2, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                        const _slOptPriceBS = Math.round(bsPrice(_slNiftyLevel, _strike, Math.max(_dte - 0.2, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
+                        // SL must be at least 17% below entry (prevents theta-triggered stops)
+                        const _slOptPrice = Math.min(_slOptPriceBS, Math.round(_dipBuyOptPrice * 0.83), _dipBuyOptPrice - 1);
+
+                        // NEUTRAL: no directional edge — show range-play card instead
+                        if (Math.abs(forecast.convictionScore) <= 15) {
+                          return (
+                            <div className="bg-[#0d0d14] border border-[#f0c040]/30 rounded-xl p-4 mt-4">
+                              <div className="text-[10px] font-black uppercase tracking-widest text-[#f0c040] mb-3">
+                                ⚠ NO CLEAR EDGE TODAY — Skip Directional Bets
+                              </div>
+                              <div className="space-y-2 text-xs font-mono text-[#6b6b85]">
+                                <div>
+                                  <span className="text-[#e8e8f0] font-black">Conviction: </span>
+                                  <span className="text-[#f0c040]">{forecast.convictionScore}</span>
+                                  <span> — mixed signals (PCR {forecast.pcr.toFixed(2)}, Max Pain gravity weak)</span>
+                                </div>
+                                <div className="pt-1 border-t border-[#1e1e2e]">
+                                  <div className="text-[#e8e8f0] font-black mb-1">Range to watch today:</div>
+                                  <div>Support: <span className="text-[#4d9fff] font-black">{forecast.nearSupport.toLocaleString('en-IN')}</span> · Resistance: <span className="text-[#ff8c42] font-black">{forecast.nearResistance.toLocaleString('en-IN')}</span></div>
+                                </div>
+                                <div className="pt-1 border-t border-[#1e1e2e] space-y-1">
+                                  <div>If Nifty breaks <span className="text-[#ff8c42] font-black">above {forecast.nearResistance.toLocaleString('en-IN')}</span> with a confirmed candle → CE entry, SL below {forecast.nearResistance.toLocaleString('en-IN')}</div>
+                                  <div>If Nifty breaks <span className="text-[#4d9fff] font-black">below {forecast.nearSupport.toLocaleString('en-IN')}</span> with a confirmed candle → PE entry, SL above {forecast.nearSupport.toLocaleString('en-IN')}</div>
+                                  <div className="text-[#6b6b85] pt-0.5">Without a breakout, both CE and PE bleed time value. Wait.</div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+
                         return (
                           <div className="bg-[#0d0d14] border border-[#1e1e2e] rounded-xl p-4 mt-4">
                             <div className="text-[10px] font-black uppercase tracking-widest text-[#f0c040] mb-3">
-                              📋 Trade Plan — {result.strike} {result.optType} (Buy the {_isCE ? 'Dip' : 'Pop'})
+                              📋 Trade Plan — {result.strike} {result.optType} · {forecast.bias} (conviction {forecast.convictionScore > 0 ? '+' : ''}{forecast.convictionScore})
                             </div>
                             <div className="space-y-3 text-xs font-mono">
                               <div className="flex gap-3">
                                 <div className="w-6 h-6 rounded-full bg-[#ff4d6d]/15 flex items-center justify-center shrink-0 text-[10px] text-[#ff4d6d] font-black">1</div>
                                 <div>
-                                  <div className="text-[#e8e8f0] font-black mb-0.5">Wait — do NOT buy at 9:15 AM open ({_isCE ? `~₹${Math.round(bsPrice(parseFloat(forecastOpen), _strike, _dte / 365, optionIV, 'CE'))}` : `~₹${Math.round(bsPrice(parseFloat(forecastOpen), _strike, _dte / 365, optionIV, 'PE'))}`})</div>
+                                  <div className="text-[#e8e8f0] font-black mb-0.5">Wait — do NOT buy at 9:15 AM open (~₹{_openOptPrice})</div>
                                   <div className="text-[#6b6b85]">Opening price is volatile. Wait for the {_isCE ? 'morning dip' : 'morning pop'}.</div>
                                 </div>
                               </div>
@@ -1798,20 +1847,22 @@ export default function Analysis() {
                                 <div className="w-6 h-6 rounded-full bg-[#4d9fff]/15 flex items-center justify-center shrink-0 text-[10px] text-[#4d9fff] font-black">2</div>
                                 <div>
                                   <div className="text-[#e8e8f0] font-black mb-0.5">
-                                    {_isCE ? `Buy when Nifty dips to ~${forecast.nearSupport.toLocaleString('en-IN')}` : `Buy when Nifty pops to ~${forecast.nearResistance.toLocaleString('en-IN')}`}
+                                    {_isCE ? `Buy when Nifty dips to ~${forecast.morningDipTarget.toLocaleString('en-IN')}` : `Buy when Nifty pops to ~${forecast.morningDipTarget.toLocaleString('en-IN')}`}
                                   </div>
                                   <div className="text-[#4d9fff]">
-                                    {_isCE ? `BUY ${result.strike} CE at ₹${_dipBuyOptPrice} (near support — cheapest point)` : `BUY ${result.strike} PE at ₹${_dipBuyOptPrice} (near resistance — cheapest point)`}
+                                    BUY {result.strike} {result.optType} at ₹{_dipBuyOptPrice} ({_isCE ? 'near support — cheapest point' : 'near resistance — cheapest point'})
                                   </div>
-                                  <div className="text-[#6b6b85] mt-0.5">Confirmation: wait for Nifty to bounce {_isCE ? 'above' : 'below'} {_isCE ? forecast.nearSupport.toLocaleString('en-IN') : forecast.nearResistance.toLocaleString('en-IN')} before entering</div>
+                                  <div className="text-[#6b6b85] mt-0.5">
+                                    Confirmation: wait for Nifty to bounce {_isCE ? `above ${forecast.nearSupport.toLocaleString('en-IN')}` : `below ${forecast.nearResistance.toLocaleString('en-IN')}`} before entering
+                                  </div>
                                 </div>
                               </div>
                               <div className="flex gap-3">
                                 <div className="w-6 h-6 rounded-full bg-[#ff4d6d]/15 flex items-center justify-center shrink-0 text-[10px] text-[#ff4d6d] font-black">3</div>
                                 <div>
-                                  <div className="text-[#e8e8f0] font-black mb-0.5">Stop Loss: ₹{Math.min(_slOptPrice, _dipBuyOptPrice - 1)}</div>
+                                  <div className="text-[#e8e8f0] font-black mb-0.5">Stop Loss: ₹{_slOptPrice} ({Math.round((1 - _slOptPrice / _dipBuyOptPrice) * 100)}% below entry)</div>
                                   <div className="text-[#6b6b85]">
-                                    Exit immediately if Nifty breaks {_isCE ? `below ${(forecast.nearSupport - getGapStep(indexName)).toLocaleString('en-IN')}` : `above ${(forecast.nearResistance + getGapStep(indexName)).toLocaleString('en-IN')}`}. No second-guessing.
+                                    Exit immediately if Nifty breaks {_isCE ? `below ${(forecast.nearSupport - _strikeGapIdx).toLocaleString('en-IN')}` : `above ${(forecast.nearResistance + _strikeGapIdx).toLocaleString('en-IN')}`}. No second-guessing.
                                   </div>
                                 </div>
                               </div>
@@ -1819,14 +1870,14 @@ export default function Analysis() {
                                 <div className="w-6 h-6 rounded-full bg-[#39d98a]/15 flex items-center justify-center shrink-0 text-[10px] text-[#39d98a] font-black">4</div>
                                 <div>
                                   <div className="text-[#e8e8f0] font-black mb-0.5">Target 1: ₹{_t1OptPrice} — take 50% profit</div>
-                                  <div className="text-[#6b6b85]">When Nifty {_isCE ? `reaches ${forecast.nearResistance.toLocaleString('en-IN')} (near resistance)` : `drops to ${forecast.nearSupport.toLocaleString('en-IN')} (near support)`}</div>
+                                  <div className="text-[#6b6b85]">When Nifty reaches {_t1NiftyLevel.toLocaleString('en-IN')} ({_isCE ? 'halfway to resistance' : 'halfway to support'})</div>
                                 </div>
                               </div>
                               <div className="flex gap-3">
                                 <div className="w-6 h-6 rounded-full bg-[#f0c040]/15 flex items-center justify-center shrink-0 text-[10px] text-[#f0c040] font-black">5</div>
                                 <div>
                                   <div className="text-[#e8e8f0] font-black mb-0.5">Target 2: ₹{Math.max(_t2OptPrice, _t1OptPrice + 1)} — let the rest ride</div>
-                                  <div className="text-[#6b6b85]">EOD target level — exit by 3:15 PM regardless</div>
+                                  <div className="text-[#6b6b85]">EOD target {_t2NiftyLevel.toLocaleString('en-IN')} — exit by 3:15 PM regardless</div>
                                 </div>
                               </div>
                             </div>
