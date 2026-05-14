@@ -1684,27 +1684,16 @@ export default function Analysis() {
                             const _dte = result.dte ?? 1;
                             const _isCE = result.optType === 'CE';
                             const _strikeGapIdx = getGapStep(indexName);
-                            const _open = parseFloat(forecastOpen);
                             const _dipBuyOptPrice = Math.round(bsPrice(forecast.morningDipTarget, _strike, Math.max(_dte - 0.05, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
-                            const _eodNifty = Math.round(_open + forecast.mpGravity * (forecast.maxPain - _open));
-                            const _blendedEod = forecast.convictionScore > 20
-                              ? Math.round(_eodNifty * 0.6 + forecast.nearResistance * 0.4)
-                              : forecast.convictionScore < -20
-                              ? Math.round(_eodNifty * 0.6 + forecast.nearSupport * 0.4)
-                              : _eodNifty;
-                            // T1 = midpoint between dip entry and EOD target, capped at near wall
-                            const _t1NiftyLevel = _isCE
-                              ? Math.min(forecast.nearResistance, Math.round((forecast.morningDipTarget + _blendedEod) / 2))
-                              : Math.max(forecast.nearSupport, Math.round((forecast.morningDipTarget + _blendedEod) / 2));
-                            // T2 = EOD target, capped at near wall (push through only if strong conviction)
-                            const _t2NiftyLevel = _isCE
-                              ? (forecast.convictionScore > 20 ? Math.min(forecast.nearResistance, _blendedEod + _strikeGapIdx) : Math.min(forecast.nearResistance, _blendedEod))
-                              : (forecast.convictionScore < -20 ? Math.max(forecast.nearSupport, _blendedEod - _strikeGapIdx) : Math.max(forecast.nearSupport, _blendedEod));
+                            // T1 = EOD target (realistic — where market should settle)
+                            const _t1NiftyLevel = forecast.eodTarget;
+                            // T2 = near resistance wall (BULLISH) or near support wall (BEARISH)
+                            // This is where the market tests if momentum continues through EOD
+                            const _t2NiftyLevel = _isCE ? forecast.nearResistance : forecast.nearSupport;
                             const _t1OptPrice = Math.round(bsPrice(_t1NiftyLevel, _strike, Math.max(_dte - 0.35, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
                             const _t2OptPrice = Math.round(bsPrice(_t2NiftyLevel, _strike, Math.max(_dte - 0.8, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
                             const _slNiftyLevel = _isCE ? forecast.nearSupport - _strikeGapIdx : forecast.nearResistance + _strikeGapIdx;
                             const _slOptPriceBS = Math.round(bsPrice(_slNiftyLevel, _strike, Math.max(_dte - 0.2, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
-                            // SL must be at least 17% below entry (prevents theta-triggered SL)
                             const _slOptPrice = Math.min(_slOptPriceBS, Math.round(_dipBuyOptPrice * 0.83));
                             return (
                               <div className="flex flex-wrap gap-3 mt-2 px-1">
@@ -1782,20 +1771,11 @@ export default function Analysis() {
                         const _open = parseFloat(forecastOpen);
                         const _openOptPrice = Math.round(bsPrice(_open, _strike, _dte / 365, optionIV, _isCE ? 'CE' : 'PE'));
                         const _dipBuyOptPrice = Math.round(bsPrice(forecast.morningDipTarget, _strike, Math.max(_dte - 0.05, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
-                        const _eodNifty = Math.round(_open + forecast.mpGravity * (forecast.maxPain - _open));
-                        const _blendedEod = forecast.convictionScore > 20
-                          ? Math.round(_eodNifty * 0.6 + forecast.nearResistance * 0.4)
-                          : forecast.convictionScore < -20
-                          ? Math.round(_eodNifty * 0.6 + forecast.nearSupport * 0.4)
-                          : _eodNifty;
-                        // T1 = midpoint between dip entry and EOD target, capped at near wall
-                        const _t1NiftyLevel = _isCE
-                          ? Math.min(forecast.nearResistance, Math.round((forecast.morningDipTarget + _blendedEod) / 2))
-                          : Math.max(forecast.nearSupport, Math.round((forecast.morningDipTarget + _blendedEod) / 2));
-                        // T2 = EOD target capped at near wall (push through only on strong conviction)
-                        const _t2NiftyLevel = _isCE
-                          ? (forecast.convictionScore > 20 ? Math.min(forecast.nearResistance, _blendedEod + _strikeGapIdx) : Math.min(forecast.nearResistance, _blendedEod))
-                          : (forecast.convictionScore < -20 ? Math.max(forecast.nearSupport, _blendedEod - _strikeGapIdx) : Math.max(forecast.nearSupport, _blendedEod));
+                        // T1 = EOD target (the realistic, confirmed forecast level)
+                        const _t1NiftyLevel = forecast.eodTarget;
+                        // T2 = near wall (resistance for CE, support for PE)
+                        // where market tests if the directional momentum continues
+                        const _t2NiftyLevel = _isCE ? forecast.nearResistance : forecast.nearSupport;
                         const _t1OptPrice = Math.round(bsPrice(_t1NiftyLevel, _strike, Math.max(_dte - 0.35, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
                         const _t2OptPrice = Math.round(bsPrice(_t2NiftyLevel, _strike, Math.max(_dte - 0.8, 0.001) / 365, optionIV, _isCE ? 'CE' : 'PE'));
                         const _slNiftyLevel = _isCE ? forecast.nearSupport - _strikeGapIdx : forecast.nearResistance + _strikeGapIdx;
@@ -1870,14 +1850,14 @@ export default function Analysis() {
                                 <div className="w-6 h-6 rounded-full bg-[#39d98a]/15 flex items-center justify-center shrink-0 text-[10px] text-[#39d98a] font-black">4</div>
                                 <div>
                                   <div className="text-[#e8e8f0] font-black mb-0.5">Target 1: ₹{_t1OptPrice} — take 50% profit</div>
-                                  <div className="text-[#6b6b85]">When Nifty reaches {_t1NiftyLevel.toLocaleString('en-IN')} ({_isCE ? 'halfway to resistance' : 'halfway to support'})</div>
+                                  <div className="text-[#6b6b85]">When Nifty reaches {_t1NiftyLevel.toLocaleString('en-IN')} (EOD forecast level)</div>
                                 </div>
                               </div>
                               <div className="flex gap-3">
                                 <div className="w-6 h-6 rounded-full bg-[#f0c040]/15 flex items-center justify-center shrink-0 text-[10px] text-[#f0c040] font-black">5</div>
                                 <div>
                                   <div className="text-[#e8e8f0] font-black mb-0.5">Target 2: ₹{Math.max(_t2OptPrice, _t1OptPrice + 1)} — let the rest ride</div>
-                                  <div className="text-[#6b6b85]">EOD target {_t2NiftyLevel.toLocaleString('en-IN')} — exit by 3:15 PM regardless</div>
+                                  <div className="text-[#6b6b85]">{_isCE ? 'Near resistance' : 'Near support'} wall {_t2NiftyLevel.toLocaleString('en-IN')} — exit by 3:15 PM regardless</div>
                                 </div>
                               </div>
                             </div>

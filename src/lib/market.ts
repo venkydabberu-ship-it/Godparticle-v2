@@ -882,6 +882,7 @@ export interface IndexForecast {
   nearResistance: number;
   nearSupport: number;
   morningDipTarget: number;
+  eodTarget: number;
   pcr: number;
   convictionScore: number;
   dailyRange: number;
@@ -1026,7 +1027,12 @@ export function computeIndexForecast(
     : bias === 'BEARISH'
     ? Math.max(Math.round((nearSupport + peWall) / 2), openPrice - dailyRange)
     : mpTarget;
-  const convictionWeight = Math.min(0.75, Math.abs(convictionScore) / 80);
+  // BULLISH/BEARISH days: minimum 50% directional weight so the predicted target
+  // actually follows the bias. Pure Max Pain dominance on directional days causes
+  // T1/T2 to collapse to near-entry prices (as seen May 14 — T1 ₹207 vs actual ₹319).
+  const convictionWeight = bias !== 'NEUTRAL'
+    ? Math.max(0.50, Math.min(0.80, Math.abs(convictionScore) / 80))
+    : Math.min(0.30, Math.abs(convictionScore) / 100);
   const eodTarget = Math.round(mpTarget * (1 - convictionWeight) + directionalTarget * convictionWeight);
 
   // ── 7. Morning dip/pop target (where market tests first before the main move) ──
@@ -1105,7 +1111,7 @@ export function computeIndexForecast(
     ? `Bullish bias (conviction: ${convictionScore}/100). ${pcrLabel}. Expect morning dip to ~${morningDipTarget.toLocaleString('en-IN')} (near support ${nearSupport.toLocaleString('en-IN')}), then recovery toward ${eodTarget.toLocaleString('en-IN')}. CE buyers: wait for the dip — do NOT buy at open.`
     : `Bearish bias (conviction: ${convictionScore}/100). ${pcrLabel}. Expect morning pop to ~${morningDipTarget.toLocaleString('en-IN')} (near resistance ${nearResistance.toLocaleString('en-IN')}), then drop toward ${eodTarget.toLocaleString('en-IN')}. PE buyers: buy the pop — do NOT buy at open.`;
 
-  return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, pcr, convictionScore, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
+  return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, eodTarget, pcr, convictionScore, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
 }
 
 
