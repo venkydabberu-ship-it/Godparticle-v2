@@ -885,12 +885,67 @@ export interface IndexForecast {
   eodTarget: number;
   pcr: number;
   convictionScore: number;
+  sectorSignal: number;
   dailyRange: number;
   gapPts: number;
   summary: string;
   ivCrushWarning: string | null;
   mpGravity: number;
   dte: number;
+}
+
+// Sector indices that best represent each main index's constituent weight.
+// These are fetched separately and blended into the conviction score.
+const SECTOR_INDEX_MAP: Record<string, { sectorIndex: string; weight: number }[]> = {
+  // Nifty 50: BFSI ~35%, so BankNifty sentiment is the strongest sub-signal
+  NIFTY50:     [{ sectorIndex: 'BANKNIFTY', weight: 0.35 }],
+  // Sensex: BFSI ~38% via BANKEX
+  SENSEX:      [{ sectorIndex: 'BANKEX',    weight: 0.38 }],
+  // Nifty Next 50: banks have ~28% weight
+  NIFTYNEXT50: [{ sectorIndex: 'BANKNIFTY', weight: 0.28 }],
+  // Midcap Nifty: banking ~22%
+  MIDCAPNIFTY: [{ sectorIndex: 'BANKNIFTY', weight: 0.22 }],
+  // BankNifty: use FinNifty as a broader financial services cross-signal
+  // FinNifty includes NBFCs + insurers that drive banking sentiment
+  BANKNIFTY:   [{ sectorIndex: 'FINNIFTY',  weight: 0.40 }],
+  // FinNifty: use BankNifty — pure banks are ~60% of FinNifty
+  FINNIFTY:    [{ sectorIndex: 'BANKNIFTY', weight: 0.60 }],
+  // BANKEX (BSE): cross-signal with BankNifty (same universe, different exchange)
+  BANKEX:      [{ sectorIndex: 'BANKNIFTY', weight: 0.90 }],
+};
+
+// Fetch the most recent available chain_data for a given index (any expiry).
+export async function getLatestChainData(indexName: string): Promise<Record<string, any> | null> {
+  const normalizedName = normalizeIndexName(indexName);
+  const today = new Date().toISOString().split('T')[0];
+  const { data, error } = await supabase
+    .from('market_data')
+    .select('chain_data, trade_date')
+    .eq('index_name', normalizedName)
+    .lte('trade_date', today)
+    .order('trade_date', { ascending: false })
+    .limit(1)
+    .single();
+  if (error || !data) return null;
+  return (data as any).chain_data ?? null;
+}
+
+// Sector-weighted PCR signal. Each sector's PCR is converted to a signal (-40..+40)
+// then weighted by its contribution to the parent index. Final value is scaled to ±20
+// so it's a supplementary signal, not dominant over the main PCR.
+function computeSectorSignal(
+  sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[],
+): number {
+  if (sectorChainData.length === 0) return 0;
+  let weightedSignal = 0, totalWeight = 0;
+  for (const sector of sectorChainData) {
+    const pcr = computePCR(sector.strikeData);
+    const pcrSig = Math.max(-40, Math.min(40, (pcr - 1.0) * 80));
+    weightedSignal += pcrSig * sector.weight;
+    totalWeight += sector.weight;
+  }
+  const raw = totalWeight > 0 ? weightedSignal / totalWeight : 0;
+  return Math.round(Math.max(-20, Math.min(20, raw * 0.5)));
 }
 
 // ── PCR: total PE OI / total CE OI across all strikes ──
@@ -954,6 +1009,7 @@ export function computeIndexForecast(
   indexName: string,
   dte: number = 1,
   historicalSpotCloses: number[] = [],
+  sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [],
 ): IndexForecast {
   const strikeGap = getGapStep(indexName);
 
@@ -1008,8 +1064,10 @@ export function computeIndexForecast(
   const atNearSupport = nearSupport > 0 && (openPrice - nearSupport) <= strikeGap;
   const atNearResistance = nearResistance > 0 && (nearResistance - openPrice) <= strikeGap;
   const proximitySignal = atNearSupport ? 25 : atNearResistance ? -25 : 0;
+  // Sector signal: weighted PCR from constituent sector indices (±20)
+  const sectorSignal = computeSectorSignal(sectorChainData);
 
-  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal);
+  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal);
   const bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
     convictionScore > 15 ? 'BULLISH'
     : convictionScore < -15 ? 'BEARISH'
@@ -1111,7 +1169,7 @@ export function computeIndexForecast(
     ? `Bullish bias (conviction: ${convictionScore}/100). ${pcrLabel}. Expect morning dip to ~${morningDipTarget.toLocaleString('en-IN')} (near support ${nearSupport.toLocaleString('en-IN')}), then recovery toward ${eodTarget.toLocaleString('en-IN')}. CE buyers: wait for the dip — do NOT buy at open.`
     : `Bearish bias (conviction: ${convictionScore}/100). ${pcrLabel}. Expect morning pop to ~${morningDipTarget.toLocaleString('en-IN')} (near resistance ${nearResistance.toLocaleString('en-IN')}), then drop toward ${eodTarget.toLocaleString('en-IN')}. PE buyers: buy the pop — do NOT buy at open.`;
 
-  return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, eodTarget, pcr, convictionScore, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
+  return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, eodTarget, pcr, convictionScore, sectorSignal, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
 }
 
 

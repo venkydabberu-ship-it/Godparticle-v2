@@ -8,7 +8,8 @@ import {
   saveAnalysis, generateScenarioMatrix, normalizeIndexName,
   normalizeExpiry, formatExpiryDisplay, getDTE,
   getGapStep, getMaxGap, INDEX_DISPLAY, useCredits,
-  computeIndexForecast, type IndexForecast, bsPrice,
+  computeIndexForecast, getLatestChainData, SECTOR_INDEX_MAP,
+  type IndexForecast, bsPrice,
 } from '../lib/market';
 
 const INDICES = [
@@ -1373,13 +1374,20 @@ export default function Analysis() {
               const spotClose = result.spotClose ?? 0;
               const vix = result.vix ?? 0;
 
-              function generate() {
+              async function generate() {
                 const open = parseFloat(forecastOpen);
                 if (!open || open <= 0) return;
                 const historicalSpotCloses = rowsData
                   .map((r: any) => r.strike_data?.['_spot_close'] ?? 0)
                   .filter((c: number) => c > 0);
-                const f = computeIndexForecast(open, spotClose, chainData, vix, indexName, result.dte ?? 1, historicalSpotCloses);
+                // Fetch sector index chain data (Option A signal)
+                const sectorDefs = SECTOR_INDEX_MAP[indexName] ?? [];
+                const sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [];
+                await Promise.all(sectorDefs.map(async (s) => {
+                  const sd = await getLatestChainData(s.sectorIndex);
+                  if (sd) sectorChainData.push({ indexName: s.sectorIndex, weight: s.weight, strikeData: sd });
+                }));
+                const f = computeIndexForecast(open, spotClose, chainData, vix, indexName, result.dte ?? 1, historicalSpotCloses, sectorChainData);
                 setForecast(f);
               }
 
@@ -1655,7 +1663,7 @@ export default function Analysis() {
                         </div>
                         <div className="font-normal opacity-80">{forecast.summary}</div>
                         <div className="mt-1 text-[10px] opacity-70">
-                          PCR: <strong>{forecast.pcr.toFixed(2)}</strong> · Signal: <strong>{forecast.convictionScore > 0 ? '+' : ''}{forecast.convictionScore}</strong> · Gravity: <strong>{Math.round(forecast.mpGravity * 100)}%</strong> · DTE: {forecast.dte}d · Near support: <strong>{forecast.nearSupport.toLocaleString('en-IN')}</strong> · Near resistance: <strong>{forecast.nearResistance.toLocaleString('en-IN')}</strong>
+                          PCR: <strong>{forecast.pcr.toFixed(2)}</strong> · Signal: <strong>{forecast.convictionScore > 0 ? '+' : ''}{forecast.convictionScore}</strong>{forecast.sectorSignal !== 0 && <span> · Sector: <strong style={{ color: forecast.sectorSignal > 0 ? '#39d98a' : '#ff4d6d' }}>{forecast.sectorSignal > 0 ? '+' : ''}{forecast.sectorSignal}</strong></span>} · Gravity: <strong>{Math.round(forecast.mpGravity * 100)}%</strong> · DTE: {forecast.dte}d · Near support: <strong>{forecast.nearSupport.toLocaleString('en-IN')}</strong> · Near resistance: <strong>{forecast.nearResistance.toLocaleString('en-IN')}</strong>
                         </div>
                       </div>
 

@@ -6,6 +6,7 @@ import { signOut } from '../lib/auth';
 import { getStale, setCached } from '../lib/cache';
 import {
   getAvailableExpiries, getMarketData, computeIndexForecast,
+  getLatestChainData, SECTOR_INDEX_MAP,
   formatExpiryDisplay, getDTE, type IndexForecast,
 } from '../lib/market';
 
@@ -184,7 +185,14 @@ export default function Dashboard() {
       setFcastSpotClose(spotClose);
       setFcastVix(vix);
       const dte = getDTE(nearest);
-      const f = computeIndexForecast(open, spotClose, chainData, vix, fcastIndex, dte, []);
+      // Fetch sector chain data (same logic as Analysis page)
+      const sectorDefs = SECTOR_INDEX_MAP[fcastIndex] ?? [];
+      const sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [];
+      await Promise.all(sectorDefs.map(async (s) => {
+        const sd = await getLatestChainData(s.sectorIndex);
+        if (sd) sectorChainData.push({ indexName: s.sectorIndex, weight: s.weight, strikeData: sd });
+      }));
+      const f = computeIndexForecast(open, spotClose, chainData, vix, fcastIndex, dte, [], sectorChainData);
       setFcastForecast(f);
     } catch (e: any) {
       setFcastError(e.message ?? 'Failed to load data');

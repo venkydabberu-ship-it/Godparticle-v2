@@ -1,6 +1,7 @@
-import { lazy, Suspense, Component, ReactNode } from 'react';
+import { lazy, Suspense, Component, ReactNode, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ensureConstituentDataFetched } from './lib/constituent';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { crashed: boolean }> {
   constructor(props: any) { super(props); this.state = { crashed: false }; }
@@ -59,6 +60,13 @@ const Loader = () => (
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, profile, loading } = useAuth();
+
+  // Silently collect constituent stock data once per trading day per device.
+  // Runs in the background — never blocks rendering.
+  useEffect(() => {
+    if (user) ensureConstituentDataFetched();
+  }, [user]);
+
   // Only block on loading if we have no cached profile to show
   if (loading && !profile) return <Loader />;
   // Auth settled with no user or profile → go to login
