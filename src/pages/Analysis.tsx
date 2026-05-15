@@ -376,6 +376,12 @@ export default function Analysis() {
           <span className="text-xs font-mono text-[#6b6b85]">
             Credits: <span className="text-[#f0c040] font-bold">{['pro', 'admin'].includes(profile?.role ?? '') ? '∞' : profile?.credits ?? 0}</span>
           </span>
+          <button
+            onClick={() => { window.location.reload(); }}
+            title="Force reload app"
+            className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040] border border-[#1e1e2e] rounded px-2 py-1">
+            ↺ Reload
+          </button>
           <Link to="/dashboard" className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040]">← Dashboard</Link>
         </div>
       </nav>
