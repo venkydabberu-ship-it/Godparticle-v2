@@ -1392,6 +1392,31 @@ export default function Analysis() {
                   const historicalSpotCloses = rowsData
                     .map((r: any) => r.strike_data?.['_spot_close'] ?? 0)
                     .filter((c: number) => c > 0);
+
+                  // Always use the nearest expiry's chain data for intraday forecast.
+                  // Near-expiry options have the highest gamma and drive actual intraday
+                  // price action — far-month data (different PCR/Max Pain) would give a
+                  // misleading forecast when the user happens to be analysing a later expiry.
+                  let forecastChainData = chainData;
+                  let forecastDte = result.dte ?? 1;
+                  try {
+                    const allExpiries = await Promise.race([
+                      getAvailableExpiries(indexName),
+                      new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+                    ]);
+                    const nearestExpiry = allExpiries[0];
+                    if (nearestExpiry && nearestExpiry !== expiry) {
+                      const nearRows = await Promise.race([
+                        getMarketData(indexName, nearestExpiry, 1),
+                        new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+                      ]);
+                      if (nearRows?.length) {
+                        forecastChainData = nearRows[0].strike_data ?? chainData;
+                        forecastDte = getDTE(nearestExpiry);
+                      }
+                    }
+                  } catch { /* keep selected expiry data as fallback */ }
+
                   const sectorDefs = SECTOR_INDEX_MAP[indexName] ?? [];
                   const sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [];
                   await Promise.race([
@@ -1401,7 +1426,7 @@ export default function Analysis() {
                     })),
                     new Promise<void>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
                   ]).catch(() => {});
-                  const f = computeIndexForecast(open, spotClose, chainData, vix, indexName, result.dte ?? 1, historicalSpotCloses, sectorChainData);
+                  const f = computeIndexForecast(open, spotClose, forecastChainData, vix, indexName, forecastDte, historicalSpotCloses, sectorChainData);
                   setForecast(f);
                 } catch {
                   const open2 = parseFloat(forecastOpen);
