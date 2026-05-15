@@ -1,0 +1,3 @@
+# Remotion bundle artifacts
+.next/cache
+node_modules
