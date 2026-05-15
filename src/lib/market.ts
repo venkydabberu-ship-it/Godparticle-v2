@@ -886,6 +886,7 @@ export interface IndexForecast {
   pcr: number;
   convictionScore: number;
   sectorSignal: number;
+  oiVelocitySignal: number;
   dailyRange: number;
   gapPts: number;
   summary: string;
@@ -933,6 +934,63 @@ export async function getLatestChainData(indexName: string): Promise<Record<stri
 // Sector-weighted PCR signal. Each sector's PCR is converted to a signal (-40..+40)
 // then weighted by its contribution to the parent index. Final value is scaled to ±20
 // so it's a supplementary signal, not dominant over the main PCR.
+// ── OI Velocity Signal ──
+// Measures how aggressively smart money is BUILDING positions vs UNWINDING them
+// since yesterday. This separates stale/inherited OI from fresh conviction.
+//
+// Below open price: PE OI growing = put writers protecting support = bullish (+)
+//                   PE OI shrinking = put holders bailing out = bearish (-)
+// Above open price: CE OI growing = call writers capping resistance = bearish (-)
+//                   CE OI shrinking = call holders covering = bullish (+)
+//
+// Uses relative change (delta / base) so it works across all index levels.
+// Range: -15 to +15, added directly to convictionScore.
+function computeOIVelocitySignal(
+  todayData: Record<string, any>,
+  prevData: Record<string, any>,
+  openPrice: number,
+  strikeGap: number,
+): number {
+  if (!prevData || Object.keys(prevData).length === 0) return 0;
+
+  const window = strikeGap * 5; // examine ±5 strikes around open
+  let peBelowChange = 0, peBelowBase = 0;
+  let ceAboveChange = 0, ceAboveBase = 0;
+
+  for (const key of Object.keys(todayData)) {
+    const strike = parseFloat(key);
+    if (isNaN(strike) || strike <= 0) continue;
+    if (Math.abs(strike - openPrice) > window) continue;
+
+    const today = todayData[key];
+    const prev  = prevData[String(strike)];
+    if (!today || !prev) continue;
+
+    // Proximity weight: strikes closer to open carry more signal weight
+    const prox = 1 - Math.abs(strike - openPrice) / (window + strikeGap);
+
+    if (strike <= openPrice) {
+      const base   = Math.max(prev.pe_oi ?? 0, 1);
+      const change = ((today.pe_oi ?? 0) - base) * prox;
+      peBelowChange += change;
+      peBelowBase   += base * prox;
+    } else {
+      const base   = Math.max(prev.ce_oi ?? 0, 1);
+      const change = ((today.ce_oi ?? 0) - base) * prox;
+      ceAboveChange += change;
+      ceAboveBase   += base * prox;
+    }
+  }
+
+  // Relative change: fraction of base OI that was added/removed
+  const relPE = peBelowBase > 0 ? peBelowChange / peBelowBase : 0; // +ve = bullish
+  const relCE = ceAboveBase > 0 ? ceAboveChange / ceAboveBase : 0; // +ve = bearish
+
+  // net = put floor building minus call ceiling building
+  const raw = (relPE - relCE) * 30;
+  return Math.round(Math.max(-15, Math.min(15, raw)));
+}
+
 function computeSectorSignal(
   sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[],
 ): number {
@@ -1010,6 +1068,7 @@ export function computeIndexForecast(
   dte: number = 1,
   historicalSpotCloses: number[] = [],
   sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [],
+  prevStrikeData: Record<string, any> = {},
 ): IndexForecast {
   const strikeGap = getGapStep(indexName);
 
@@ -1066,8 +1125,11 @@ export function computeIndexForecast(
   const proximitySignal = atNearSupport ? 25 : atNearResistance ? -25 : 0;
   // Sector signal: weighted PCR from constituent sector indices (±20)
   const sectorSignal = computeSectorSignal(sectorChainData);
+  // OI velocity: PE writing at support vs CE writing at resistance (±15)
+  // Measures fresh conviction — put writers actively building floor = bullish
+  const oiVelocitySignal = computeOIVelocitySignal(strikeData, prevStrikeData, openPrice, strikeGap);
 
-  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal);
+  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal);
   const bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
     convictionScore > 15 ? 'BULLISH'
     : convictionScore < -15 ? 'BEARISH'
@@ -1215,7 +1277,7 @@ export function computeIndexForecast(
     ? `Bullish (conviction: ${convictionScore}/100). ${pcrLabel}. Watch for morning dip to ${morningDipTarget.toLocaleString('en-IN')} — that is the CE entry zone. Target ${eodTarget.toLocaleString('en-IN')} (T1), then ${nearResistance.toLocaleString('en-IN')} (T2). Do NOT buy at open — wait for the dip.`
     : `Bearish (conviction: ${convictionScore}/100). ${pcrLabel}. Watch for morning pop to ${morningDipTarget.toLocaleString('en-IN')} — that is the PE entry zone. Target ${eodTarget.toLocaleString('en-IN')} (T1), then ${nearSupport.toLocaleString('en-IN')} (T2). Do NOT buy at open — wait for the pop.`;
 
-  return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, eodTarget, pcr, convictionScore, sectorSignal, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
+  return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, eodTarget, pcr, convictionScore, sectorSignal, oiVelocitySignal, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
 }
 
 
