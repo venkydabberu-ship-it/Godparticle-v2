@@ -1093,13 +1093,16 @@ export function computeIndexForecast(
     : Math.min(0.30, Math.abs(convictionScore) / 100);
   const eodTarget = Math.round(mpTarget * (1 - convictionWeight) + directionalTarget * convictionWeight);
 
-  // ── 7. Morning dip/pop target (where market tests first before the main move) ──
-  // Bullish: morning dip to near support → CE buy zone
-  // Bearish: morning pop to near resistance → PE buy zone
+  // ── 7. Morning first-move target ──
+  // BULLISH: early dip to near support → CE entry zone, then rally
+  // BEARISH: early pop to near resistance → PE entry zone, then selloff
+  // NEUTRAL: brief test in the direction AWAY from Max Pain (gamma defense), then convergence
   const vixHalfMove = dailyRange * 0.35;
-  const morningDipTarget = bias === 'BULLISH' || bias === 'NEUTRAL'
+  const morningDipTarget = bias === 'BULLISH'
     ? Math.round(nearSupport * 0.6 + (openPrice - vixHalfMove) * 0.4)
-    : Math.round(nearResistance * 0.6 + (openPrice + vixHalfMove) * 0.4);
+    : bias === 'BEARISH'
+    ? Math.round(nearResistance * 0.6 + (openPrice + vixHalfMove) * 0.4)
+    : openPrice; // NEUTRAL: no big morning dip/pop assumption
 
   // ── 8. Intraday path checkpoints ──
   function pt(timeLabel: string, minuteOffset: number, central: number, halfRange: number, event: string): ForecastPoint {
@@ -1107,24 +1110,61 @@ export function computeIndexForecast(
   }
   const bandScale = dte <= 0 ? 0.5 : dte <= 1 ? 0.7 : 1.0;
 
-  // 9:45 AM = near support/resistance test (the dip/pop event — the trading entry moment)
-  const t1central = morningDipTarget;
-  const t1event = bias === 'BULLISH'
-    ? `Morning dip — tests ${nearSupport.toLocaleString('en-IN')} support (CE buy zone)`
-    : bias === 'BEARISH'
-    ? `Morning pop — tests ${nearResistance.toLocaleString('en-IN')} resistance (PE buy zone)`
-    : `Opening range — watch ${nearSupport.toLocaleString('en-IN')}–${nearResistance.toLocaleString('en-IN')}`;
+  let t1central: number;
+  let t1event: string;
+  let t2central: number;
+  let t3central: number;
+  let t4central: number;
+  let t2event: string;
+  let t3event: string;
+  let t4event: string;
 
-  const t2central = openPrice + (eodTarget - openPrice) * 0.35;
-  const t3central = openPrice + (eodTarget - openPrice) * 0.55;
-  const t4central = openPrice + (eodTarget - openPrice) * 0.75;
+  if (bias === 'BULLISH') {
+    // 9:45: dip to support. Then V-shape recovery FROM the dip level (not from open).
+    t1central = morningDipTarget;
+    t1event = `Morning dip → ${nearSupport.toLocaleString('en-IN')} support — CE entry zone`;
+    t2central = morningDipTarget + (eodTarget - morningDipTarget) * 0.40;
+    t3central = morningDipTarget + (eodTarget - morningDipTarget) * 0.62;
+    t4central = morningDipTarget + (eodTarget - morningDipTarget) * 0.82;
+    t2event = `Rally building — watch break of ${Math.round((openPrice + nearResistance) / 2).toLocaleString('en-IN')}`;
+    t3event = `Midday momentum — heading toward ${nearResistance.toLocaleString('en-IN')}`;
+    t4event = dte <= 1 ? 'Gamma squeeze — final push' : `Gamma window — target ${eodTarget.toLocaleString('en-IN')}`;
+  } else if (bias === 'BEARISH') {
+    // 9:45: pop to resistance. Then inverted-V selloff FROM the pop level.
+    t1central = morningDipTarget;
+    t1event = `Morning pop → ${nearResistance.toLocaleString('en-IN')} resistance — PE entry zone`;
+    t2central = morningDipTarget + (eodTarget - morningDipTarget) * 0.40;
+    t3central = morningDipTarget + (eodTarget - morningDipTarget) * 0.62;
+    t4central = morningDipTarget + (eodTarget - morningDipTarget) * 0.82;
+    t2event = `Selling intensifies — watch break of ${Math.round((openPrice + nearSupport) / 2).toLocaleString('en-IN')}`;
+    t3event = `Bear momentum — heading toward ${nearSupport.toLocaleString('en-IN')}`;
+    t4event = dte <= 1 ? 'Gamma squeeze — accelerating down' : `Gamma window — target ${eodTarget.toLocaleString('en-IN')}`;
+  } else {
+    // NEUTRAL: brief test AGAINST Max Pain gravity (market probes one side), then convergence.
+    // Open above MP → brief push up (put writers defend), then gravity pulls down to MP
+    // Open below MP → brief dip down (call writers defend), then gravity pulls up to MP
+    const openAboveMp = openPrice >= mp;
+    t1central = openAboveMp
+      ? openPrice + Math.round(vixHalfMove * 0.30)   // brief test toward resistance
+      : openPrice - Math.round(vixHalfMove * 0.30);   // brief test toward support
+    t1event = openAboveMp
+      ? `Brief push toward ${nearResistance.toLocaleString('en-IN')} — watch for rejection`
+      : `Brief dip toward ${nearSupport.toLocaleString('en-IN')} — watch for bounce`;
+    // Then converge from OPEN level toward Max Pain (eodTarget ≈ mp for NEUTRAL)
+    t2central = openPrice + (eodTarget - openPrice) * 0.40;
+    t3central = openPrice + (eodTarget - openPrice) * 0.65;
+    t4central = openPrice + (eodTarget - openPrice) * 0.82;
+    t2event = `Max Pain gravity — converging toward ${mp.toLocaleString('en-IN')}`;
+    t3event = `${Math.round(65)}% pulled to Max Pain ${mp.toLocaleString('en-IN')}`;
+    t4event = dte <= 1 ? `Expiry pin — locked on ${mp.toLocaleString('en-IN')}` : `Pinning window — Max Pain holds`;
+  }
 
   const points: ForecastPoint[] = [
     pt('9:15 AM',   0,   openPrice,  Math.round(15 * bandScale), 'Market open'),
     pt('9:45 AM',  30,   t1central,  Math.round(35 * bandScale), t1event),
-    pt('11:00 AM', 105,  t2central,  Math.round(40 * bandScale), 'Max Pain pull begins'),
-    pt('12:30 PM', 195,  t3central,  Math.round(35 * bandScale), 'Midday consolidation'),
-    pt('2:00 PM',  285,  t4central,  Math.round(30 * bandScale), dte <= 1 ? 'Gamma squeeze — acceleration' : 'Gamma window'),
+    pt('11:00 AM', 105,  t2central,  Math.round(40 * bandScale), t2event),
+    pt('12:30 PM', 195,  t3central,  Math.round(35 * bandScale), t3event),
+    pt('2:00 PM',  285,  t4central,  Math.round(30 * bandScale), t4event),
     pt('3:30 PM',  375,  eodTarget,  Math.round(15 * bandScale), dte <= 1 ? `Expiry pin zone near ${mp.toLocaleString('en-IN')}` : 'End-of-day gravity target'),
   ];
 
@@ -1163,11 +1203,12 @@ export function computeIndexForecast(
     : pcr > 0.7 ? `PCR ${pcr.toFixed(2)} — mild call writing (bearish lean)`
     : `PCR ${pcr.toFixed(2)} — heavy call writing (bearish)`;
 
+  const openAboveMpForSummary = openPrice >= mp;
   const summary = bias === 'NEUTRAL'
-    ? `Range-bound day expected (conviction score: ${convictionScore}). ${pcrLabel}. Market likely to oscillate between ${nearSupport.toLocaleString('en-IN')} (near support) and ${nearResistance.toLocaleString('en-IN')} (near resistance). Wait for a clear breakout before entering.`
+    ? `Range-bound day (conviction: ${convictionScore}). ${pcrLabel}. Open ${openPrice.toLocaleString('en-IN')} is ${openAboveMpForSummary ? 'above' : 'below'} Max Pain ${mp.toLocaleString('en-IN')} — expect a brief ${openAboveMpForSummary ? 'push toward ' + nearResistance.toLocaleString('en-IN') : 'dip toward ' + nearSupport.toLocaleString('en-IN')} then gravity pulls to ${mp.toLocaleString('en-IN')} by EOD. Skip directional bets — wait for confirmed break of ${nearSupport.toLocaleString('en-IN')}–${nearResistance.toLocaleString('en-IN')}.`
     : bias === 'BULLISH'
-    ? `Bullish bias (conviction: ${convictionScore}/100). ${pcrLabel}. Expect morning dip to ~${morningDipTarget.toLocaleString('en-IN')} (near support ${nearSupport.toLocaleString('en-IN')}), then recovery toward ${eodTarget.toLocaleString('en-IN')}. CE buyers: wait for the dip — do NOT buy at open.`
-    : `Bearish bias (conviction: ${convictionScore}/100). ${pcrLabel}. Expect morning pop to ~${morningDipTarget.toLocaleString('en-IN')} (near resistance ${nearResistance.toLocaleString('en-IN')}), then drop toward ${eodTarget.toLocaleString('en-IN')}. PE buyers: buy the pop — do NOT buy at open.`;
+    ? `Bullish (conviction: ${convictionScore}/100). ${pcrLabel}. Watch for morning dip to ${morningDipTarget.toLocaleString('en-IN')} — that is the CE entry zone. Target ${eodTarget.toLocaleString('en-IN')} (T1), then ${nearResistance.toLocaleString('en-IN')} (T2). Do NOT buy at open — wait for the dip.`
+    : `Bearish (conviction: ${convictionScore}/100). ${pcrLabel}. Watch for morning pop to ${morningDipTarget.toLocaleString('en-IN')} — that is the PE entry zone. Target ${eodTarget.toLocaleString('en-IN')} (T1), then ${nearSupport.toLocaleString('en-IN')} (T2). Do NOT buy at open — wait for the pop.`;
 
   return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, eodTarget, pcr, convictionScore, sectorSignal, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
 }
