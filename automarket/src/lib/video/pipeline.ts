@@ -1,153 +1,213 @@
-import fs   from 'fs';
+import fs from 'fs';
 import path from 'path';
-import os   from 'os';
-import { bundle }        from '@remotion/bundler';
-import { renderMedia, selectComposition } from '@remotion/renderer';
+import os from 'os';
+import sharp from 'sharp';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 import { supabaseAdmin } from '../supabase';
-import { generateVoice } from './elevenlabs';
-import { wordsToASS, buildSubtitles } from '../video/subtitles';
-import { mergeAudio, burnSubtitles, mixBackgroundMusic, getVideoDuration, getFileSize, cleanTmp } from './ffmpeg';
+import { generateVoice, groupWordsToSubtitles } from './elevenlabs';
 import type { AmContent } from '../supabase';
-import type { SubtitleWord } from '../../remotion/components/SubtitleOverlay';
 
-function scriptToNarration(script: string): string {
-  return script.split('\n').map(line => line.replace(/^\[[\d:]+\]\s*[-–—]?\s*/i, '').trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+ffmpeg.setFfmpegPath(ffmpegPath.path);
+
+function wrapText(text: string, maxW: number): string[] {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    if ((cur + ' ' + w).trim().length <= maxW) cur = (cur + ' ' + w).trim();
+    else { if (cur) lines.push(cur); cur = w; }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+function esc(s: string) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function extractNarration(script: string): string {
+  return script.split('\n')
+    .map(l => l.replace(/^\[[\d:]+\]\s*[-–—]?\s*/i,'').trim())
+    .filter(Boolean).join(' ').replace(/\s+/g,' ').trim();
 }
 
 function extractKeyPoints(script: string): string[] {
-  const lines = script.split('\n').map(l => l.replace(/^\[[\d:]+\]\s*[-–—]?\s*/i, '').trim()).filter(l => l.length > 20 && l.length < 120 && !l.startsWith('//'));
-  return lines.filter((_, i) => i % 2 === 0).slice(0, 5);
+  return script.split('\n')
+    .map(l => l.replace(/^\[[\d:]+\]\s*[-–—]?\s*/i,'').trim())
+    .filter(l => l.length > 15 && l.length < 110)
+    .slice(0, 5);
+}
+
+async function makeSlide(headline: string, style: 'hook'|'point'|'cta', outPath: string): Promise<void> {
+  const maxW = style === 'hook' ? 18 : 26;
+  const lines = wrapText(headline, maxW);
+  const fsPx = style === 'hook' ? 90 : 72;
+  const lineH = style === 'hook' ? 110 : 88;
+  const color = style === 'cta' ? '#FAD7A0' : style === 'hook' ? '#FFFFFF' : '#E8DDFF';
+  const totalH = lines.length * lineH;
+  const startY = 960 - totalH / 2 + lineH;
+  const textSvg = lines.map((l, i) =>
+    `<text x="540" y="${startY + i * lineH}" text-anchor="middle" fill="${color}" font-size="${fsPx}" font-weight="bold" font-family="Georgia, serif">${esc(l)}</text>`
+  ).join('');
+  const svg = `<svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="g" x1="0" y1="0" x2="0.2" y2="1">
+        <stop offset="0%" stop-color="#0d0d14"/>
+        <stop offset="100%" stop-color="#1a0930"/>
+      </linearGradient>
+    </defs>
+    <rect width="1080" height="1920" fill="url(#g)"/>
+    <rect width="1080" height="6" fill="#7c3aed"/>
+    <rect y="1914" width="1080" height="6" fill="#7c3aed"/>
+    <text x="540" y="120" text-anchor="middle" fill="#7c3aed" font-size="40" font-weight="bold" font-family="Georgia, serif">⚡ GodParticle.in</text>
+    ${textSvg}
+  </svg>`;
+  await sharp(Buffer.from(svg)).png().toFile(outPath);
+}
+
+function runCmd(cmd: ffmpeg.FfmpegCommand): Promise<void> {
+  return new Promise((resolve, reject) => {
+    cmd.on('end', () => resolve()).on('error', reject).run();
+  });
+}
+
+async function setStatus(jobId: string, status: string, extra: Record<string,unknown> = {}) {
+  await supabaseAdmin().from('am_video_jobs').update({ status, ...extra, updated_at: new Date().toISOString() }).eq('id', jobId);
 }
 
 async function setProgress(jobId: string, progress: number, step: string) {
   await supabaseAdmin().from('am_video_jobs').update({ progress, current_step: step, updated_at: new Date().toISOString() }).eq('id', jobId);
 }
 
-async function setStatus(jobId: string, status: string, extra: Record<string, unknown> = {}) {
-  await supabaseAdmin().from('am_video_jobs').update({ status, ...extra, updated_at: new Date().toISOString() }).eq('id', jobId);
-}
-
-async function uploadToStorage(filePath: string, bucket: string, storagePath: string): Promise<string> {
+async function uploadBuf(buf: Buffer, storagePath: string, mime: string): Promise<string> {
   const db = supabaseAdmin();
-  const buffer = fs.readFileSync(filePath);
-  const ext  = path.extname(filePath);
-  const mime = ext === '.mp4' ? 'video/mp4' : ext === '.mp3' ? 'audio/mpeg' : ext === '.ass' ? 'text/plain' : 'application/octet-stream';
-  const { error } = await db.storage.from(bucket).upload(storagePath, buffer, { contentType: mime, upsert: true });
-  if (error) throw new Error(`Storage upload failed: ${error.message}`);
-  const { data } = db.storage.from(bucket).getPublicUrl(storagePath);
-  return data.publicUrl;
+  const { error } = await db.storage.from('automarket').upload(storagePath, buf, { contentType: mime, upsert: true });
+  if (error) throw new Error(`Upload failed: ${error.message}`);
+  return db.storage.from('automarket').getPublicUrl(storagePath).data.publicUrl;
 }
 
 export async function runVideoPipeline(jobId: string, content: AmContent): Promise<void> {
-  const db = supabaseAdmin();
+  const dir = os.tmpdir();
+  const pre = `am_${jobId.slice(0,8)}`;
   const tmpFiles: string[] = [];
-  function tmp(ext: string) { const p = path.join(os.tmpdir(), `am_${jobId.slice(0,8)}_${Date.now()}.${ext}`); tmpFiles.push(p); return p; }
+  const tmp = (n: string) => { const f = path.join(dir, `${pre}_${n}`); tmpFiles.push(f); return f; };
 
   try {
-    const { data: job } = await db.from('am_video_jobs').select('*').eq('id', jobId).single();
+    const { data: job } = await supabaseAdmin().from('am_video_jobs').select('*').eq('id', jobId).single();
     if (!job) throw new Error('Job not found');
-    const voiceId  = job.voice_id as string;
-    const bgMusic  = job.bg_music  as string | null;
-    const subStyle = (job.subtitle_style ?? 'bold') as 'bold' | 'minimal' | 'highlight';
 
     await setStatus(jobId, 'generating_voice');
-    await setProgress(jobId, 5, 'Generating voiceover with ElevenLabs...');
-    const script    = content.ai_script ?? content.ai_caption ?? content.idea_text;
-    const narration = scriptToNarration(script);
+    await setProgress(jobId, 5, 'Preparing content...');
+
+    const script = content.ai_script ?? content.ai_caption ?? content.idea_text;
+    const narration = extractNarration(script);
     const keyPoints = extractKeyPoints(script);
-    const voiceResult = await generateVoice(narration, voiceId);
-    const audioTmp = tmp('mp3');
-    fs.writeFileSync(audioTmp, voiceResult.audioBuffer);
-    const audioUrl = await uploadToStorage(audioTmp, 'automarket', `videos/${jobId}/voiceover.mp3`);
-    await db.from('am_video_jobs').update({ audio_url: audioUrl }).eq('id', jobId);
-    await setProgress(jobId, 20, 'Voiceover done — rendering video...');
+    const hook = content.ai_hook ?? content.idea_text.slice(0, 70);
+    const cta = content.ai_cta ?? 'Follow for more. Visit GodParticle.in';
 
+    let audioPath: string | null = null;
+    let durationSec = 40;
+    let srtContent = '';
+
+    if (process.env.ELEVENLABS_API_KEY) {
+      await setProgress(jobId, 10, 'Generating voiceover...');
+      const voice = await generateVoice(narration, job.voice_id as string);
+      audioPath = tmp('voice.mp3');
+      fs.writeFileSync(audioPath, voice.audioBuffer);
+      durationSec = Math.max(Math.ceil(voice.durationSeconds) + 2, 20);
+      const chunks = groupWordsToSubtitles(voice.words, 4);
+      const fmt = (s: number) => {
+        const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = Math.floor(s%60), ms = Math.round((s%1)*1000);
+        return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')},${String(ms).padStart(3,'0')}`;
+      };
+      srtContent = chunks.map((c, i) => `${i+1}\n${fmt(c.start)} --> ${fmt(c.end)}\n${c.text}\n`).join('\n');
+      const audioUrl = await uploadBuf(voice.audioBuffer, `videos/${jobId}/voice.mp3`, 'audio/mpeg');
+      await supabaseAdmin().from('am_video_jobs').update({ audio_url: audioUrl }).eq('id', jobId);
+    }
+
+    await setProgress(jobId, 35, 'Creating slides...');
     await setStatus(jobId, 'rendering_video');
-    const words: SubtitleWord[] = voiceResult.words;
-    const totalDurationSec = voiceResult.durationSeconds;
-    const fps = 30;
-    const hookFrames    = Math.round(fps * Math.min(3, totalDurationSec * 0.12));
-    const ctaFrames     = Math.round(fps * Math.min(3, totalDurationSec * 0.10));
-    const contentFrames = Math.round(fps * totalDurationSec) - hookFrames - ctaFrames;
-    const photoCount    = Math.max(content.image_urls?.length ?? 0, 1);
-    const pointCount    = keyPoints.length;
-    const totalSlides   = photoCount + pointCount;
-    const framesPerSlide  = Math.max(fps * 2, Math.floor(contentFrames / Math.max(totalSlides, 1)));
-    const framesPerPhoto  = framesPerSlide;
-    const framesPerPoint  = Math.round(framesPerSlide * 0.85);
 
-    const bundleLocation = await bundle(path.resolve('./src/remotion/index.ts'), () => undefined, { webpackOverride: c => c });
-    await setProgress(jobId, 35, 'Bundle done — rendering frames...');
-
-    const composition = await selectComposition({
-      serveUrl: bundleLocation, id: 'Reel',
-      inputProps: {
-        hook: content.ai_hook ?? content.idea_text, keyPoints,
-        cta: content.ai_cta ?? 'Try it free at GodParticle.in',
-        brandColor: '#7c3aed', brandName: 'GodParticle',
-        imageUrls: content.image_urls ?? [], audioUrl,
-        subtitleWords: words, subtitleStyle: subStyle,
-        hookFrames, framesPerPhoto, framesPerPoint, ctaFrames,
-      },
-    });
-
-    const rawVideoTmp = tmp('mp4');
-    await renderMedia({
-      composition, serveUrl: bundleLocation, codec: 'h264', outputLocation: rawVideoTmp,
-      onProgress: ({ progress: p }) => setProgress(jobId, 35 + Math.round(p * 30), 'Rendering video frames...').catch(() => {}),
-    });
-    await setProgress(jobId, 65, 'Video rendered — merging audio...');
-
-    const rawVideoUrl = await uploadToStorage(rawVideoTmp, 'automarket', `videos/${jobId}/raw.mp4`);
-    await db.from('am_video_jobs').update({ raw_video_url: rawVideoUrl }).eq('id', jobId);
-
-    await setStatus(jobId, 'merging_audio');
-    const mergedTmp = tmp('mp4');
-    await mergeAudio(rawVideoTmp, audioTmp, mergedTmp);
-    await setProgress(jobId, 72, 'Audio merged — building subtitles...');
-
-    await setStatus(jobId, 'generating_subtitles');
-    const { srtContent } = await buildSubtitles(voiceResult.audioBuffer, words);
-    const assContent = wordsToASS(words, subStyle);
-    const subsTmp = tmp('ass'); fs.writeFileSync(subsTmp, assContent);
-    const srtTmp  = tmp('srt'); fs.writeFileSync(srtTmp, srtContent);
-    const subtitlesUrl = await uploadToStorage(srtTmp, 'automarket', `videos/${jobId}/subtitles.srt`);
-    await db.from('am_video_jobs').update({ subtitles_url: subtitlesUrl }).eq('id', jobId);
-    if (words.length > 0) {
-      await db.from('am_video_subtitles').insert(words.map((w, i) => ({ job_id: jobId, word_index: i, word: w.word, start_time: w.start, end_time: w.end })));
+    const hookSlide = tmp('hook.png');
+    await makeSlide(hook, 'hook', hookSlide);
+    const pointSlides: string[] = [];
+    for (let i = 0; i < keyPoints.length; i++) {
+      const sp = tmp(`pt${i}.png`);
+      await makeSlide(keyPoints[i], 'point', sp);
+      pointSlides.push(sp);
     }
-    await setProgress(jobId, 80, 'Subtitles done — burning into video...');
+    const ctaSlide = tmp('cta.png');
+    await makeSlide(cta, 'cta', ctaSlide);
 
-    await setStatus(jobId, 'burning_subtitles');
-    const burnedTmp = tmp('mp4');
-    await burnSubtitles(mergedTmp, subsTmp, subStyle, burnedTmp);
-    await setProgress(jobId, 88, 'Subtitles burned...');
+    await setProgress(jobId, 55, 'Encoding video...');
 
-    let finalTmp = burnedTmp;
-    if (bgMusic && bgMusic !== 'none') {
-      const musicMap: Record<string, string> = { subtle: './public/music/subtle.mp3', upbeat: './public/music/upbeat.mp3', dramatic: './public/music/dramatic.mp3' };
-      const musicPath = musicMap[bgMusic];
-      if (musicPath && fs.existsSync(musicPath)) {
-        const mixedTmp = tmp('mp4');
-        await mixBackgroundMusic(burnedTmp, musicPath, 0.08, mixedTmp);
-        finalTmp = mixedTmp;
-      }
+    const hookDur = 4;
+    const ctaDur = 4;
+    const ptTotal = Math.max(durationSec - hookDur - ctaDur, keyPoints.length * 5);
+    const ptDur = keyPoints.length > 0 ? Math.round(ptTotal / keyPoints.length) : 8;
+    const slides = [
+      { path: hookSlide, dur: hookDur },
+      ...pointSlides.map(p => ({ path: p, dur: ptDur })),
+      { path: ctaSlide, dur: ctaDur },
+    ];
+
+    let srtPath: string | null = null;
+    if (srtContent) { srtPath = tmp('subs.srt'); fs.writeFileSync(srtPath, srtContent); }
+
+    const videoPath = tmp('reel.mp4');
+    const n = slides.length;
+
+    const cmd = ffmpeg();
+    slides.forEach(s => cmd.input(s.path).inputOptions(['-loop','1','-framerate','30','-t',String(s.dur)]));
+    if (audioPath) cmd.input(audioPath);
+
+    const scaleConcat = slides.map((_,i) => `[${i}:v]scale=1080:1920:force_original_aspect_ratio=disable,setsar=1[v${i}]`).join(';');
+    const catIn = slides.map((_,i) => `[v${i}]`).join('');
+    let fc = `${scaleConcat};${catIn}concat=n=${n}:v=1:a=0[cv]`;
+
+    if (srtPath) {
+      const safe = srtPath.replace(/\\/g,'/').replace(/:/g,'\\\\:');
+      fc += `;[cv]subtitles='${safe}':force_style='FontName=Arial,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=3,Bold=1,Alignment=2,MarginV=80'[outv]`;
+    } else {
+      fc += ';[cv]null[outv]';
     }
-    await setProgress(jobId, 93, 'Uploading final video...');
 
+    const outOpts = [
+      '-map [outv]',
+      ...(audioPath ? [`-map ${n}:a`] : []),
+      '-c:v libx264',
+      '-preset ultrafast',
+      '-pix_fmt yuv420p',
+      '-movflags +faststart',
+      ...(audioPath ? ['-c:a aac','-shortest','-ar 44100'] : [`-t ${durationSec}`]),
+    ];
+
+    cmd.complexFilter(fc).outputOptions(outOpts).save(videoPath);
+    await runCmd(cmd);
+
+    await setProgress(jobId, 88, 'Uploading reel...');
     await setStatus(jobId, 'uploading');
-    const finalVideoUrl = await uploadToStorage(finalTmp, 'automarket', `videos/${jobId}/final.mp4`);
-    const duration  = await getVideoDuration(finalTmp);
-    const fileSize  = getFileSize(finalTmp);
 
-    await setStatus(jobId, 'done', { final_video_url: finalVideoUrl, duration_seconds: duration, file_size_bytes: fileSize, progress: 100, current_step: 'Done!', completed_at: new Date().toISOString() });
-    await db.from('am_content').update({ video_url: finalVideoUrl }).eq('id', content.id);
+    const videoBuf = fs.readFileSync(videoPath);
+    const finalUrl = await uploadBuf(videoBuf, `videos/${jobId}/reel.mp4`, 'video/mp4');
+    const fileSize = fs.statSync(videoPath).size;
+
+    await setStatus(jobId, 'done', {
+      final_video_url: finalUrl,
+      duration_seconds: durationSec,
+      file_size_bytes: fileSize,
+      progress: 100,
+      current_step: 'Your reel is ready! 🎉',
+      completed_at: new Date().toISOString(),
+    });
+    await supabaseAdmin().from('am_content').update({ video_url: finalUrl }).eq('id', content.id);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await setStatus(jobId, 'failed', { error_msg: msg, current_step: `Failed: ${msg.slice(0, 200)}` });
+    await setStatus(jobId, 'failed', { error_msg: msg, current_step: `Failed: ${msg.slice(0,200)}` });
     throw err;
   } finally {
-    cleanTmp(...tmpFiles);
+    tmpFiles.forEach(f => { try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch {} });
   }
 }

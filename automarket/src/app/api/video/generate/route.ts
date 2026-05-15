@@ -1,31 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { runVideoPipeline } from '@/lib/video/pipeline';
-import type { AmContent } from '@/lib/supabase';
+
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json() as { contentId: string; voiceId?: string; bgMusic?: string; subtitleStyle?: string; };
+    const { contentId, voiceId = 'pNInz6obpgDQGcFmaJgB', bgMusic = 'none', subtitleStyle = 'bold' } = await req.json() as {
+      contentId: string;
+      voiceId?: string;
+      bgMusic?: string;
+      subtitleStyle?: string;
+    };
+
     const db = supabaseAdmin();
-    const { data: content, error } = await db.from('am_content').select('*').eq('id', body.contentId).single();
-    if (error || !content) return NextResponse.json({ error: 'Content not found' }, { status: 404 });
-    if (!content.ai_script && !content.ai_caption) {
-      return NextResponse.json({ error: 'Generate AI content first before making a video' }, { status: 400 });
-    }
-    const { data: existing } = await db.from('am_video_jobs').select('id, status')
-      .eq('content_id', body.contentId)
-      .in('status', ['queued','generating_voice','rendering_video','merging_audio','generating_subtitles','burning_subtitles','uploading'])
-      .single();
-    if (existing) return NextResponse.json({ jobId: existing.id, alreadyRunning: true });
-    const { data: job, error: jobErr } = await db.from('am_video_jobs').insert({
-      content_id: body.contentId, voice_id: body.voiceId ?? 'pNInz6obpgDQGcFmaJgB',
-      bg_music: body.bgMusic ?? 'none', subtitle_style: body.subtitleStyle ?? 'bold',
-      status: 'queued', progress: 0, current_step: 'Queued...',
+
+    const { data: content, error: ce } = await db.from('am_content').select('*').eq('id', contentId).single();
+    if (ce || !content) return NextResponse.json({ error: 'Content not found' }, { status: 404 });
+
+    const { data: job, error: je } = await db.from('am_video_jobs').insert({
+      content_id: contentId,
+      voice_id: voiceId,
+      bg_music: bgMusic,
+      subtitle_style: subtitleStyle,
+      status: 'queued',
+      progress: 0,
     }).select().single();
-    if (jobErr || !job) return NextResponse.json({ error: 'Failed to create job' }, { status: 500 });
-    runVideoPipeline(job.id as string, content as AmContent).catch(err => console.error(`[video-pipeline] Job ${job.id} failed:`, err));
-    return NextResponse.json({ jobId: job.id, status: 'queued' });
+    if (je || !job) return NextResponse.json({ error: `Job create failed: ${je?.message}` }, { status: 500 });
+
+    await runVideoPipeline(job.id, content as never);
+
+    const { data: finished } = await db.from('am_video_jobs').select('*').eq('id', job.id).single();
+    return NextResponse.json({ success: true, jobId: job.id, job: finished });
+
   } catch (e) {
+    console.error('Video generate error:', e);
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }
