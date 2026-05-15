@@ -1098,10 +1098,13 @@ export function computeIndexForecast(
   // BEARISH: early pop to near resistance → PE entry zone, then selloff
   // NEUTRAL: brief test in the direction AWAY from Max Pain (gamma defense), then convergence
   const vixHalfMove = dailyRange * 0.35;
+  // Pure VIX-based morning move — backtest showed nearSupport/nearResistance blending
+  // overshoots by 100+ pts on BEARISH days (predicts ~150 pts pop, actual avg ~46 pts).
+  // BULLISH: 70% of half-range dip (avg ~52 pts actual). BEARISH: 65% of half-range pop (avg ~46 pts actual).
   const morningDipTarget = bias === 'BULLISH'
-    ? Math.round(nearSupport * 0.6 + (openPrice - vixHalfMove) * 0.4)
+    ? openPrice - Math.round(vixHalfMove * 0.70)
     : bias === 'BEARISH'
-    ? Math.round(nearResistance * 0.6 + (openPrice + vixHalfMove) * 0.4)
+    ? openPrice + Math.round(vixHalfMove * 0.65)
     : openPrice; // NEUTRAL: no big morning dip/pop assumption
 
   // ── 8. Intraday path checkpoints ──
