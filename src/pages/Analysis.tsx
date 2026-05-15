@@ -1426,11 +1426,13 @@ export default function Analysis() {
                     })),
                     new Promise<void>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
                   ]).catch(() => {});
-                  const f = computeIndexForecast(open, spotClose, forecastChainData, vix, indexName, forecastDte, historicalSpotCloses, sectorChainData);
+                  // Yesterday's chain data for OI velocity signal
+                  const prevChainData = rowsData[1]?.strike_data ?? {};
+                  const f = computeIndexForecast(open, spotClose, forecastChainData, vix, indexName, forecastDte, historicalSpotCloses, sectorChainData, prevChainData);
                   setForecast(f);
                 } catch {
                   const open2 = parseFloat(forecastOpen);
-                  const f = computeIndexForecast(open2, spotClose, chainData, vix, indexName, result.dte ?? 1, [], []);
+                  const f = computeIndexForecast(open2, spotClose, chainData, vix, indexName, result.dte ?? 1, [], [], rowsData[1]?.strike_data ?? {});
                   setForecast(f);
                 } finally {
                   setGenerating(false);
@@ -1709,7 +1711,7 @@ export default function Analysis() {
                         </div>
                         <div className="font-normal opacity-80">{forecast.summary}</div>
                         <div className="mt-1 text-[10px] opacity-70">
-                          PCR: <strong>{forecast.pcr.toFixed(2)}</strong> · Signal: <strong>{forecast.convictionScore > 0 ? '+' : ''}{forecast.convictionScore}</strong>{forecast.sectorSignal !== 0 && <span> · Sector: <strong style={{ color: forecast.sectorSignal > 0 ? '#39d98a' : '#ff4d6d' }}>{forecast.sectorSignal > 0 ? '+' : ''}{forecast.sectorSignal}</strong></span>} · Gravity: <strong>{Math.round(forecast.mpGravity * 100)}%</strong> · DTE: {forecast.dte}d · Near support: <strong>{forecast.nearSupport.toLocaleString('en-IN')}</strong> · Near resistance: <strong>{forecast.nearResistance.toLocaleString('en-IN')}</strong>
+                          PCR: <strong>{forecast.pcr.toFixed(2)}</strong> · Signal: <strong>{forecast.convictionScore > 0 ? '+' : ''}{forecast.convictionScore}</strong>{forecast.sectorSignal !== 0 && <span> · Sector: <strong style={{ color: forecast.sectorSignal > 0 ? '#39d98a' : '#ff4d6d' }}>{forecast.sectorSignal > 0 ? '+' : ''}{forecast.sectorSignal}</strong></span>}{forecast.oiVelocitySignal !== 0 && <span> · OI Flow: <strong style={{ color: forecast.oiVelocitySignal > 0 ? '#39d98a' : '#ff4d6d' }}>{forecast.oiVelocitySignal > 0 ? '+' : ''}{forecast.oiVelocitySignal} {forecast.oiVelocitySignal > 5 ? '🟢 put writing' : forecast.oiVelocitySignal < -5 ? '🔴 call writing' : '⚪ mixed'}</strong></span>} · Gravity: <strong>{Math.round(forecast.mpGravity * 100)}%</strong> · DTE: {forecast.dte}d · Near support: <strong>{forecast.nearSupport.toLocaleString('en-IN')}</strong> · Near resistance: <strong>{forecast.nearResistance.toLocaleString('en-IN')}</strong>
                         </div>
                       </div>
 
