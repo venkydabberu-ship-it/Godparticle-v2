@@ -235,6 +235,10 @@ export default function Dashboard() {
               Admin Panel
             </Link>
           )}
+          <button onClick={() => window.location.reload()} title="Force reload app"
+            className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040] border border-[#1e1e2e] rounded px-2 py-1">
+            ↺
+          </button>
           <button onClick={handleSignOut} className="text-xs font-mono text-[#6b6b85] hover:text-[#ff4d6d] transition-all">
             Sign Out
           </button>
