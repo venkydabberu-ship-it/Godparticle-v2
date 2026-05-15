@@ -114,6 +114,9 @@ export default function Admin() {
   const [fundRowsForStock, setFundRowsForStock] = useState<any[]>([]);
   const [editRow, setEditRow] = useState<{ id: string; role: string; credits: number } | null>(null);
   const [editMsg, setEditMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
+  const [fiiLoading, setFiiLoading] = useState(false);
+  const [fiiResult, setFiiResult] = useState<any>(null);
+  const [fiiHistory, setFiiHistory] = useState<any[]>([]);
 
   // Paint stale stats immediately on mount so Overview cards aren't blank
   useEffect(() => {
@@ -615,6 +618,36 @@ export default function Admin() {
     } finally {
       setFetchFundLoading(false);
     }
+  }
+
+  async function handleFetchFII() {
+    setFiiLoading(true);
+    setFiiResult(null);
+    try {
+      const res = await callEdge('fetch-fii-data', {});
+      setFiiResult(res);
+      // Refresh last 5 days from DB
+      const { data } = await supabase
+        .from('fii_data')
+        .select('trade_date, fii_long_futures, fii_short_futures, fii_long_pct, fii_net_futures, dii_long_futures, dii_short_futures')
+        .order('trade_date', { ascending: false })
+        .limit(5);
+      setFiiHistory(data ?? []);
+    } catch (err: any) {
+      setFiiResult({ error: err.message });
+    } finally {
+      setFiiLoading(false);
+    }
+  }
+
+  // Load FII history on autofetch tab open
+  async function loadFiiHistory() {
+    const { data } = await supabase
+      .from('fii_data')
+      .select('trade_date, fii_long_futures, fii_short_futures, fii_long_pct, fii_net_futures')
+      .order('trade_date', { ascending: false })
+      .limit(7);
+    setFiiHistory(data ?? []);
   }
 
   if (profile?.role !== 'admin') {
@@ -1188,7 +1221,66 @@ export default function Admin() {
                 className="bg-[#39d98a] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40 md:col-span-2 lg:col-span-2">
                 {fetchLoading ? 'Fetching...' : '⚡ Fetch Everything (All)'}
               </button>
+              <button onClick={() => { handleFetchFII(); loadFiiHistory(); }} disabled={fiiLoading}
+                className="bg-[#f0c040] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40 md:col-span-3 lg:col-span-3">
+                {fiiLoading ? 'Fetching FII Data...' : '🏦 Fetch FII Futures Positioning (NSE)'}
+              </button>
             </div>
+
+            {/* FII Data Panel */}
+            {(fiiResult || fiiHistory.length > 0) && (
+              <div className="bg-[#111118] border border-[#f0c040]/30 rounded-xl p-5 space-y-4">
+                <div className="text-xs font-mono font-bold text-[#f0c040]">🏦 FII Index Futures Positioning</div>
+                {fiiResult && (
+                  <div className={`text-xs font-mono p-3 rounded-lg ${fiiResult.error ? 'bg-[#ff4d6d]/10 text-[#ff4d6d]' : 'bg-[#39d98a]/10 text-[#39d98a]'}`}>
+                    {fiiResult.error ? `❌ ${fiiResult.error}` : (
+                      <>
+                        ✅ {fiiResult.date} — Long: {fiiResult.fii_long?.toLocaleString('en-IN')} · Short: {fiiResult.fii_short?.toLocaleString('en-IN')} · Long%: <strong>{fiiResult.fii_long_pct}%</strong> → <strong>{fiiResult.signal}</strong>
+                      </>
+                    )}
+                  </div>
+                )}
+                {fiiHistory.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs font-mono">
+                      <thead>
+                        <tr className="text-[#6b6b85] border-b border-[#1e1e2e]">
+                          <th className="text-left py-1 pr-4">Date</th>
+                          <th className="text-right pr-4">FII Long</th>
+                          <th className="text-right pr-4">FII Short</th>
+                          <th className="text-right pr-4">Long %</th>
+                          <th className="text-right pr-4">Net</th>
+                          <th className="text-left">Signal</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fiiHistory.map((row: any) => {
+                          const pct = Number(row.fii_long_pct ?? 50);
+                          const signal = pct > 55 ? '🐂 BULL' : pct < 45 ? '🐻 BEAR' : '⚪ NEU';
+                          const color = pct > 55 ? '#39d98a' : pct < 45 ? '#ff4d6d' : '#6b6b85';
+                          return (
+                            <tr key={row.trade_date} className="border-b border-[#1e1e2e]/50">
+                              <td className="py-1.5 pr-4 text-[#e8e8f0]">{row.trade_date}</td>
+                              <td className="text-right pr-4 text-[#39d98a]">{Number(row.fii_long_futures ?? 0).toLocaleString('en-IN')}</td>
+                              <td className="text-right pr-4 text-[#ff4d6d]">{Number(row.fii_short_futures ?? 0).toLocaleString('en-IN')}</td>
+                              <td className="text-right pr-4 font-bold" style={{ color }}>{pct.toFixed(1)}%</td>
+                              <td className="text-right pr-4" style={{ color: (row.fii_net_futures ?? 0) >= 0 ? '#39d98a' : '#ff4d6d' }}>
+                                {(row.fii_net_futures ?? 0) >= 0 ? '+' : ''}{Number(row.fii_net_futures ?? 0).toLocaleString('en-IN')}
+                              </td>
+                              <td style={{ color }}>{signal}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <div className="text-[10px] font-mono text-[#6b6b85]">
+                  Fetch after 6 PM IST — NSE publishes participant OI data post market close.
+                  FII long% &gt;55% = bullish fuel · &lt;45% = bearish pressure.
+                </div>
+              </div>
+            )}
 
             {fetchIndicesDone && fetchIndicesResults.length > 0 && (
               <div className="bg-[#111118] border border-[#f0c040]/30 rounded-xl p-5">

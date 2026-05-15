@@ -1428,7 +1428,20 @@ export default function Analysis() {
                   ]).catch(() => {});
                   // Yesterday's chain data for OI velocity signal
                   const prevChainData = rowsData[1]?.strike_data ?? {};
-                  const f = computeIndexForecast(open, spotClose, forecastChainData, vix, indexName, forecastDte, historicalSpotCloses, sectorChainData, prevChainData);
+
+                  // FII futures positioning — fetch latest available day from DB
+                  let fiiFuturesLongPct = 50;
+                  try {
+                    const { data: fiiRow } = await supabase
+                      .from('fii_data')
+                      .select('fii_long_pct, trade_date')
+                      .order('trade_date', { ascending: false })
+                      .limit(1)
+                      .single();
+                    if (fiiRow?.fii_long_pct) fiiFuturesLongPct = Number(fiiRow.fii_long_pct);
+                  } catch { /* no FII data yet — neutral 50% default */ }
+
+                  const f = computeIndexForecast(open, spotClose, forecastChainData, vix, indexName, forecastDte, historicalSpotCloses, sectorChainData, prevChainData, fiiFuturesLongPct);
                   setForecast(f);
                 } catch {
                   const open2 = parseFloat(forecastOpen);
@@ -1711,7 +1724,7 @@ export default function Analysis() {
                         </div>
                         <div className="font-normal opacity-80">{forecast.summary}</div>
                         <div className="mt-1 text-[10px] opacity-70">
-                          PCR: <strong>{forecast.pcr.toFixed(2)}</strong> · Signal: <strong>{forecast.convictionScore > 0 ? '+' : ''}{forecast.convictionScore}</strong>{forecast.sectorSignal !== 0 && <span> · Sector: <strong style={{ color: forecast.sectorSignal > 0 ? '#39d98a' : '#ff4d6d' }}>{forecast.sectorSignal > 0 ? '+' : ''}{forecast.sectorSignal}</strong></span>}{forecast.oiVelocitySignal !== 0 && <span> · OI Flow: <strong style={{ color: forecast.oiVelocitySignal > 0 ? '#39d98a' : '#ff4d6d' }}>{forecast.oiVelocitySignal > 0 ? '+' : ''}{forecast.oiVelocitySignal} {forecast.oiVelocitySignal > 5 ? '🟢 put writing' : forecast.oiVelocitySignal < -5 ? '🔴 call writing' : '⚪ mixed'}</strong></span>} · Gravity: <strong>{Math.round(forecast.mpGravity * 100)}%</strong> · DTE: {forecast.dte}d · Near support: <strong>{forecast.nearSupport.toLocaleString('en-IN')}</strong> · Near resistance: <strong>{forecast.nearResistance.toLocaleString('en-IN')}</strong>
+                          PCR: <strong>{forecast.pcr.toFixed(2)}</strong> · Signal: <strong>{forecast.convictionScore > 0 ? '+' : ''}{forecast.convictionScore}</strong>{forecast.sectorSignal !== 0 && <span> · Sector: <strong style={{ color: forecast.sectorSignal > 0 ? '#39d98a' : '#ff4d6d' }}>{forecast.sectorSignal > 0 ? '+' : ''}{forecast.sectorSignal}</strong></span>}{forecast.oiVelocitySignal !== 0 && <span> · OI Flow: <strong style={{ color: forecast.oiVelocitySignal > 0 ? '#39d98a' : '#ff4d6d' }}>{forecast.oiVelocitySignal > 0 ? '+' : ''}{forecast.oiVelocitySignal} {forecast.oiVelocitySignal > 5 ? '🟢 puts' : forecast.oiVelocitySignal < -5 ? '🔴 calls' : '⚪'}</strong></span>}{forecast.fiiSignal !== 0 && <span> · FII: <strong style={{ color: forecast.fiiSignal > 0 ? '#39d98a' : '#ff4d6d' }}>{forecast.fiiSignal > 0 ? '+' : ''}{forecast.fiiSignal} {forecast.fiiSignal > 5 ? '🐂' : forecast.fiiSignal < -5 ? '🐻' : ''}</strong></span>} · Gravity: <strong>{Math.round(forecast.mpGravity * 100)}%</strong> · DTE: {forecast.dte}d · Near support: <strong>{forecast.nearSupport.toLocaleString('en-IN')}</strong> · Near resistance: <strong>{forecast.nearResistance.toLocaleString('en-IN')}</strong>
                         </div>
                       </div>
 
