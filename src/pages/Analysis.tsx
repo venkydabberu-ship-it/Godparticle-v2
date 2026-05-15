@@ -57,6 +57,7 @@ export default function Analysis() {
   const [gctAiInsight, setGctAiInsight] = useState('');
   const [gctAiLoading, setGctAiLoading] = useState(false);
   const [gctAiError, setGctAiError] = useState('');
+  const [generating, setGenerating] = useState(false);
 
   const location = useLocation();
 
@@ -145,9 +146,12 @@ export default function Analysis() {
     }
 
     setAnalysing(true); setError(''); setResult(null);
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Request timed out — please try again.')), 25000)
+    );
     try {
       // Fetch from unified data bank
-      const rows = await getMarketData(indexName, expiry, 6);
+      const rows = await Promise.race([getMarketData(indexName, expiry, 6), timeout]);
       if (!rows || rows.length === 0) {
         setError(`No data found for ${INDEX_DISPLAY[indexName] || indexName} | ${formatExpiryDisplay(expiry)}. Auto-fetch from Admin Panel or upload CSV first!`);
         return;
@@ -1377,18 +1381,29 @@ export default function Analysis() {
               async function generate() {
                 const open = parseFloat(forecastOpen);
                 if (!open || open <= 0) return;
-                const historicalSpotCloses = rowsData
-                  .map((r: any) => r.strike_data?.['_spot_close'] ?? 0)
-                  .filter((c: number) => c > 0);
-                // Fetch sector index chain data (Option A signal)
-                const sectorDefs = SECTOR_INDEX_MAP[indexName] ?? [];
-                const sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [];
-                await Promise.all(sectorDefs.map(async (s) => {
-                  const sd = await getLatestChainData(s.sectorIndex);
-                  if (sd) sectorChainData.push({ indexName: s.sectorIndex, weight: s.weight, strikeData: sd });
-                }));
-                const f = computeIndexForecast(open, spotClose, chainData, vix, indexName, result.dte ?? 1, historicalSpotCloses, sectorChainData);
-                setForecast(f);
+                setGenerating(true);
+                try {
+                  const historicalSpotCloses = rowsData
+                    .map((r: any) => r.strike_data?.['_spot_close'] ?? 0)
+                    .filter((c: number) => c > 0);
+                  const sectorDefs = SECTOR_INDEX_MAP[indexName] ?? [];
+                  const sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [];
+                  await Promise.race([
+                    Promise.all(sectorDefs.map(async (s) => {
+                      const sd = await getLatestChainData(s.sectorIndex);
+                      if (sd) sectorChainData.push({ indexName: s.sectorIndex, weight: s.weight, strikeData: sd });
+                    })),
+                    new Promise<void>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+                  ]).catch(() => {});
+                  const f = computeIndexForecast(open, spotClose, chainData, vix, indexName, result.dte ?? 1, historicalSpotCloses, sectorChainData);
+                  setForecast(f);
+                } catch {
+                  const open2 = parseFloat(forecastOpen);
+                  const f = computeIndexForecast(open2, spotClose, chainData, vix, indexName, result.dte ?? 1, [], []);
+                  setForecast(f);
+                } finally {
+                  setGenerating(false);
+                }
               }
 
               // SVG chart constants
@@ -1636,10 +1651,10 @@ export default function Analysis() {
                       </div>
                       <button
                         onClick={generate}
-                        disabled={!forecastOpen}
+                        disabled={!forecastOpen || generating}
                         className="px-5 py-2 rounded-lg text-sm font-black font-mono bg-[#a855f7] text-white disabled:opacity-40 hover:bg-[#9333ea] transition-all"
                       >
-                        Generate Forecast
+                        {generating ? '⏳ Generating...' : 'Generate Forecast'}
                       </button>
                     </div>
                     {spotClose > 0 && (
