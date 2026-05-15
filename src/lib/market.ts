@@ -1144,12 +1144,14 @@ export function computeIndexForecast(
     // Open above MP → brief push up (put writers defend), then gravity pulls down to MP
     // Open below MP → brief dip down (call writers defend), then gravity pulls up to MP
     const openAboveMp = openPrice >= mp;
+    // Market explores ~40% of the gap toward nearest wall before being rejected.
+    // May 15 backtest: openPrice=23731, nearResistance=24000 → 23731+(269×0.40)=23839 (actual peak: 23840)
     t1central = openAboveMp
-      ? openPrice + Math.round(vixHalfMove * 0.30)   // brief test toward resistance
-      : openPrice - Math.round(vixHalfMove * 0.30);   // brief test toward support
+      ? Math.round(openPrice + (nearResistance - openPrice) * 0.40)
+      : Math.round(openPrice - (openPrice - nearSupport) * 0.40);
     t1event = openAboveMp
-      ? `Brief push toward ${nearResistance.toLocaleString('en-IN')} — watch for rejection`
-      : `Brief dip toward ${nearSupport.toLocaleString('en-IN')} — watch for bounce`;
+      ? `Morning push → tests ${t1central.toLocaleString('en-IN')} (40% of gap to ${nearResistance.toLocaleString('en-IN')}) — watch rejection`
+      : `Morning dip → tests ${t1central.toLocaleString('en-IN')} (40% of gap to ${nearSupport.toLocaleString('en-IN')}) — watch bounce`;
     // Then converge from OPEN level toward Max Pain (eodTarget ≈ mp for NEUTRAL)
     t2central = openPrice + (eodTarget - openPrice) * 0.40;
     t3central = openPrice + (eodTarget - openPrice) * 0.65;
