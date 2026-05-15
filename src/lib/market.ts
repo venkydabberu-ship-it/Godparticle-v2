@@ -887,6 +887,7 @@ export interface IndexForecast {
   convictionScore: number;
   sectorSignal: number;
   oiVelocitySignal: number;
+  fiiSignal: number;
   dailyRange: number;
   gapPts: number;
   summary: string;
@@ -1069,6 +1070,7 @@ export function computeIndexForecast(
   historicalSpotCloses: number[] = [],
   sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [],
   prevStrikeData: Record<string, any> = {},
+  fiiFuturesLongPct: number = 50,  // 50 = neutral; >55 bullish; <45 bearish
 ): IndexForecast {
   const strikeGap = getGapStep(indexName);
 
@@ -1129,7 +1131,13 @@ export function computeIndexForecast(
   // Measures fresh conviction — put writers actively building floor = bullish
   const oiVelocitySignal = computeOIVelocitySignal(strikeData, prevStrikeData, openPrice, strikeGap);
 
-  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal);
+  // FII futures positioning: the single strongest intraday directional signal.
+  // >60% long = strong bull conviction. <40% long = strong bear conviction.
+  // Range ±20, default 0 when no FII data available (50% neutral baseline).
+  const fiiSignal = fiiFuturesLongPct === 50 ? 0
+    : Math.round(Math.max(-20, Math.min(20, (fiiFuturesLongPct - 50) * 0.4)));
+
+  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal);
   const bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
     convictionScore > 15 ? 'BULLISH'
     : convictionScore < -15 ? 'BEARISH'
@@ -1277,7 +1285,7 @@ export function computeIndexForecast(
     ? `Bullish (conviction: ${convictionScore}/100). ${pcrLabel}. Watch for morning dip to ${morningDipTarget.toLocaleString('en-IN')} — that is the CE entry zone. Target ${eodTarget.toLocaleString('en-IN')} (T1), then ${nearResistance.toLocaleString('en-IN')} (T2). Do NOT buy at open — wait for the dip.`
     : `Bearish (conviction: ${convictionScore}/100). ${pcrLabel}. Watch for morning pop to ${morningDipTarget.toLocaleString('en-IN')} — that is the PE entry zone. Target ${eodTarget.toLocaleString('en-IN')} (T1), then ${nearSupport.toLocaleString('en-IN')} (T2). Do NOT buy at open — wait for the pop.`;
 
-  return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, eodTarget, pcr, convictionScore, sectorSignal, oiVelocitySignal, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
+  return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, eodTarget, pcr, convictionScore, sectorSignal, oiVelocitySignal, fiiSignal, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
 }
 
 
