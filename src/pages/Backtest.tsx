@@ -275,7 +275,7 @@ export default function Backtest() {
 
       const fc = computeIndexForecast(
         ohlc.open, spotClose, chainData, vix, indexName, dte, historicals, [], prevChainData,
-        50, atr, fiiActivity?.fii_cm_net ?? 0, fiiActivity?.fii_idx_fut_net ?? 0,
+        50, atr, fiiActivity?.fii_cm_net ?? 0, fiiActivity?.fii_idx_fut_net ?? 0, fiiActivity?.dii_cm_net ?? 0,
       );
       setForecast(fc);
     } catch (e: any) {
@@ -318,7 +318,7 @@ export default function Backtest() {
 
         const fc = computeIndexForecast(
           ohlc.open, spotClose, chainData, vix, indexName, dte, historicals, [], prevChainData,
-          50, atr, fiiActivity?.fii_cm_net ?? 0, fiiActivity?.fii_idx_fut_net ?? 0,
+          50, atr, fiiActivity?.fii_cm_net ?? 0, fiiActivity?.fii_idx_fut_net ?? 0, fiiActivity?.dii_cm_net ?? 0,
         );
 
         const predHigh  = fc.predictedHigh;
@@ -332,7 +332,7 @@ export default function Backtest() {
         // ── Weighted score (100 pts total) ──
         // Direction (50): bias vs actual close vs open
         const closeVsOpen = ohlc.close - ohlc.open;
-        const neutralThreshold = ohlc.open * 0.003; // ±0.3% = flat day
+        const neutralThreshold = ohlc.open * 0.007; // ±0.7% = moderately flat day
         const dirCorrect =
           fc.bias === 'BULLISH' ? closeVsOpen > 0 :
           fc.bias === 'BEARISH' ? closeVsOpen < 0 :
