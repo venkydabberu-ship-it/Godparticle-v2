@@ -1298,4 +1298,76 @@ export function computeIndexForecast(
   return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, eodTarget, pcr, convictionScore, sectorSignal, oiVelocitySignal, fiiSignal, gapSignal, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// SHARED FORECAST RUNNER — single source of truth used by Dashboard + Analysis
+// Both pages call this; identical inputs always produce identical outputs.
+// ══════════════════════════════════════════════════════════════════════════════
+
+export interface ForecastResult {
+  forecast: IndexForecast;
+  fiiDate: string | null;
+  usedExpiry: string;
+  spotClose: number;
+}
+
+export async function generateIndexForecast(
+  indexName: string,
+  openPrice: number,
+  fallbackChainData: Record<string, any> = {},
+  fallbackSpotClose = 0,
+  fallbackVix = 0,
+  historicalSpotCloses: number[] = [],
+): Promise<ForecastResult> {
+  // 1. Find nearest expiry and fetch 2 rows
+  const todayStr = new Date().toISOString().split('T')[0];
+  const allExpiries = await getAvailableExpiries(indexName);
+  const nearest = allExpiries
+    .filter(e => e >= todayStr)
+    .sort((a, b) => a.localeCompare(b))[0] ?? allExpiries[allExpiries.length - 1];
+
+  const rows = await getMarketData(indexName, nearest, 2);
+
+  // Pick spotClose from the most recent row that has a valid value
+  const validRow = [...rows].reverse().find(r => (r.spot_close ?? 0) > 0) ?? rows[rows.length - 1];
+  const chainData  = rows.length ? (rows[rows.length - 1].strike_data ?? fallbackChainData) : fallbackChainData;
+  const prevChainData = rows.length > 1 ? (rows[rows.length - 2].strike_data ?? {}) : {};
+  const spotClose  = validRow ? (validRow.spot_close ?? fallbackSpotClose) : fallbackSpotClose;
+  const vix        = rows[rows.length - 1]?.vix ?? validRow?.vix ?? fallbackVix;
+  const dte        = getDTE(nearest);
+
+  // 2. Sector chain data
+  const sectorDefs = SECTOR_INDEX_MAP[indexName] ?? [];
+  const sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [];
+  await Promise.race([
+    Promise.all(sectorDefs.map(async s => {
+      const sd = await getLatestChainData(s.sectorIndex);
+      if (sd) sectorChainData.push({ indexName: s.sectorIndex, weight: s.weight, strikeData: sd });
+    })),
+    new Promise<void>((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+  ]).catch(() => {});
+
+  // 3. FII futures positioning
+  let fiiFuturesLongPct = 50;
+  let fiiDate: string | null = null;
+  try {
+    const { data: fiiRow } = await supabase
+      .from('fii_data')
+      .select('fii_long_pct, trade_date')
+      .order('trade_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (fiiRow != null && fiiRow.fii_long_pct != null) {
+      fiiFuturesLongPct = Number(fiiRow.fii_long_pct);
+      fiiDate = fiiRow.trade_date ?? null;
+    }
+  } catch { /* no FII data — neutral */ }
+
+  // 4. Compute forecast
+  const forecast = computeIndexForecast(
+    openPrice, spotClose, chainData, vix, indexName, dte,
+    historicalSpotCloses, sectorChainData, prevChainData, fiiFuturesLongPct,
+  );
+
+  return { forecast, fiiDate, usedExpiry: nearest, spotClose };
+}
 

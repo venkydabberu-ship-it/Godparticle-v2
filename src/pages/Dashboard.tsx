@@ -5,8 +5,7 @@ import { supabase } from '../lib/supabase';
 import { signOut } from '../lib/auth';
 import { getStale, setCached } from '../lib/cache';
 import {
-  getAvailableExpiries, getMarketData, computeIndexForecast,
-  getLatestChainData, SECTOR_INDEX_MAP,
+  getAvailableExpiries, generateIndexForecast,
   formatExpiryDisplay, getDTE, type IndexForecast,
 } from '../lib/market';
 
@@ -167,51 +166,13 @@ export default function Dashboard() {
     setFcastError('');
     setFcastForecast(null);
     try {
-      // Always use nearest expiry — re-fetch in case state is stale
       const expiries = await getAvailableExpiries(fcastIndex);
       if (!expiries.length) { setFcastError('No option chain data uploaded for this index yet.'); return; }
-      const today = new Date().toISOString().split('T')[0];
-      const nearest = expiries
-        .filter(e => e >= today)
-        .sort((a, b) => a.localeCompare(b))[0]
-        ?? expiries[expiries.length - 1];
-      setFcastExpiry(nearest);
-      const rows = await getMarketData(fcastIndex, nearest, 2);
-      if (!rows.length) { setFcastError('No chain data found. Please upload today\'s option chain first.'); return; }
-      // Use the most recent row that has a valid spot_close (weekend auto-fetches may lack it)
-      const validRow = [...rows].reverse().find(r => (r.spot_close ?? 0) > 0) ?? rows[rows.length - 1];
-      const last = rows[rows.length - 1];
-      const chainData = last.strike_data ?? {};
-      const prevChainData = rows.length > 1 ? (rows[rows.length - 2].strike_data ?? {}) : {};
-      const spotClose = validRow.spot_close ?? 0;
-      const vix = (last.vix ?? validRow.vix ?? 0);
-      setFcastChainData(chainData);
+      const { forecast, fiiDate, usedExpiry, spotClose } = await generateIndexForecast(fcastIndex, open);
+      setFcastExpiry(usedExpiry);
       setFcastSpotClose(spotClose);
-      setFcastVix(vix);
-      const dte = getDTE(nearest);
-      // Fetch sector chain data (same logic as Analysis page)
-      const sectorDefs = SECTOR_INDEX_MAP[fcastIndex] ?? [];
-      const sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [];
-      await Promise.all(sectorDefs.map(async (s) => {
-        const sd = await getLatestChainData(s.sectorIndex);
-        if (sd) sectorChainData.push({ indexName: s.sectorIndex, weight: s.weight, strikeData: sd });
-      }));
-      // FII futures positioning — same as Analysis page
-      let fiiFuturesLongPct = 50;
-      try {
-        const { data: fiiRow } = await supabase
-          .from('fii_data')
-          .select('fii_long_pct, trade_date')
-          .order('trade_date', { ascending: false })
-          .limit(1)
-          .single();
-        if (fiiRow?.fii_long_pct) {
-          fiiFuturesLongPct = Number(fiiRow.fii_long_pct);
-          setFcastFiiDate(fiiRow.trade_date ?? null);
-        }
-      } catch { /* no FII data yet — neutral 50% default */ }
-      const f = computeIndexForecast(open, spotClose, chainData, vix, fcastIndex, dte, [], sectorChainData, prevChainData, fiiFuturesLongPct);
-      setFcastForecast(f);
+      setFcastFiiDate(fiiDate);
+      setFcastForecast(forecast);
     } catch (e: any) {
       setFcastError(e.message ?? 'Failed to load data');
     } finally {
