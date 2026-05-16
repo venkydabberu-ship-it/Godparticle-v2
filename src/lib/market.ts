@@ -1417,11 +1417,6 @@ export function computeIndexForecast(
   if (bias === 'BULLISH' && Math.abs(convictionScore) > 25 && eodTarget < openPrice) {
     eodTarget = Math.round((openPrice + conservativeTarget) / 2);
   }
-  // Bias-group close calibration: 21-day backtest shows BULL/NEUT closes avg +24–28 pts below actual.
-  // BEAR is near-zero bias overall so no offset applied (would hurt the 5-May accurate day).
-  const eodBiasOffset = bias === 'BULLISH' ? 24 : bias === 'NEUTRAL' ? 24 : 0;
-  eodTarget = Math.round(eodTarget + eodBiasOffset);
-
   // ── 7. Morning first-move target ──
   // BULLISH: early dip to near support → CE entry zone, then rally
   // BEARISH: early pop to near resistance → PE entry zone, then selloff
@@ -1437,20 +1432,24 @@ export function computeIndexForecast(
 
   // ── Point estimates for the day's HIGH and LOW ──
   //
-  // HIGH (all biases): reachability check against nearResistance.
-  //   ≤ 1.5× vixHalfMove away → market tests the wall. Beyond → VIX-scaled fallback.
-  //   Fallback raised to 1.20× (was 0.65×): systematic +70 avg underestimate across all bias groups.
-  //   BULL breakout buffer (+0.40×): bull momentum overshoots resistance by avg 108 pts.
-  //   BEAR now uses same logic as NEUT/BULL (was morningDipTarget): false-bear days can still
-  //   test nearResistance as the day high before selling off.
+  // HIGH: reachability check against nearResistance (≤ 1.5× vixHalfMove from open → market tests it).
+  //   BEAR/NEUT reachable: nearResistance (on true bear/neut days the morning pop targets resistance).
+  //   BEAR/NEUT not reachable: 0.65× fallback — calibrated to morning-pop level on true directional days.
+  //     (1.20× fallback was tried but caused ±63/±88 overestimates on 12-May/8-May true bear/neut days.)
+  //   BULL reachable: nearResistance + 0.40× breakout buffer (bull momentum overshoots resistance).
+  //   BULL not reachable: 1.20× fallback (bull days reliably run higher than the 0.65× level).
   //
-  // LOW: actual lows break below OI walls consistently (avg -32 across 21 sessions).
-  //   BEAR: nearSupport − 0.30× vixHalfMove cushion (was flat nearSupport — round-number anchoring).
+  // LOW: actual lows consistently break below OI walls (avg −32 across 21 sessions).
+  //   BEAR: nearSupport − 0.30× cushion (flat nearSupport caused ±186/±152 round-number anchor misses).
   //   NEUT: reachable → nearSupport − 0.50×; not reachable → 1.20× fallback (was 0.70×).
-  //   BULL: morningDipTarget (already at 1.20× above).
+  //   BULL: morningDipTarget (1.20×, deeper than 0.70× — actual BULL lows avg 41 pts below old formula).
   const reachThreshold = vixHalfMove * 1.5;
-  const predHighFallback = Math.round(openPrice + vixHalfMove * 1.20);
   const resistanceReachable = (nearResistance - openPrice) <= reachThreshold;
+  const predHighFallback = resistanceReachable
+    ? 0  // unused branch
+    : bias === 'BULLISH'
+      ? Math.round(openPrice + vixHalfMove * 1.20)  // BULL: runs higher than 0.65× level
+      : Math.round(openPrice + vixHalfMove * 0.65); // BEAR/NEUT: morning-pop calibrated
 
   const predictedHigh = resistanceReachable
     ? (bias === 'BULLISH'
