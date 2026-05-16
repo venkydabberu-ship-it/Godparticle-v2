@@ -47,6 +47,25 @@ export default function Dashboard() {
   const [fcastVix, setFcastVix] = useState(0);
   const [fcastError, setFcastError] = useState('');
   const [fcastFiiDate, setFcastFiiDate] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshDone, setRefreshDone] = useState(false);
+
+  async function handleRefresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRefreshDone(false);
+    // Clear localStorage so stale paint doesn't fire on next hard reload
+    const uid = user?.id;
+    if (uid) localStorage.removeItem(`dashboard_v1_${uid}`);
+    // Clear current data so user sees loading state, not stale data
+    setAnalyses([]);
+    setAnnouncement('');
+    setMyQueries([]);
+    await loadDashboard();
+    setRefreshing(false);
+    setRefreshDone(true);
+    setTimeout(() => setRefreshDone(false), 2500);
+  }
 
   function handleRevisit(a: any) {
     const isIndex = INDEX_KEYS.has(a.index_name);
@@ -224,16 +243,21 @@ export default function Dashboard() {
             </Link>
           )}
           <button
-            onClick={() => window.location.reload()}
-            title="Refresh all data"
-            className="flex items-center gap-1.5 text-xs font-black text-[#0a0a0f] bg-[#f0c040] hover:bg-[#ffd060] active:scale-95 transition-all rounded-lg px-3 py-2"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Fetch fresh data from server"
+            className={`flex items-center gap-1.5 text-xs font-black rounded-lg px-3 py-2 transition-all active:scale-95 disabled:opacity-70 ${refreshDone ? 'bg-[#39d98a] text-black' : 'bg-[#f0c040] hover:bg-[#ffd060] text-[#0a0a0f]'}`}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
+              className={refreshing ? 'animate-spin' : ''}
+            >
               <polyline points="23 4 23 10 17 10" />
               <polyline points="1 20 1 14 7 14" />
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
             </svg>
-            Refresh Data
+            {refreshDone ? '✓ Updated' : refreshing ? 'Refreshing...' : 'Refresh Data'}
           </button>
           <button onClick={handleSignOut} className="text-xs font-mono text-[#6b6b85] hover:text-[#ff4d6d] transition-all">
             Sign Out

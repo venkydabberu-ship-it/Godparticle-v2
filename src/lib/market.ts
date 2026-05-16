@@ -178,6 +178,35 @@ export async function getMarketData(
   return (data || []).reverse(); // return oldest-first for time-series analysis
 }
 
+// ── GET ALL BACKTEST DATES FOR AN INDEX (date → nearest expiry) ──
+// Returns list of {date, expiry} sorted by date ascending.
+// For each trade_date, picks the nearest upcoming expiry (min expiry >= date).
+export async function getBacktestDates(indexName: string): Promise<{ date: string; expiry: string }[]> {
+  const normalizedName = normalizeIndexName(indexName);
+  const { data, error } = await withTimeout(
+    supabase
+      .from('market_data')
+      .select('trade_date, expiry')
+      .eq('index_name', normalizedName)
+      .order('trade_date', { ascending: true }) as unknown as Promise<any>,
+    15000,
+  );
+  if (error || !data) return [];
+
+  // For each date, keep the nearest expiry >= that date (same logic as live forecast)
+  const nearest: Record<string, string> = {};
+  for (const row of data as { trade_date: string; expiry: string }[]) {
+    const { trade_date, expiry } = row;
+    if (expiry < trade_date) continue; // expired before this date, skip
+    if (!nearest[trade_date] || expiry < nearest[trade_date]) {
+      nearest[trade_date] = expiry;
+    }
+  }
+  return Object.entries(nearest)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, expiry]) => ({ date, expiry }));
+}
+
 // ── GET MARKET DATA STRICTLY BEFORE A DATE (for backtesting) ──
 export async function getMarketDataBefore(
   indexName: string,
