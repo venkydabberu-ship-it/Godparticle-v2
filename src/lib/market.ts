@@ -1294,6 +1294,17 @@ function computeTrendSignal(historicalSpotCloses: number[]): number {
   return 0;
 }
 
+export async function getFIIActivity(date: string): Promise<{ fii_cm_net: number; fii_idx_fut_net: number } | null> {
+  const { data } = await withTimeout(
+    supabase.from('fii_activity').select('fii_cm_net, fii_idx_fut_net')
+      .lt('trade_date', date)
+      .order('trade_date', { ascending: false })
+      .limit(1) as unknown as Promise<any>,
+    5000,
+  );
+  return data?.[0] ?? null;
+}
+
 export function computeIndexForecast(
   openPrice: number,
   spotClose: number,
@@ -1304,8 +1315,10 @@ export function computeIndexForecast(
   historicalSpotCloses: number[] = [],
   sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [],
   prevStrikeData: Record<string, any> = {},
-  fiiFuturesLongPct: number = 50,  // 50 = neutral; >55 bullish; <45 bearish
+  fiiFuturesLongPct: number = 50,  // legacy — used only when fiiCmNet/fiiIdxFutNet are 0
   atr: number = 0,                 // real ATR from index_ohlc (0 = use VIX formula)
+  fiiCmNet: number = 0,            // FII cash market net (₹Cr), previous trading day
+  fiiIdxFutNet: number = 0,        // FII index futures net (₹Cr), previous trading day
 ): IndexForecast {
   const strikeGap = getGapStep(indexName);
 
@@ -1370,11 +1383,20 @@ export function computeIndexForecast(
   // Measures fresh conviction — put writers actively building floor = bullish
   const oiVelocitySignal = computeOIVelocitySignal(strikeData, prevStrikeData, openPrice, strikeGap);
 
-  // FII futures positioning: the single strongest intraday directional signal.
-  // >60% long = strong bull conviction. <40% long = strong bear conviction.
-  // Range ±20, default 0 when no FII data available (50% neutral baseline).
-  const fiiSignal = fiiFuturesLongPct === 50 ? 0
-    : Math.round(Math.max(-20, Math.min(20, (fiiFuturesLongPct - 50) * 0.4)));
+  // FII signal: cash market + index futures activity from previous trading day.
+  // Cash (±12): strong buy/sell conviction from institutional cash positions.
+  // Index futures (±8): directional bet visible in derivative book.
+  // Falls back to legacy fiiFuturesLongPct when no FII table data available.
+  const fiiCashSig = fiiCmNet === 0 ? 0
+    : fiiCmNet >  3000 ? 12 : fiiCmNet >  1000 ? 7 : fiiCmNet >  0 ? 3
+    : fiiCmNet > -1000 ? -3 : fiiCmNet > -3000 ? -7 : -12;
+  const fiiFutSig = fiiIdxFutNet === 0 ? 0
+    : fiiIdxFutNet >  2000 ? 8 : fiiIdxFutNet >  500 ? 4
+    : fiiIdxFutNet > -500 ? 0 : fiiIdxFutNet > -2000 ? -4 : -8;
+  const fiiSignal = (fiiCmNet !== 0 || fiiIdxFutNet !== 0)
+    ? fiiCashSig + fiiFutSig
+    : fiiFuturesLongPct === 50 ? 0
+      : Math.round(Math.max(-20, Math.min(20, (fiiFuturesLongPct - 50) * 0.4)));
 
   // Gap-from-prev-close signal: significant overnight gap = institutional positioning.
   // A gap down means smart money sold overnight → bearish pressure into the session.
