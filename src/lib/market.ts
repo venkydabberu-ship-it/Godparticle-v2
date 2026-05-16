@@ -1086,6 +1086,8 @@ export interface IndexForecast {
   nearSupport: number;
   morningDipTarget: number;
   eodTarget: number;
+  predictedHigh: number;
+  predictedLow: number;
   pcr: number;
   convictionScore: number;
   sectorSignal: number;
@@ -1373,7 +1375,15 @@ export function computeIndexForecast(
   const convictionWeight = bias !== 'NEUTRAL'
     ? Math.min(0.55, Math.abs(convictionScore) / 100)
     : Math.min(0.20, Math.abs(convictionScore) / 100);
-  const eodTarget = Math.round(mpTarget * (1 - convictionWeight) + conservativeTarget * convictionWeight);
+  let eodTarget = Math.round(mpTarget * (1 - convictionWeight) + conservativeTarget * convictionWeight);
+  // Directional consistency: strong-conviction BEARISH close must be ≤ open;
+  // strong BULLISH must be ≥ open. (Weak conviction allows close near open.)
+  if (bias === 'BEARISH' && Math.abs(convictionScore) > 25 && eodTarget > openPrice) {
+    eodTarget = Math.round((openPrice + conservativeTarget) / 2);
+  }
+  if (bias === 'BULLISH' && Math.abs(convictionScore) > 25 && eodTarget < openPrice) {
+    eodTarget = Math.round((openPrice + conservativeTarget) / 2);
+  }
 
   // ── 7. Morning first-move target ──
   // BULLISH: early dip to near support → CE entry zone, then rally
@@ -1388,6 +1398,17 @@ export function computeIndexForecast(
     : bias === 'BEARISH'
     ? openPrice + Math.round(vixHalfMove * 0.65)
     : openPrice; // NEUTRAL: no big morning dip/pop assumption
+
+  // Point estimates for the day's expected HIGH and LOW used in backtesting.
+  // BEARISH: morning pop (morningDipTarget) is the day's high before the fall.
+  // BULLISH: rally target is nearResistance; morning dip is the day's low.
+  // NEUTRAL: VIX-symmetric ±move from open (no directional tilt).
+  const predictedHigh = bias === 'BEARISH' ? morningDipTarget
+    : bias === 'BULLISH' ? nearResistance
+    : Math.round(openPrice + vixHalfMove * 0.65);
+  const predictedLow = bias === 'BULLISH' ? morningDipTarget
+    : bias === 'BEARISH' ? nearSupport
+    : Math.round(openPrice - vixHalfMove * 0.70);
 
   // ── 8. Intraday path checkpoints ──
   function pt(timeLabel: string, minuteOffset: number, central: number, halfRange: number, event: string): ForecastPoint {
@@ -1497,7 +1518,7 @@ export function computeIndexForecast(
     ? `Bullish (conviction: ${convictionScore}/100). ${pcrLabel}. Watch for morning dip to ${morningDipTarget.toLocaleString('en-IN')} — that is the CE entry zone. Target ${eodTarget.toLocaleString('en-IN')} (T1), then ${nearResistance.toLocaleString('en-IN')} (T2). Do NOT buy at open — wait for the dip.`
     : `Bearish (conviction: ${convictionScore}/100). ${pcrLabel}. Watch for morning pop to ${morningDipTarget.toLocaleString('en-IN')} — that is the PE entry zone. Target ${eodTarget.toLocaleString('en-IN')} (T1), then ${nearSupport.toLocaleString('en-IN')} (T2). Do NOT buy at open — wait for the pop.`;
 
-  return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, eodTarget, pcr, convictionScore, sectorSignal, oiVelocitySignal, fiiSignal, gapSignal, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
+  return { points, levels, bias, maxPain: mp, ceWall, peWall, nearResistance, nearSupport, morningDipTarget, eodTarget, predictedHigh, predictedLow, pcr, convictionScore, sectorSignal, oiVelocitySignal, fiiSignal, gapSignal, dailyRange, gapPts, summary, ivCrushWarning, mpGravity, dte };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

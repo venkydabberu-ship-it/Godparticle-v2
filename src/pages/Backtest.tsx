@@ -292,10 +292,8 @@ export default function Backtest() {
 
         const fc = computeIndexForecast(ohlc.open, spotClose, chainData, vix, indexName, dte, historicals, [], prevChainData, 50);
 
-        // Predicted HIGH: bearish day → morning pop (t1) is the likely high; bullish → nearResistance
-        // Predicted LOW:  bullish day → morning dip (t1) is the likely low; bearish → nearSupport
-        const predHigh  = fc.bias === 'BEARISH' ? fc.morningDipTarget : fc.nearResistance;
-        const predLow   = fc.bias === 'BULLISH' ? fc.morningDipTarget : fc.nearSupport;
+        const predHigh  = fc.predictedHigh;
+        const predLow   = fc.predictedLow;
         const predClose = fc.eodTarget;
 
         const diffH = Math.abs(predHigh - ohlc.high);
