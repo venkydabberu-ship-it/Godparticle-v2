@@ -163,34 +163,64 @@ Deno.serve(async (req: Request) => {
 
   // Accept ?date=YYYY-MM-DD or default to today IST
   const reqUrl = new URL(req.url);
-  const targetDate = reqUrl.searchParams.get('date') ?? (() => {
+  const explicitDate = reqUrl.searchParams.get('date');
+
+  // Build a list of candidate dates to try: today → yesterday → up to 5 days back
+  // Skips weekends since NSE doesn't publish on Sat/Sun
+  function candidateDates(fromDateYMD: string): string[] {
+    const dates: string[] = [];
+    const d = new Date(fromDateYMD + 'T00:00:00Z');
+    for (let i = 0; i < 7 && dates.length < 5; i++) {
+      const day = d.getUTCDay(); // 0=Sun, 6=Sat
+      if (day !== 0 && day !== 6) {
+        dates.push(d.toISOString().split('T')[0]);
+      }
+      d.setUTCDate(d.getUTCDate() - 1);
+    }
+    return dates;
+  }
+
+  const istToday = (() => {
     const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
     return ist.toISOString().split('T')[0];
   })();
 
+  const datesToTry = explicitDate ? [explicitDate] : candidateDates(istToday);
+
   const errors: string[] = [];
 
   try {
-    // Try CSV archive first (more reliable from Supabase datacenter)
+    // Try each candidate date — CSV archive first (no bot detection), then JSON API
     let oiResult: Awaited<ReturnType<typeof fetchFromArchiveCSV>> | null = null;
+    let resolvedDate = datesToTry[0];
 
-    try {
-      oiResult = await fetchFromArchiveCSV(targetDate);
-    } catch (csvErr: any) {
-      errors.push(`CSV: ${csvErr.message}`);
-      // Fall back to JSON API
+    for (const dateYMD of datesToTry) {
+      try {
+        oiResult = await fetchFromArchiveCSV(dateYMD);
+        resolvedDate = dateYMD;
+        break;
+      } catch (csvErr: any) {
+        errors.push(`CSV ${dateYMD}: ${csvErr.message}`);
+      }
+    }
+
+    // If all CSV attempts failed, try the live JSON API (today's data only)
+    if (!oiResult) {
       try {
         oiResult = await fetchFromNSEApi();
+        resolvedDate = istToday;
       } catch (apiErr: any) {
         errors.push(`JSON API: ${apiErr.message}`);
       }
     }
 
+    const targetDate = resolvedDate;
+
     if (!oiResult) {
       return new Response(JSON.stringify({
-        error: 'Both NSE data sources failed. NSE may not have published today\'s data yet (try after 6 PM IST) or the market was closed.',
+        error: 'Both NSE data sources failed. Market may have been closed for the past 5 days, or NSE has not yet published today\'s data (try after 6 PM IST).',
         details: errors,
-        date: targetDate,
+        tried_dates: datesToTry,
       }), { status: 200, headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
