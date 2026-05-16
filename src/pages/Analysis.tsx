@@ -1382,6 +1382,8 @@ export default function Analysis() {
 
             {/* ── FORECAST TAB ── */}
             {activeTab === 'forecast' && (() => {
+              // spotClose and vix are fetched fresh inside generate() to match Dashboard exactly.
+              // We keep these as display-only fallbacks for the input placeholder.
               const spotClose = result.spotClose ?? 0;
               const vix = result.vix ?? 0;
 
@@ -1390,39 +1392,42 @@ export default function Analysis() {
                 if (!open || open <= 0) return;
                 setGenerating(true);
                 try {
+                  // ── STEP 1: Find nearest expiry + fetch 2 rows (identical to Dashboard) ──
+                  const allExpiries = await Promise.race([
+                    getAvailableExpiries(indexName),
+                    new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+                  ]);
+                  const todayStr = new Date().toISOString().split('T')[0];
+                  const nearestExpiry = allExpiries
+                    .filter(e => e >= todayStr)
+                    .sort((a, b) => a.localeCompare(b))[0] ?? allExpiries[0];
+                  const forecastDte = nearestExpiry ? getDTE(nearestExpiry) : getDTE(expiry);
+
+                  // Always fetch 2 rows for the nearest expiry so we have prevChainData
+                  const nearRows = await Promise.race([
+                    getMarketData(indexName, nearestExpiry ?? expiry, 2),
+                    new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+                  ]);
+
+                  // Pick chain data and spotClose exactly as Dashboard does:
+                  // use the most recent row that has a valid spot_close
+                  const validRow = nearRows.length
+                    ? ([...nearRows].reverse().find(r => (r.spot_close ?? 0) > 0) ?? nearRows[nearRows.length - 1])
+                    : null;
+                  const forecastChainData = nearRows.length
+                    ? (nearRows[nearRows.length - 1].strike_data ?? chainData)
+                    : chainData;
+                  const prevChainData = nearRows.length > 1
+                    ? (nearRows[nearRows.length - 2].strike_data ?? {})
+                    : (rowsData[1]?.strike_data ?? {});
+                  const freshSpotClose = validRow ? (validRow.spot_close ?? 0) : spotClose;
+                  const freshVix = (nearRows[nearRows.length - 1]?.vix ?? validRow?.vix ?? vix ?? 0);
+
                   const historicalSpotCloses = rowsData
                     .map((r: any) => r.strike_data?.['_spot_close'] ?? 0)
                     .filter((c: number) => c > 0);
 
-                  // Always use the nearest expiry's chain data for intraday forecast.
-                  // Near-expiry options have the highest gamma and drive actual intraday
-                  // price action — far-month data (different PCR/Max Pain) would give a
-                  // misleading forecast when the user happens to be analysing a later expiry.
-                  let forecastChainData = chainData;
-                  let forecastDte = getDTE(expiry); // always fresh — never use stored result.dte
-                  try {
-                    const allExpiries = await Promise.race([
-                      getAvailableExpiries(indexName),
-                      new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
-                    ]);
-                    const todayStr = new Date().toISOString().split('T')[0];
-                    const nearestExpiry = allExpiries
-                      .filter(e => e >= todayStr)
-                      .sort((a, b) => a.localeCompare(b))[0] ?? allExpiries[0];
-                    // Always update DTE from nearest expiry regardless of which expiry user selected
-                    if (nearestExpiry) forecastDte = getDTE(nearestExpiry);
-                    if (nearestExpiry && nearestExpiry !== expiry) {
-                      // Switch chain data only when nearest differs from selected
-                      const nearRows = await Promise.race([
-                        getMarketData(indexName, nearestExpiry, 2),
-                        new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
-                      ]);
-                      if (nearRows?.length) {
-                        forecastChainData = nearRows[nearRows.length - 1].strike_data ?? chainData;
-                      }
-                    }
-                  } catch { /* keep selected expiry data as fallback */ }
-
+                  // ── STEP 2: Sector chain data ──
                   const sectorDefs = SECTOR_INDEX_MAP[indexName] ?? [];
                   const sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [];
                   await Promise.race([
@@ -1432,10 +1437,8 @@ export default function Analysis() {
                     })),
                     new Promise<void>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
                   ]).catch(() => {});
-                  // Yesterday's chain data for OI velocity signal
-                  const prevChainData = rowsData[1]?.strike_data ?? {};
 
-                  // FII futures positioning — fetch latest available day from DB
+                  // ── STEP 3: FII data (same query as Dashboard) ──
                   let fiiFuturesLongPct = 50;
                   try {
                     const { data: fiiRow } = await supabase
@@ -1444,17 +1447,17 @@ export default function Analysis() {
                       .order('trade_date', { ascending: false })
                       .limit(1)
                       .single();
-                    if (fiiRow?.fii_long_pct) {
+                    if (fiiRow?.fii_long_pct != null) {
                       fiiFuturesLongPct = Number(fiiRow.fii_long_pct);
                       setFiiDate(fiiRow.trade_date ?? null);
                     }
                   } catch { /* no FII data yet — neutral 50% default */ }
 
-                  const f = computeIndexForecast(open, spotClose, forecastChainData, vix, indexName, forecastDte, historicalSpotCloses, sectorChainData, prevChainData, fiiFuturesLongPct);
+                  // ── STEP 4: Compute forecast — identical inputs to Dashboard ──
+                  const f = computeIndexForecast(open, freshSpotClose, forecastChainData, freshVix, indexName, forecastDte, historicalSpotCloses, sectorChainData, prevChainData, fiiFuturesLongPct);
                   setForecast(f);
                 } catch {
-                  const open2 = parseFloat(forecastOpen);
-                  const f = computeIndexForecast(open2, spotClose, chainData, vix, indexName, getDTE(expiry), [], [], rowsData[1]?.strike_data ?? {});
+                  const f = computeIndexForecast(parseFloat(forecastOpen), spotClose, chainData, vix, indexName, getDTE(expiry), [], [], rowsData[1]?.strike_data ?? {});
                   setForecast(f);
                 } finally {
                   setGenerating(false);
