@@ -1353,20 +1353,59 @@ export function computeIndexForecast(
   const { nearResistance, nearSupport } = findNearGammaWalls(strikeData, openPrice, strikeGap);
   const trendSig = computeTrendSignal(historicalSpotCloses);
 
-  // ── 4. Multi-signal conviction score ──
+  // ── 4. Near-ATM signals from option chain ──
+  // Full-chain PCR is distorted by far-OTM protection puts (hedging, not direction).
+  // Near-ATM (±3 strikes) is cleaner — reflects where smart money is actually positioned.
+  const atmStrikeNum = Math.round(openPrice / strikeGap) * strikeGap;
+  let nearCEOI = 0, nearPEOI = 0;
+  let atmCeLTP = 0, atmPeLTP = 0, atmCeIV = 0, atmPeIV = 0;
+  for (let i = -3; i <= 3; i++) {
+    const sk = atmStrikeNum + i * strikeGap;
+    const d = strikeData[String(sk)];
+    if (!d) continue;
+    nearCEOI += d.ce_oi ?? 0;
+    nearPEOI += d.pe_oi ?? 0;
+    if (i === 0) {
+      atmCeLTP = d.ce_ltp ?? 0;
+      atmPeLTP = d.pe_ltp ?? 0;
+      atmCeIV  = d.ce_iv  ?? 0;
+      atmPeIV  = d.pe_iv  ?? 0;
+    }
+  }
+  const nearATMPCR = nearCEOI > 0 ? nearPEOI / nearCEOI : 1.0;
+
+  // ATM straddle → 1-day implied range. Options market's best estimate of today's swing.
+  // Straddle covers DTE days; scale to 1 day via /sqrt(DTE). Apply 0.85 realized/implied ratio
+  // (options consistently overestimate realized range by ~15%).
+  const rawStraddle = atmCeLTP + atmPeLTP;
+  const straddle1D  = (rawStraddle > 20 && dte > 0) ? rawStraddle / Math.sqrt(dte) : 0;
+  const optionImpliedRange = straddle1D > 0 ? Math.round(straddle1D * 0.85) : 0;
+
+  // IV skew: CE IV approaching PE IV = fear premium shrinking → mildly bullish.
+  // Equity markets normally have PE IV ~12-15% above CE IV (put protection premium).
+  // Reference ratio = 0.87 (neutral). Higher = less fear. Range ±8 pts on conviction.
+  const ivSkewSig = (atmCeIV > 0 && atmPeIV > 0)
+    ? Math.max(-8, Math.min(8, ((atmCeIV / atmPeIV) - 0.87) * 80))
+    : 0;
+
+  // ── 5. Multi-signal conviction score ──
   const effectiveVIX = vix > 0 ? vix : 14;
-  // Real ATR from recent sessions is more accurate than VIX estimate.
-  // VIX formula: index × (VIX% / √252) overestimates on low-vol trending days.
-  // ATR is the actual average daily swing from the last 10 sessions.
   const vixRange = Math.round(openPrice * (effectiveVIX / 100) / Math.sqrt(252));
-  const dailyRange = atr > 0 ? atr : vixRange;
+  // Use the LARGEST of: ATM straddle-implied range, historical ATR, VIX formula.
+  // Avoids underestimating range on high-vol days (straddle spikes, ATR lags).
+  const dailyRange = Math.max(
+    optionImpliedRange > 0 ? optionImpliedRange : 0,
+    atr > 0 ? atr : 0,
+    vixRange,
+  );
   const gapPts = Math.round(openPrice - spotClose);
   const mpDist = openPrice - mp;
 
-  // PCR signal: -35 to +35.
-  // Neutral anchored at 0.85 (not 1.0) because Nifty retail activity skews PCR
-  // below 1.0 structurally — using 1.0 as neutral made the model systematically bearish.
-  const pcrSignal = Math.max(-35, Math.min(35, (pcr - 0.85) * 65));
+  // PCR signal: near-ATM PCR only (±3 strikes), -35 to +35.
+  // Neutral at 0.85 — Nifty retail PCR structurally sits below 1.0, so full-chain
+  // PCR neutral of 1.0 was adding systematic bearish bias on every day.
+  // Near-ATM PCR excludes far-OTM protection puts that don't influence next-day direction.
+  const pcrSignal = Math.max(-35, Math.min(35, (nearATMPCR - 0.85) * 65));
   // Max Pain gravity: above MP = bearish gravity, below = bullish gravity
   const mpSignal = Math.max(-25, Math.min(25, -(mpDist / strikeGap) * 12));
   // Room to run: more space above than below spot = bullish
@@ -1410,7 +1449,7 @@ export function computeIndexForecast(
     : absGap < strikeGap * 0.5 ? 0
     : Math.sign(gapPts) * Math.min(15, Math.round(absGap / strikeGap * 10));
 
-  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal);
+  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal + ivSkewSig);
   // Asymmetric thresholds: BULL at +15, BEAR at -25.
   // Raising the BEAR bar to -25 (from -15) because false-BEAR calls in
   // FII-selling/DII-buying regimes are far more damaging than false-BULL calls.
