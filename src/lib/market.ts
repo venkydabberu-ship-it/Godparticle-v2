@@ -413,6 +413,34 @@ export async function getOHLCDates(indexName: string): Promise<string[]> {
   return (data ?? []).map((r: any) => r.trade_date as string);
 }
 
+// Fetch the N most recent OHLC rows strictly before a given date.
+// Used to compute real ATR for the forecast model.
+export async function getRecentOHLC(
+  indexName: string,
+  beforeDate: string,
+  days: number = 10,
+): Promise<IndexOHLC[]> {
+  const { data } = await withTimeout(
+    supabase
+      .from('index_ohlc')
+      .select('trade_date,open,high,low,close')
+      .eq('index_name', normalizeIndexName(indexName))
+      .lt('trade_date', beforeDate)
+      .order('trade_date', { ascending: false })
+      .limit(days) as unknown as Promise<any>,
+    10000,
+  );
+  return (data ?? []) as IndexOHLC[];
+}
+
+// Average True Range: mean of (high − low) over recent sessions.
+// Returns 0 when no rows — caller should fall back to VIX estimate.
+export function computeATR(rows: IndexOHLC[]): number {
+  if (rows.length === 0) return 0;
+  const sum = rows.reduce((acc, r) => acc + (r.high - r.low), 0);
+  return Math.round(sum / rows.length);
+}
+
 // Bulk-upsert OHLC rows (used by admin CSV upload and the edge function)
 export async function upsertIndexOHLC(
   indexName: string,
@@ -1277,6 +1305,7 @@ export function computeIndexForecast(
   sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [],
   prevStrikeData: Record<string, any> = {},
   fiiFuturesLongPct: number = 50,  // 50 = neutral; >55 bullish; <45 bearish
+  atr: number = 0,                 // real ATR from index_ohlc (0 = use VIX formula)
 ): IndexForecast {
   const strikeGap = getGapStep(indexName);
 
@@ -1312,7 +1341,11 @@ export function computeIndexForecast(
 
   // ── 4. Multi-signal conviction score ──
   const effectiveVIX = vix > 0 ? vix : 14;
-  const dailyRange = Math.round(openPrice * (effectiveVIX / 100) / Math.sqrt(252));
+  // Real ATR from recent sessions is more accurate than VIX estimate.
+  // VIX formula: index × (VIX% / √252) overestimates on low-vol trending days.
+  // ATR is the actual average daily swing from the last 10 sessions.
+  const vixRange = Math.round(openPrice * (effectiveVIX / 100) / Math.sqrt(252));
+  const dailyRange = atr > 0 ? atr : vixRange;
   const gapPts = Math.round(openPrice - spotClose);
   const mpDist = openPrice - mp;
 

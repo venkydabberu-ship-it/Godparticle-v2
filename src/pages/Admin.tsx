@@ -123,6 +123,8 @@ export default function Admin() {
   const [ohlcUploadIndex, setOhlcUploadIndex] = useState('NIFTY50');
   const [ohlcUploading, setOhlcUploading] = useState(false);
   const [ohlcUploadMsg, setOhlcUploadMsg] = useState('');
+  const [intradayLoading, setIntradayLoading] = useState(false);
+  const [intradayResult, setIntradayResult] = useState<any>(null);
 
   // Paint stale stats immediately on mount so Overview cards aren't blank
   useEffect(() => {
@@ -656,6 +658,19 @@ export default function Admin() {
       setOhlcResult({ error: e.message });
     } finally {
       setOhlcLoading(false);
+    }
+  }
+
+  async function handleFetchIntraday() {
+    setIntradayLoading(true);
+    setIntradayResult(null);
+    try {
+      const res = await callEdge('fetch-intraday-ohlc', {});
+      setIntradayResult(res);
+    } catch (e: any) {
+      setIntradayResult({ error: e.message });
+    } finally {
+      setIntradayLoading(false);
     }
   }
 
@@ -1269,12 +1284,28 @@ export default function Admin() {
                 className="bg-[#39d98a] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40 md:col-span-3 lg:col-span-3">
                 {ohlcLoading ? 'Fetching OHLC...' : '📊 Fetch Daily OHLC (All NSE Indices)'}
               </button>
+              <button onClick={handleFetchIntraday} disabled={intradayLoading}
+                className="bg-[#4d9fff] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40 md:col-span-3 lg:col-span-3">
+                {intradayLoading ? 'Fetching 30-min candles...' : '🕯 Fetch Intraday 30-min Candles (Upstox)'}
+              </button>
             </div>
 
             {/* OHLC fetch result */}
             {ohlcResult && (
               <div className={`text-xs font-mono p-3 rounded-lg ${ohlcResult.error ? 'bg-[#ff4d6d]/10 text-[#ff4d6d]' : 'bg-[#39d98a]/10 text-[#39d98a]'}`}>
                 {ohlcResult.error ? `❌ ${ohlcResult.error}` : `✅ Saved OHLC for ${ohlcResult.date} — ${ohlcResult.indices?.join(', ')} (${ohlcResult.saved} rows)`}
+              </div>
+            )}
+
+            {/* Intraday fetch result */}
+            {intradayResult && (
+              <div className={`text-xs font-mono p-3 rounded-lg ${intradayResult.error ? 'bg-[#ff4d6d]/10 text-[#ff4d6d]' : 'bg-[#4d9fff]/10 text-[#4d9fff]'}`}>
+                {intradayResult.error
+                  ? `❌ ${intradayResult.error}`
+                  : `✅ Saved ${intradayResult.saved} candles for ${intradayResult.date} — ${intradayResult.indices?.join(', ')}`}
+                {intradayResult.errors?.length > 0 && (
+                  <div className="mt-1 text-[#ff8c42]">{intradayResult.errors.join(' | ')}</div>
+                )}
               </div>
             )}
 

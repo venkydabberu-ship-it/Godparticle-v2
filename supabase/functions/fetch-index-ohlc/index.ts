@@ -22,6 +22,7 @@ const YAHOO_TICKERS: Record<string, string> = {
   'FINNIFTY':    'NIFTY_FIN_SERVICE.NS',
   'MIDCAPNIFTY': '^NIFMDCP50',
   'NIFTYNEXT50': '^NIFTYJR',
+  'INDIAVIX':    '^INDIAVIX',
 };
 
 function toNum(v: string): number {
