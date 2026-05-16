@@ -272,10 +272,16 @@ export default function Backtest() {
     const topPath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(p.minuteOffset).toFixed(1)},${yOf(p.high).toFixed(1)}`).join(' ');
     const botPath = [...pts].reverse().map(p => `L${xOf(p.minuteOffset).toFixed(1)},${yOf(p.low).toFixed(1)}`).join(' ');
     const centralPath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(p.minuteOffset).toFixed(1)},${yOf(p.central).toFixed(1)}`).join(' ');
-    // Actual intraday path (open → high → low → close approximation, just 2 points for simplicity)
-    const actualOpenY = yOf(btOHLC.open);
+    const actualOpenY  = yOf(btOHLC.open);
     const actualCloseY = yOf(btOHLC.close);
-    const actualColor = btOHLC.close >= btOHLC.open ? '#39d98a' : '#ff4d6d';
+    const actualHighY  = yOf(btOHLC.high);
+    const actualLowY   = yOf(btOHLC.low);
+    const actualColor  = btOHLC.close >= btOHLC.open ? '#39d98a' : '#ff4d6d';
+    // Candlestick body rect (open→close) drawn at 3:30 PM x position
+    const candleX    = xOf(TOTAL_MIN);
+    const candleW    = 16;
+    const bodyTop    = Math.min(actualOpenY, actualCloseY);
+    const bodyHeight = Math.max(Math.abs(actualCloseY - actualOpenY), 2);
 
     svgContent = (
       <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} className="w-full" style={{ maxHeight: 360 }}>
@@ -301,17 +307,29 @@ export default function Backtest() {
         })}
         {/* Predicted band */}
         <path d={`${topPath} ${botPath} Z`} fill={biasCol} fillOpacity="0.07" />
-        {/* Predicted central path */}
+        {/* Predicted central path (dashed) */}
         <path d={centralPath} fill="none" stroke={biasCol} strokeWidth="2" strokeDasharray="8,4" strokeLinejoin="round" opacity="0.7" />
-        {/* Actual open→close line */}
-        <line x1={xOf(0)} y1={actualOpenY} x2={xOf(TOTAL_MIN)} y2={actualCloseY}
-          stroke={actualColor} strokeWidth="2.5" strokeLinejoin="round" />
-        {/* Actual open dot */}
+
+        {/* ── Actual OHLC ── */}
+        {/* High horizontal line */}
+        <line x1={PAD_L} y1={actualHighY} x2={SVG_W - PAD_R} y2={actualHighY} stroke="#39d98a" strokeWidth="1" strokeDasharray="4,3" opacity="0.55" />
+        <text x={PAD_L + 4} y={actualHighY - 3} fontSize="8" fill="#39d98a" fontWeight="bold">H {btOHLC.high.toLocaleString('en-IN')}</text>
+        {/* Low horizontal line */}
+        <line x1={PAD_L} y1={actualLowY} x2={SVG_W - PAD_R} y2={actualLowY} stroke="#ff4d6d" strokeWidth="1" strokeDasharray="4,3" opacity="0.55" />
+        <text x={PAD_L + 4} y={actualLowY + 11} fontSize="8" fill="#ff4d6d" fontWeight="bold">L {btOHLC.low.toLocaleString('en-IN')}</text>
+        {/* Candlestick wick (low → high) at 3:30 PM */}
+        <line x1={candleX} y1={actualHighY} x2={candleX} y2={actualLowY} stroke={actualColor} strokeWidth="1.5" opacity="0.5" />
+        {/* Candlestick body (open → close) */}
+        <rect x={candleX - candleW / 2} y={bodyTop} width={candleW} height={bodyHeight} fill={actualColor} opacity="0.25" rx="2" />
+        <rect x={candleX - candleW / 2} y={bodyTop} width={candleW} height={bodyHeight} fill="none" stroke={actualColor} strokeWidth="1.5" rx="2" />
+        {/* Open→close diagonal line */}
+        <line x1={xOf(0)} y1={actualOpenY} x2={candleX} y2={actualCloseY} stroke={actualColor} strokeWidth="2" strokeDasharray="5,3" opacity="0.7" />
+        {/* Open dot + label */}
         <circle cx={xOf(0)} cy={actualOpenY} r="5" fill="#0a0a0f" stroke={actualColor} strokeWidth="2" />
-        <text x={xOf(0) + 6} y={actualOpenY - 6} fontSize="9" fill={actualColor} fontWeight="bold">Open {btOHLC.open.toLocaleString('en-IN')}</text>
-        {/* Actual close dot */}
-        <circle cx={xOf(TOTAL_MIN)} cy={actualCloseY} r="5" fill="#0a0a0f" stroke={actualColor} strokeWidth="2" />
-        <text x={xOf(TOTAL_MIN) - 6} y={actualCloseY - 8} textAnchor="end" fontSize="9" fill={actualColor} fontWeight="bold">Close {btOHLC.close.toLocaleString('en-IN')}</text>
+        <text x={xOf(0) + 7} y={actualOpenY - 6} fontSize="9" fill={actualColor} fontWeight="bold">O {btOHLC.open.toLocaleString('en-IN')}</text>
+        {/* Close label next to candlestick */}
+        <text x={candleX + candleW / 2 + 4} y={actualCloseY + 4} fontSize="9" fill={actualColor} fontWeight="bold">C {btOHLC.close.toLocaleString('en-IN')}</text>
+
         {/* Predicted checkpoints */}
         {pts.map(p => (
           <g key={p.timeLabel}>
@@ -518,12 +536,18 @@ export default function Backtest() {
                     {indexLabel} · {fmtDate(btDate)}
                   </span>
                 </div>
-                {btOHLC && (
-                  <div className="text-[10px] font-mono text-[#6b6b85] mb-3 ml-3">
-                    <span className="text-[#6b6b85]">Dashed = predicted path · </span>
-                    <span style={{ color: btOHLC.close >= btOHLC.open ? '#39d98a' : '#ff4d6d' }}>Solid = actual (Open→Close)</span>
-                  </div>
-                )}
+                {btOHLC && (() => {
+                  const col = btOHLC.close >= btOHLC.open ? '#39d98a' : '#ff4d6d';
+                  return (
+                    <div className="flex flex-wrap gap-3 text-[9px] font-mono text-[#6b6b85] mb-3 ml-3">
+                      <span style={{ color: col }}>· · · Predicted path</span>
+                      <span style={{ color: col }}>—— Actual Open→Close</span>
+                      <span style={{ color: '#39d98a' }}>--- High</span>
+                      <span style={{ color: '#ff4d6d' }}>--- Low</span>
+                      <span style={{ color: col }}>▭ Actual candle (at close)</span>
+                    </div>
+                  );
+                })()}
                 <div className="bg-[#0a0a0f] rounded-xl p-2 overflow-x-auto mb-3">
                   {svgContent}
                 </div>
