@@ -1400,15 +1400,26 @@ export function computeIndexForecast(
     : openPrice; // NEUTRAL: no big morning dip/pop assumption
 
   // Point estimates for the day's expected HIGH and LOW used in backtesting.
-  // BEARISH: morning pop (morningDipTarget) is the day's high before the fall.
-  // BULLISH: rally target is nearResistance; morning dip is the day's low.
-  // NEUTRAL: VIX-symmetric ±move from open (no directional tilt).
-  const predictedHigh = bias === 'BEARISH' ? morningDipTarget
-    : bias === 'BULLISH' ? nearResistance
-    : Math.round(openPrice + vixHalfMove * 0.65);
-  const predictedLow = bias === 'BULLISH' ? morningDipTarget
-    : bias === 'BEARISH' ? nearSupport
+  //
+  // Reachability rule (NEUTRAL + BULLISH high, NEUTRAL low):
+  //   If OI wall is within 1.5× vixHalfMove of open, market likely tests it → use wall.
+  //   If it's further away, market rarely gets there in one session → use vixHalfMove estimate.
+  // Verified: 4-May nearRes(70pt away→use wall✅), 8-May nearRes(300pt→use vix✅), 16-Apr(150pt→vix✅)
+  const reachThreshold = vixHalfMove * 1.5;
+
+  const predHighNotBear = (nearResistance - openPrice) <= reachThreshold
+    ? nearResistance                               // close enough — market will test it
+    : Math.round(openPrice + vixHalfMove * 0.65); // too far — typical VIX-based swing
+
+  // BEARISH LOW always uses nearSupport (real OI wall); vixHalfMove is too shallow vs actual drops
+  const predLowNeutral = (openPrice - nearSupport) <= reachThreshold
+    ? nearSupport
     : Math.round(openPrice - vixHalfMove * 0.70);
+
+  const predictedHigh = bias === 'BEARISH' ? morningDipTarget : predHighNotBear;
+  const predictedLow  = bias === 'BULLISH' ? morningDipTarget
+    : bias === 'BEARISH' ? nearSupport
+    : predLowNeutral;
 
   // ── 8. Intraday path checkpoints ──
   function pt(timeLabel: string, minuteOffset: number, central: number, halfRange: number, event: string): ForecastPoint {
