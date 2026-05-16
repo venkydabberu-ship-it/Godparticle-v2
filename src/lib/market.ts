@@ -1353,37 +1353,26 @@ export function computeIndexForecast(
   const { nearResistance, nearSupport } = findNearGammaWalls(strikeData, openPrice, strikeGap);
   const trendSig = computeTrendSignal(historicalSpotCloses);
 
-  // ── 4. Near-ATM signals from option chain ──
-  // Full-chain PCR is distorted by far-OTM protection puts (hedging, not direction).
-  // Near-ATM (±3 strikes) is cleaner — reflects where smart money is actually positioned.
+  // ── 4. ATM option signals: straddle range + IV skew ──
+  // Use only the ATM strike for LTP/IV (don't aggregate ±3 strikes for OI here —
+  // near-ATM OI on crash days has heavy protective put buying that creates false PCR spikes).
   const atmStrikeNum = Math.round(openPrice / strikeGap) * strikeGap;
-  let nearCEOI = 0, nearPEOI = 0;
-  let atmCeLTP = 0, atmPeLTP = 0, atmCeIV = 0, atmPeIV = 0;
-  for (let i = -3; i <= 3; i++) {
-    const sk = atmStrikeNum + i * strikeGap;
-    const d = strikeData[String(sk)];
-    if (!d) continue;
-    nearCEOI += d.ce_oi ?? 0;
-    nearPEOI += d.pe_oi ?? 0;
-    if (i === 0) {
-      atmCeLTP = d.ce_ltp ?? 0;
-      atmPeLTP = d.pe_ltp ?? 0;
-      atmCeIV  = d.ce_iv  ?? 0;
-      atmPeIV  = d.pe_iv  ?? 0;
-    }
-  }
-  const nearATMPCR = nearCEOI > 0 ? nearPEOI / nearCEOI : 1.0;
+  const atmData = strikeData[String(atmStrikeNum)]
+    ?? strikeData[String(atmStrikeNum + strikeGap)]
+    ?? strikeData[String(atmStrikeNum - strikeGap)];
+  const atmCeLTP = atmData?.ce_ltp ?? 0;
+  const atmPeLTP = atmData?.pe_ltp ?? 0;
+  const atmCeIV  = atmData?.ce_iv  ?? 0;
+  const atmPeIV  = atmData?.pe_iv  ?? 0;
 
-  // ATM straddle → 1-day implied range. Options market's best estimate of today's swing.
-  // Straddle covers DTE days; scale to 1 day via /sqrt(DTE). Apply 0.85 realized/implied ratio
-  // (options consistently overestimate realized range by ~15%).
+  // ATM straddle → 1-day implied range (forward-looking, more reactive to vol spikes than ATR).
+  // Straddle covers DTE days; scale to 1 day via /sqrt(DTE). 0.85 = realized/implied ratio.
   const rawStraddle = atmCeLTP + atmPeLTP;
   const straddle1D  = (rawStraddle > 20 && dte > 0) ? rawStraddle / Math.sqrt(dte) : 0;
   const optionImpliedRange = straddle1D > 0 ? Math.round(straddle1D * 0.85) : 0;
 
-  // IV skew: CE IV approaching PE IV = fear premium shrinking → mildly bullish.
-  // Equity markets normally have PE IV ~12-15% above CE IV (put protection premium).
-  // Reference ratio = 0.87 (neutral). Higher = less fear. Range ±8 pts on conviction.
+  // IV skew: CE IV / PE IV vs 0.87 baseline (equity markets normally have PE IV ~13% above CE IV).
+  // When fear premium shrinks (CE IV approaches PE IV) → mildly bullish. Range: ±8 pts.
   const ivSkewSig = (atmCeIV > 0 && atmPeIV > 0)
     ? Math.max(-8, Math.min(8, ((atmCeIV / atmPeIV) - 0.87) * 80))
     : 0;
@@ -1391,8 +1380,7 @@ export function computeIndexForecast(
   // ── 5. Multi-signal conviction score ──
   const effectiveVIX = vix > 0 ? vix : 14;
   const vixRange = Math.round(openPrice * (effectiveVIX / 100) / Math.sqrt(252));
-  // Use the LARGEST of: ATM straddle-implied range, historical ATR, VIX formula.
-  // Avoids underestimating range on high-vol days (straddle spikes, ATR lags).
+  // Take the largest of the three range estimates — never underestimate on high-vol days.
   const dailyRange = Math.max(
     optionImpliedRange > 0 ? optionImpliedRange : 0,
     atr > 0 ? atr : 0,
@@ -1401,11 +1389,12 @@ export function computeIndexForecast(
   const gapPts = Math.round(openPrice - spotClose);
   const mpDist = openPrice - mp;
 
-  // PCR signal: near-ATM PCR only (±3 strikes), -35 to +35.
-  // Neutral at 0.85 — Nifty retail PCR structurally sits below 1.0, so full-chain
-  // PCR neutral of 1.0 was adding systematic bearish bias on every day.
-  // Near-ATM PCR excludes far-OTM protection puts that don't influence next-day direction.
-  const pcrSignal = Math.max(-35, Math.min(35, (nearATMPCR - 0.85) * 65));
+  // PCR signal: full-chain PCR, neutral at 1.0, range reduced from ±40 to ±30.
+  // Near-ATM PCR was tried but backfired: on crash days protective put buying concentrates
+  // near ATM, making near-ATM PCR spike and giving false bullish signals.
+  // Reducing multiplier 80→60 gently cuts PCR's bearish pull on low-PCR days without
+  // flipping correctly-bearish days (which have many other strong bearish signals too).
+  const pcrSignal = Math.max(-30, Math.min(30, (pcr - 1.0) * 60));
   // Max Pain gravity: above MP = bearish gravity, below = bullish gravity
   const mpSignal = Math.max(-25, Math.min(25, -(mpDist / strikeGap) * 12));
   // Room to run: more space above than below spot = bullish
