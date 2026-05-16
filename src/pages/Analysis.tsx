@@ -1399,21 +1399,26 @@ export default function Analysis() {
                   // price action — far-month data (different PCR/Max Pain) would give a
                   // misleading forecast when the user happens to be analysing a later expiry.
                   let forecastChainData = chainData;
-                  let forecastDte = result.dte ?? 1;
+                  let forecastDte = getDTE(expiry); // always fresh — never use stored result.dte
                   try {
                     const allExpiries = await Promise.race([
                       getAvailableExpiries(indexName),
                       new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
                     ]);
-                    const nearestExpiry = allExpiries[0];
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    const nearestExpiry = allExpiries
+                      .filter(e => e >= todayStr)
+                      .sort((a, b) => a.localeCompare(b))[0] ?? allExpiries[0];
+                    // Always update DTE from nearest expiry regardless of which expiry user selected
+                    if (nearestExpiry) forecastDte = getDTE(nearestExpiry);
                     if (nearestExpiry && nearestExpiry !== expiry) {
+                      // Switch chain data only when nearest differs from selected
                       const nearRows = await Promise.race([
-                        getMarketData(indexName, nearestExpiry, 1),
+                        getMarketData(indexName, nearestExpiry, 2),
                         new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
                       ]);
                       if (nearRows?.length) {
-                        forecastChainData = nearRows[0].strike_data ?? chainData;
-                        forecastDte = getDTE(nearestExpiry);
+                        forecastChainData = nearRows[nearRows.length - 1].strike_data ?? chainData;
                       }
                     }
                   } catch { /* keep selected expiry data as fallback */ }
@@ -1449,7 +1454,7 @@ export default function Analysis() {
                   setForecast(f);
                 } catch {
                   const open2 = parseFloat(forecastOpen);
-                  const f = computeIndexForecast(open2, spotClose, chainData, vix, indexName, result.dte ?? 1, [], [], rowsData[1]?.strike_data ?? {});
+                  const f = computeIndexForecast(open2, spotClose, chainData, vix, indexName, getDTE(expiry), [], [], rowsData[1]?.strike_data ?? {});
                   setForecast(f);
                 } finally {
                   setGenerating(false);
