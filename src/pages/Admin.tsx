@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase, callEdge } from '../lib/supabase';
 import { getStale, setCached } from '../lib/cache';
 import { runDailyAutoFetch, autoFetchAllIndices, autoFetchAllStockOptions, autoFetchAllStockPrices, autoFetchAllFundamentals } from '../lib/autofetch';
+import { upsertIndexOHLC, parseOHLCCSV } from '../lib/market';
 
 const DEFAULT_INDICES = [
   { key: 'NIFTY50',     name: 'Nifty 50',     exchange: 'NSE', expiry: 'weekly',  upstoxKey: 'NSE_INDEX|Nifty 50',            color: '#f0c040', edgeType: 'nifty_chain' },
@@ -117,6 +118,11 @@ export default function Admin() {
   const [fiiLoading, setFiiLoading] = useState(false);
   const [fiiResult, setFiiResult] = useState<any>(null);
   const [fiiHistory, setFiiHistory] = useState<any[]>([]);
+  const [ohlcLoading, setOhlcLoading] = useState(false);
+  const [ohlcResult, setOhlcResult] = useState<any>(null);
+  const [ohlcUploadIndex, setOhlcUploadIndex] = useState('NIFTY50');
+  const [ohlcUploading, setOhlcUploading] = useState(false);
+  const [ohlcUploadMsg, setOhlcUploadMsg] = useState('');
 
   // Paint stale stats immediately on mount so Overview cards aren't blank
   useEffect(() => {
@@ -637,6 +643,40 @@ export default function Admin() {
       setFiiResult({ error: err.message });
     } finally {
       setFiiLoading(false);
+    }
+  }
+
+  async function handleFetchOHLC() {
+    setOhlcLoading(true);
+    setOhlcResult(null);
+    try {
+      const res = await callEdge('fetch-index-ohlc', {});
+      setOhlcResult(res);
+    } catch (e: any) {
+      setOhlcResult({ error: e.message });
+    } finally {
+      setOhlcLoading(false);
+    }
+  }
+
+  async function handleOHLCUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setOhlcUploading(true);
+    setOhlcUploadMsg('');
+    try {
+      const text = await file.text();
+      const rows = parseOHLCCSV(text);
+      if (!rows.length) { setOhlcUploadMsg('❌ No valid rows found — check CSV format.'); return; }
+      const { inserted, error } = await upsertIndexOHLC(ohlcUploadIndex, rows);
+      setOhlcUploadMsg(error
+        ? `❌ DB error: ${error}`
+        : `✅ Saved ${inserted} rows for ${ohlcUploadIndex} (${rows[0].date} → ${rows[rows.length - 1].date})`);
+    } catch (err: any) {
+      setOhlcUploadMsg(`❌ ${err.message}`);
+    } finally {
+      setOhlcUploading(false);
+      e.target.value = '';
     }
   }
 
@@ -1225,6 +1265,45 @@ export default function Admin() {
                 className="bg-[#f0c040] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40 md:col-span-3 lg:col-span-3">
                 {fiiLoading ? 'Fetching FII Data...' : '🏦 Fetch FII Futures Positioning (NSE)'}
               </button>
+              <button onClick={handleFetchOHLC} disabled={ohlcLoading}
+                className="bg-[#39d98a] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40 md:col-span-3 lg:col-span-3">
+                {ohlcLoading ? 'Fetching OHLC...' : '📊 Fetch Daily OHLC (All NSE Indices)'}
+              </button>
+            </div>
+
+            {/* OHLC fetch result */}
+            {ohlcResult && (
+              <div className={`text-xs font-mono p-3 rounded-lg ${ohlcResult.error ? 'bg-[#ff4d6d]/10 text-[#ff4d6d]' : 'bg-[#39d98a]/10 text-[#39d98a]'}`}>
+                {ohlcResult.error ? `❌ ${ohlcResult.error}` : `✅ Saved OHLC for ${ohlcResult.date} — ${ohlcResult.indices?.join(', ')} (${ohlcResult.saved} rows)`}
+              </div>
+            )}
+
+            {/* OHLC Historical CSV Upload */}
+            <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 space-y-3">
+              <div className="text-xs font-mono font-bold text-[#39d98a]">📊 Upload Historical OHLC CSV (Backtest Data)</div>
+              <div className="text-[10px] font-mono text-[#6b6b85]">
+                Download per-index OHLC from NSE website. CSV format: Date,Open,High,Low,Close,... (date can be DD-MMM-YYYY or YYYY-MM-DD)
+              </div>
+              <div className="flex gap-3 items-center flex-wrap">
+                <select
+                  value={ohlcUploadIndex}
+                  onChange={e => setOhlcUploadIndex(e.target.value)}
+                  className="bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040]"
+                >
+                  {['NIFTY50','SENSEX','BANKNIFTY','FINNIFTY','MIDCAPNIFTY','NIFTYNEXT50','BANKEX'].map(k => (
+                    <option key={k} value={k}>{k}</option>
+                  ))}
+                </select>
+                <label className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-[#1e1e2e] hover:border-[#39d98a] rounded-xl p-4 cursor-pointer transition-all">
+                  <input type="file" accept=".csv" className="hidden" onChange={handleOHLCUpload} disabled={ohlcUploading} />
+                  <div className="text-xs font-mono text-[#6b6b85]">{ohlcUploading ? '⏳ Uploading...' : '📄 Click to upload CSV'}</div>
+                </label>
+              </div>
+              {ohlcUploadMsg && (
+                <div className={`text-xs font-mono px-3 py-2 rounded-lg ${ohlcUploadMsg.startsWith('✅') ? 'bg-[#39d98a]/10 text-[#39d98a]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
+                  {ohlcUploadMsg}
+                </div>
+              )}
             </div>
 
             {/* FII Data Panel */}

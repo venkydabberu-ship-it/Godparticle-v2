@@ -370,6 +370,110 @@ export function parseNSEOptionChain(csvText: string): Record<string, any> {
   return result;
 }
 
+// ═══════════════════════════════════════════════════════════
+// INDEX OHLC — daily open/high/low/close for all indices
+// Stored in `index_ohlc` table. Used for backtest auto-open
+// and accuracy comparison against actual close.
+// ═══════════════════════════════════════════════════════════
+
+export interface IndexOHLC {
+  trade_date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+export async function getIndexOHLC(
+  indexName: string,
+  date: string,
+): Promise<IndexOHLC | null> {
+  const { data } = await withTimeout(
+    supabase
+      .from('index_ohlc')
+      .select('trade_date,open,high,low,close')
+      .eq('index_name', normalizeIndexName(indexName))
+      .eq('trade_date', date)
+      .maybeSingle() as unknown as Promise<any>,
+    10000,
+  );
+  return data ?? null;
+}
+
+// Returns all dates that have OHLC data for an index — used to populate the backtest calendar
+export async function getOHLCDates(indexName: string): Promise<string[]> {
+  const { data } = await withTimeout(
+    supabase
+      .from('index_ohlc')
+      .select('trade_date')
+      .eq('index_name', normalizeIndexName(indexName))
+      .order('trade_date', { ascending: true }) as unknown as Promise<any>,
+    10000,
+  );
+  return (data ?? []).map((r: any) => r.trade_date as string);
+}
+
+// Bulk-upsert OHLC rows (used by admin CSV upload and the edge function)
+export async function upsertIndexOHLC(
+  indexName: string,
+  rows: { date: string; open: number; high: number; low: number; close: number }[],
+): Promise<{ inserted: number; error: string | null }> {
+  if (!rows.length) return { inserted: 0, error: null };
+  const normalizedName = normalizeIndexName(indexName);
+  const payload = rows.map(r => ({
+    index_name: normalizedName,
+    trade_date: r.date,
+    open: r.open,
+    high: r.high,
+    low: r.low,
+    close: r.close,
+    source: 'manual',
+  }));
+  const { error } = await supabase
+    .from('index_ohlc')
+    .upsert(payload, { onConflict: 'index_name,trade_date' });
+  return { inserted: error ? 0 : rows.length, error: error?.message ?? null };
+}
+
+// Parse the NSE-style OHLC CSV the admin downloads from NSE website.
+// Supports date formats: DD-MMM-YYYY (14-MAY-2026), YYYY-MM-DD, DD/MM/YYYY
+export function parseOHLCCSV(
+  text: string,
+): { date: string; open: number; high: number; low: number; close: number }[] {
+  const MON: Record<string, string> = {
+    JAN:'01',FEB:'02',MAR:'03',APR:'04',MAY:'05',JUN:'06',
+    JUL:'07',AUG:'08',SEP:'09',OCT:'10',NOV:'11',DEC:'12',
+  };
+  function parseDate(s: string): string {
+    s = s.trim().replace(/['"]/g, '');
+    // DD-MMM-YYYY  (14-MAY-2026)
+    const m1 = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+    if (m1) return `${m1[3]}-${MON[m1[2].toUpperCase()] ?? '01'}-${m1[1].padStart(2,'0')}`;
+    // YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    // DD/MM/YYYY
+    const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m2) return `${m2[3]}-${m2[2].padStart(2,'0')}-${m2[1].padStart(2,'0')}`;
+    return '';
+  }
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  const result: { date: string; open: number; high: number; low: number; close: number }[] = [];
+  for (const line of lines) {
+    const cols = line.split(',').map(c => c.trim().replace(/['"₹]/g, ''));
+    if (cols.length < 5) continue;
+    const date = parseDate(cols[0]);
+    if (!date) continue;
+    const open  = parseFloat(cols[1]);
+    const high  = parseFloat(cols[2]);
+    const low   = parseFloat(cols[3]);
+    // col 4 could be "Close" or "Closing"
+    const close = parseFloat(cols[4]);
+    if ([open, high, low, close].some(v => isNaN(v) || v <= 0)) continue;
+    result.push({ date, open, high, low, close });
+  }
+  return result;
+}
+
 function parseCSVLine(line: string): string[] {
   const out: string[] = [];
   let cur = '', q = false;
