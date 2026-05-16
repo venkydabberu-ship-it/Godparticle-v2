@@ -175,10 +175,11 @@ export default function Dashboard() {
         .sort((a, b) => a.localeCompare(b))[0]
         ?? expiries[expiries.length - 1];
       setFcastExpiry(nearest);
-      const rows = await getMarketData(fcastIndex, nearest, 1);
+      const rows = await getMarketData(fcastIndex, nearest, 2);
       if (!rows.length) { setFcastError('No chain data found. Please upload today\'s option chain first.'); return; }
       const last = rows[rows.length - 1];
       const chainData = last.strike_data ?? {};
+      const prevChainData = rows.length > 1 ? (rows[rows.length - 2].strike_data ?? {}) : {};
       const spotClose = last.spot_close ?? 0;
       const vix = last.vix ?? 0;
       setFcastChainData(chainData);
@@ -192,7 +193,18 @@ export default function Dashboard() {
         const sd = await getLatestChainData(s.sectorIndex);
         if (sd) sectorChainData.push({ indexName: s.sectorIndex, weight: s.weight, strikeData: sd });
       }));
-      const f = computeIndexForecast(open, spotClose, chainData, vix, fcastIndex, dte, [], sectorChainData);
+      // FII futures positioning — same as Analysis page
+      let fiiFuturesLongPct = 50;
+      try {
+        const { data: fiiRow } = await supabase
+          .from('fii_data')
+          .select('fii_long_pct, trade_date')
+          .order('trade_date', { ascending: false })
+          .limit(1)
+          .single();
+        if (fiiRow?.fii_long_pct) fiiFuturesLongPct = Number(fiiRow.fii_long_pct);
+      } catch { /* no FII data yet — neutral 50% default */ }
+      const f = computeIndexForecast(open, spotClose, chainData, vix, fcastIndex, dte, [], sectorChainData, prevChainData, fiiFuturesLongPct);
       setFcastForecast(f);
     } catch (e: any) {
       setFcastError(e.message ?? 'Failed to load data');
@@ -560,7 +572,11 @@ export default function Dashboard() {
                       </div>
                       <div className="font-normal opacity-80">{fc.summary}</div>
                       <div className="mt-1 text-[10px] opacity-70">
-                        Max Pain gravity: <strong>{Math.round(fc.mpGravity * 100)}%</strong> · DTE: {fc.dte}d
+                        Conviction: <strong>{fc.convictionScore > 0 ? '+' : ''}{fc.convictionScore}</strong>
+                        {fc.oiVelocitySignal !== 0 && <span> · OI Flow: <strong style={{ color: fc.oiVelocitySignal > 0 ? '#39d98a' : '#ff4d6d' }}>{fc.oiVelocitySignal > 0 ? '+' : ''}{fc.oiVelocitySignal} {fc.oiVelocitySignal > 5 ? '🟢 puts' : '🔴 calls'}</strong></span>}
+                        {fc.fiiSignal !== 0 && <span> · FII: <strong style={{ color: fc.fiiSignal > 0 ? '#39d98a' : '#ff4d6d' }}>{fc.fiiSignal > 0 ? '+' : ''}{fc.fiiSignal} {fc.fiiSignal > 5 ? '🐂' : '🐻'}</strong></span>}
+                        {fc.sectorSignal !== 0 && <span> · Sector: <strong style={{ color: fc.sectorSignal > 0 ? '#39d98a' : '#ff4d6d' }}>{fc.sectorSignal > 0 ? '+' : ''}{fc.sectorSignal}</strong></span>}
+                        {' '}· Max Pain gravity: <strong>{Math.round(fc.mpGravity * 100)}%</strong> · DTE: {fc.dte}d
                       </div>
                     </div>
 
