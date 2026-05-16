@@ -1363,8 +1363,10 @@ export function computeIndexForecast(
   const gapPts = Math.round(openPrice - spotClose);
   const mpDist = openPrice - mp;
 
-  // PCR signal: -40 to +40 (put writing dominant = bullish)
-  const pcrSignal = Math.max(-40, Math.min(40, (pcr - 1.0) * 80));
+  // PCR signal: -35 to +35.
+  // Neutral anchored at 0.85 (not 1.0) because Nifty retail activity skews PCR
+  // below 1.0 structurally — using 1.0 as neutral made the model systematically bearish.
+  const pcrSignal = Math.max(-35, Math.min(35, (pcr - 0.85) * 65));
   // Max Pain gravity: above MP = bearish gravity, below = bullish gravity
   const mpSignal = Math.max(-25, Math.min(25, -(mpDist / strikeGap) * 12));
   // Room to run: more space above than below spot = bullish
@@ -1399,11 +1401,6 @@ export function computeIndexForecast(
     : fiiFuturesLongPct === 50 ? 0
       : Math.round(Math.max(-20, Math.min(20, (fiiFuturesLongPct - 50) * 0.4)));
 
-  // DII counter-signal: heavy DII cash buying absorbs FII selling, supporting price.
-  // When DII buys >4000 Cr, it signals strong domestic institutional demand regardless
-  // of FII direction → reduces net bearish conviction by up to 12 pts.
-  const diiBoostSig = diiCmNet > 4000 ? 12 : diiCmNet > 2000 ? 7 : diiCmNet > 500 ? 3 : 0;
-
   // Gap-from-prev-close signal: significant overnight gap = institutional positioning.
   // A gap down means smart money sold overnight → bearish pressure into the session.
   // Gaps < half a strike-gap are noise. Scaled by gap size, capped at ±15.
@@ -1413,14 +1410,14 @@ export function computeIndexForecast(
     : absGap < strikeGap * 0.5 ? 0
     : Math.sign(gapPts) * Math.min(15, Math.round(absGap / strikeGap * 10));
 
-  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal + diiBoostSig);
-  // Asymmetric thresholds: raise BEAR bar to -20 (vs BULL at +15).
-  // In FII-selling/DII-buying regimes the market often holds up → false BEAR calls
-  // cause more damage than false BULL. Requiring stronger conviction to go BEAR
-  // reduces those false calls, letting more days land in NEUTRAL.
+  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal);
+  // Asymmetric thresholds: BULL at +15, BEAR at -25.
+  // Raising the BEAR bar to -25 (from -15) because false-BEAR calls in
+  // FII-selling/DII-buying regimes are far more damaging than false-BULL calls.
+  // Requires strong multi-signal confirmation before going BEARISH.
   const bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
     convictionScore > 15 ? 'BULLISH'
-    : convictionScore < -20 ? 'BEARISH'
+    : convictionScore < -25 ? 'BEARISH'
     : 'NEUTRAL';
 
   // ── 5. DTE-weighted Max Pain gravity ──
