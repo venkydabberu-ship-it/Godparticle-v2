@@ -15,6 +15,22 @@ const INDICES = [
   { key: 'BANKEX',      label: 'Bankex' },
 ];
 
+// Per-index tolerance for "accurate" (±pts on H, L, Close)
+const TOLERANCE: Record<string, number> = {
+  NIFTY50: 25, BANKNIFTY: 100, FINNIFTY: 50, MIDCAPNIFTY: 30,
+  NIFTYNEXT50: 25, SENSEX: 75, BANKEX: 100,
+};
+
+interface BatchResult {
+  date: string;
+  predHigh: number; predLow: number; predClose: number;
+  actualHigh: number; actualLow: number; actualClose: number;
+  diffH: number; diffL: number; diffC: number;
+  passH: boolean; passL: boolean; passC: boolean;
+  pass: boolean;
+  bias: string;
+}
+
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DAYS_SHORT = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
@@ -168,6 +184,12 @@ export default function Backtest() {
   const [running,     setRunning]     = useState(false);
   const [error,       setError]       = useState('');
 
+  // Batch analysis
+  const [batchRunning,  setBatchRunning]  = useState(false);
+  const [batchProgress, setBatchProgress] = useState(0);
+  const [batchResults,  setBatchResults]  = useState<BatchResult[]>([]);
+  const [batchDone,     setBatchDone]     = useState(false);
+
   const [forecast,    setForecast]    = useState<IndexForecast | null>(null);
   const [btOHLC,      setBtOHLC]      = useState<IndexOHLC | null>(null);
   const [btExpiry,    setBtExpiry]    = useState('');
@@ -243,6 +265,55 @@ export default function Backtest() {
     } finally {
       setRunning(false);
     }
+  }
+
+  // ── Batch backtest ──
+  async function runBatchBacktest() {
+    setBatchRunning(true); setBatchResults([]); setBatchDone(false); setBatchProgress(0);
+    const tol = TOLERANCE[indexName] ?? 25;
+    const eligible = btDates.filter(d => ohlcDates.has(d.date));
+    const results: BatchResult[] = [];
+
+    for (let i = 0; i < eligible.length; i++) {
+      const entry = eligible[i];
+      try {
+        const ohlc = await getIndexOHLC(indexName, entry.date);
+        if (!ohlc) continue;
+        const rows = await getMarketDataBefore(indexName, entry.expiry, entry.date, 3);
+        if (!rows.length) continue;
+
+        const validRow      = [...rows].reverse().find((r: any) => (r.spot_close ?? 0) > 0) ?? rows[rows.length - 1];
+        const chainData     = rows[rows.length - 1].strike_data ?? {};
+        const prevChainData = rows.length > 1 ? (rows[rows.length - 2].strike_data ?? {}) : {};
+        const spotClose     = validRow?.spot_close ?? 0;
+        const vix           = rows[rows.length - 1]?.vix ?? 0;
+        const dte           = dteBetween(entry.date, entry.expiry);
+        const historicals   = rows.map((r: any) => r.strike_data?._spot_close ?? 0).filter((c: number) => c > 0);
+
+        const fc = computeIndexForecast(ohlc.open, spotClose, chainData, vix, indexName, dte, historicals, [], prevChainData, 50);
+
+        // Predicted HIGH: bearish day → morning pop (t1) is the likely high; bullish → nearResistance
+        // Predicted LOW:  bullish day → morning dip (t1) is the likely low; bearish → nearSupport
+        const predHigh  = fc.bias === 'BEARISH' ? fc.morningDipTarget : fc.nearResistance;
+        const predLow   = fc.bias === 'BULLISH' ? fc.morningDipTarget : fc.nearSupport;
+        const predClose = fc.eodTarget;
+
+        const diffH = Math.abs(predHigh - ohlc.high);
+        const diffL = Math.abs(predLow  - ohlc.low);
+        const diffC = Math.abs(predClose - ohlc.close);
+        const passH = diffH <= tol, passL = diffL <= tol, passC = diffC <= tol;
+
+        results.push({
+          date: entry.date, predHigh, predLow, predClose,
+          actualHigh: ohlc.high, actualLow: ohlc.low, actualClose: ohlc.close,
+          diffH, diffL, diffC, passH, passL, passC,
+          pass: passH && passL && passC, bias: fc.bias,
+        });
+      } catch (_) { /* skip */ }
+      setBatchProgress(Math.round(((i + 1) / eligible.length) * 100));
+    }
+
+    setBatchResults(results); setBatchRunning(false); setBatchDone(true);
   }
 
   // ── SVG chart ──
@@ -594,6 +665,115 @@ export default function Backtest() {
             ⚠️ Prediction generated but no OHLC data for {fmtDate(btDate)} — accuracy comparison not available. Upload historical OHLC CSV from Admin Panel.
           </div>
         )}
+
+        {/* ── Batch Analysis ── */}
+        {btDates.length > 0 && ohlcDates.size > 0 && (() => {
+          const tol = TOLERANCE[indexName] ?? 25;
+          const eligible = btDates.filter(d => ohlcDates.has(d.date)).length;
+          const passCount = batchResults.filter(r => r.pass).length;
+          const accPct = batchResults.length ? Math.round(passCount / batchResults.length * 100) : 0;
+          const avgDiffH = batchResults.length ? Math.round(batchResults.reduce((s, r) => s + r.diffH, 0) / batchResults.length) : 0;
+          const avgDiffL = batchResults.length ? Math.round(batchResults.reduce((s, r) => s + r.diffL, 0) / batchResults.length) : 0;
+          const avgDiffC = batchResults.length ? Math.round(batchResults.reduce((s, r) => s + r.diffC, 0) / batchResults.length) : 0;
+
+          return (
+            <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h2 className="text-sm font-black">Batch Accuracy Analysis</h2>
+                  <p className="text-[10px] font-mono text-[#6b6b85] mt-0.5">
+                    {eligible} dates with both option chain + OHLC data · Tolerance ±{tol} pts
+                  </p>
+                </div>
+                <button
+                  onClick={runBatchBacktest}
+                  disabled={batchRunning}
+                  className="px-4 py-2 rounded-xl text-xs font-black bg-[#f0c040] text-black disabled:opacity-50 transition-opacity"
+                >
+                  {batchRunning ? `⏳ ${batchProgress}%` : '▶ Run Batch'}
+                </button>
+              </div>
+
+              {batchRunning && (
+                <div className="w-full h-2 bg-[#1e1e2e] rounded-full overflow-hidden mb-3">
+                  <div className="h-full bg-[#f0c040] rounded-full transition-all" style={{ width: `${batchProgress}%` }} />
+                </div>
+              )}
+
+              {batchDone && batchResults.length > 0 && (
+                <>
+                  {/* Summary row */}
+                  <div className={`rounded-xl p-4 mb-4 border ${accPct >= 70 ? 'border-[#39d98a]/40 bg-[#39d98a]/5' : accPct >= 40 ? 'border-[#f0c040]/40 bg-[#f0c040]/5' : 'border-[#ff4d6d]/40 bg-[#ff4d6d]/5'}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest">Overall Accuracy (H+L+C all within ±{tol})</span>
+                      <span className={`text-3xl font-black ${accPct >= 70 ? 'text-[#39d98a]' : accPct >= 40 ? 'text-[#f0c040]' : 'text-[#ff4d6d]'}`}>
+                        {accPct}%
+                      </span>
+                    </div>
+                    <div className="w-full h-3 bg-[#16161f] rounded-full overflow-hidden mb-3">
+                      <div className="h-full rounded-full" style={{ width: `${accPct}%`, background: accPct >= 70 ? '#39d98a' : accPct >= 40 ? '#f0c040' : '#ff4d6d' }} />
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 text-[10px] font-mono">
+                      {[
+                        { l: 'Avg High Error', v: avgDiffH, pass: avgDiffH <= tol },
+                        { l: 'Avg Low Error',  v: avgDiffL, pass: avgDiffL <= tol },
+                        { l: 'Avg Close Error', v: avgDiffC, pass: avgDiffC <= tol },
+                      ].map(({ l, v, pass }) => (
+                        <div key={l} className="bg-[#16161f] rounded-lg p-2 text-center">
+                          <div className="text-[#6b6b85] mb-0.5">{l}</div>
+                          <div className="font-bold" style={{ color: pass ? '#39d98a' : '#ff4d6d' }}>±{v} pts</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 text-[10px] font-mono text-[#6b6b85]">
+                      H: {batchResults.filter(r => r.passH).length}/{batchResults.length} accurate ·
+                      L: {batchResults.filter(r => r.passL).length}/{batchResults.length} accurate ·
+                      C: {batchResults.filter(r => r.passC).length}/{batchResults.length} accurate ·
+                      All 3: {passCount}/{batchResults.length}
+                    </div>
+                  </div>
+
+                  {/* Detail table */}
+                  <div className="overflow-x-auto rounded-xl border border-[#1e1e2e]">
+                    <table className="w-full text-[10px] font-mono">
+                      <thead>
+                        <tr className="border-b border-[#1e1e2e]">
+                          {['Date','Bias','Pred H','Act H','ΔH','Pred L','Act L','ΔL','Pred C','Act C','ΔC','✓'].map(h => (
+                            <th key={h} className={`px-2 py-2 text-[#6b6b85] uppercase font-normal text-[9px] ${h === '✓' ? 'text-center' : 'text-right'} first:text-left`}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {batchResults.map(r => (
+                          <tr key={r.date} className={`border-b border-[#1e1e2e] last:border-0 ${r.pass ? '' : 'bg-[#ff4d6d]/3'}`}>
+                            <td className="px-2 py-1.5 text-[#e8e8f0] whitespace-nowrap">{fmtDate(r.date)}</td>
+                            <td className={`px-2 py-1.5 text-right font-bold text-[8px] ${r.bias === 'BULLISH' ? 'text-[#39d98a]' : r.bias === 'BEARISH' ? 'text-[#ff4d6d]' : 'text-[#f0c040]'}`}>{r.bias.slice(0,4)}</td>
+                            <td className="px-2 py-1.5 text-right text-[#39d98a]">{r.predHigh.toLocaleString('en-IN')}</td>
+                            <td className="px-2 py-1.5 text-right text-[#e8e8f0]">{r.actualHigh.toLocaleString('en-IN')}</td>
+                            <td className={`px-2 py-1.5 text-right font-bold ${r.passH ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>±{Math.round(r.diffH)}</td>
+                            <td className="px-2 py-1.5 text-right text-[#ff4d6d]">{r.predLow.toLocaleString('en-IN')}</td>
+                            <td className="px-2 py-1.5 text-right text-[#e8e8f0]">{r.actualLow.toLocaleString('en-IN')}</td>
+                            <td className={`px-2 py-1.5 text-right font-bold ${r.passL ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>±{Math.round(r.diffL)}</td>
+                            <td className="px-2 py-1.5 text-right text-[#f0c040]">{r.predClose.toLocaleString('en-IN')}</td>
+                            <td className="px-2 py-1.5 text-right text-[#e8e8f0]">{r.actualClose.toLocaleString('en-IN')}</td>
+                            <td className={`px-2 py-1.5 text-right font-bold ${r.passC ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>±{Math.round(r.diffC)}</td>
+                            <td className="px-2 py-1.5 text-center">{r.pass ? '✅' : '❌'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              {batchDone && batchResults.length === 0 && (
+                <div className="text-xs font-mono text-[#6b6b85] py-4 text-center">
+                  No dates found with both option chain data and OHLC data.
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

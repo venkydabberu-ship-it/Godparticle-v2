@@ -1359,22 +1359,21 @@ export function computeIndexForecast(
   // ── 5. DTE-weighted Max Pain gravity ──
   const mpGravity = Math.max(0.10, Math.min(0.85, 0.85 * Math.exp(-0.45 * Math.max(dte, 0))));
 
-  // ── 6. EOD target: blend Max Pain gravity with directional momentum ──
-  // convictionWeight capped at 0.75 so strong-conviction days move decisively toward directional target.
-  // dailyRange * 1.0 (not 0.8) — the VIX range is already 1-sigma; don't under-target.
+  // ── 6. EOD target: blend Max Pain gravity with a conviction-scaled directional move ──
+  // Key design principle: directional component is a SMALL FRACTION of dailyRange scaled
+  // by conviction, NOT the raw OI-wall distance (which can be 200+ pts from open and
+  // causes massive close-prediction errors on low-conviction or far-DTE days).
+  // DTE dampener: far from expiry the market rarely exhausts its VIX-implied range in a
+  // single day, so we reduce target ambition linearly (DTE=0→1.0, DTE=6→0.58, DTE=10+→0.30).
   const mpTarget = Math.round(openPrice + mpGravity * (mp - openPrice));
-  const directionalTarget = bias === 'BULLISH'
-    ? Math.min(Math.round((nearResistance + ceWall) / 2), openPrice + dailyRange)
-    : bias === 'BEARISH'
-    ? Math.max(Math.round((nearSupport + peWall) / 2), openPrice - dailyRange)
-    : mpTarget;
-  // BULLISH/BEARISH days: minimum 50% directional weight so the predicted target
-  // actually follows the bias. Pure Max Pain dominance on directional days causes
-  // T1/T2 to collapse to near-entry prices (as seen May 14 — T1 ₹207 vs actual ₹319).
+  const maxDirectionalMove = dailyRange * Math.min(0.40, Math.abs(convictionScore) / 100);
+  const dteDampener = Math.max(0.20, 1.0 - dte * 0.07);
+  const directionSign = bias === 'BULLISH' ? 1 : bias === 'BEARISH' ? -1 : 0;
+  const conservativeTarget = Math.round(openPrice + directionSign * maxDirectionalMove * dteDampener);
   const convictionWeight = bias !== 'NEUTRAL'
-    ? Math.max(0.50, Math.min(0.80, Math.abs(convictionScore) / 80))
-    : Math.min(0.30, Math.abs(convictionScore) / 100);
-  const eodTarget = Math.round(mpTarget * (1 - convictionWeight) + directionalTarget * convictionWeight);
+    ? Math.min(0.55, Math.abs(convictionScore) / 100)
+    : Math.min(0.20, Math.abs(convictionScore) / 100);
+  const eodTarget = Math.round(mpTarget * (1 - convictionWeight) + conservativeTarget * convictionWeight);
 
   // ── 7. Morning first-move target ──
   // BULLISH: early dip to near support → CE entry zone, then rally
