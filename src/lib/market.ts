@@ -1294,9 +1294,9 @@ function computeTrendSignal(historicalSpotCloses: number[]): number {
   return 0;
 }
 
-export async function getFIIActivity(date: string): Promise<{ fii_cm_net: number; fii_idx_fut_net: number } | null> {
+export async function getFIIActivity(date: string): Promise<{ fii_cm_net: number; dii_cm_net: number; fii_idx_fut_net: number } | null> {
   const { data } = await withTimeout(
-    supabase.from('fii_activity').select('fii_cm_net, fii_idx_fut_net')
+    supabase.from('fii_activity').select('fii_cm_net, dii_cm_net, fii_idx_fut_net')
       .lt('trade_date', date)
       .order('trade_date', { ascending: false })
       .limit(1) as unknown as Promise<any>,
@@ -1319,6 +1319,7 @@ export function computeIndexForecast(
   atr: number = 0,                 // real ATR from index_ohlc (0 = use VIX formula)
   fiiCmNet: number = 0,            // FII cash market net (₹Cr), previous trading day
   fiiIdxFutNet: number = 0,        // FII index futures net (₹Cr), previous trading day
+  diiCmNet: number = 0,            // DII cash market net (₹Cr), previous trading day
 ): IndexForecast {
   const strikeGap = getGapStep(indexName);
 
@@ -1398,6 +1399,11 @@ export function computeIndexForecast(
     : fiiFuturesLongPct === 50 ? 0
       : Math.round(Math.max(-20, Math.min(20, (fiiFuturesLongPct - 50) * 0.4)));
 
+  // DII counter-signal: heavy DII cash buying absorbs FII selling, supporting price.
+  // When DII buys >4000 Cr, it signals strong domestic institutional demand regardless
+  // of FII direction → reduces net bearish conviction by up to 12 pts.
+  const diiBoostSig = diiCmNet > 4000 ? 12 : diiCmNet > 2000 ? 7 : diiCmNet > 500 ? 3 : 0;
+
   // Gap-from-prev-close signal: significant overnight gap = institutional positioning.
   // A gap down means smart money sold overnight → bearish pressure into the session.
   // Gaps < half a strike-gap are noise. Scaled by gap size, capped at ±15.
@@ -1407,10 +1413,14 @@ export function computeIndexForecast(
     : absGap < strikeGap * 0.5 ? 0
     : Math.sign(gapPts) * Math.min(15, Math.round(absGap / strikeGap * 10));
 
-  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal);
+  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal + diiBoostSig);
+  // Asymmetric thresholds: raise BEAR bar to -20 (vs BULL at +15).
+  // In FII-selling/DII-buying regimes the market often holds up → false BEAR calls
+  // cause more damage than false BULL. Requiring stronger conviction to go BEAR
+  // reduces those false calls, letting more days land in NEUTRAL.
   const bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
     convictionScore > 15 ? 'BULLISH'
-    : convictionScore < -15 ? 'BEARISH'
+    : convictionScore < -20 ? 'BEARISH'
     : 'NEUTRAL';
 
   // ── 5. DTE-weighted Max Pain gravity ──
