@@ -1,6 +1,21 @@
 import { supabase } from './supabase';
 import { useCredits as rpcUseCredits } from './auth';
 
+// Reject a Supabase query (or any promise) after `ms` milliseconds.
+// Prevents loading spinners from hanging forever when the network is slow or the
+// service worker is in a bad state after an update.
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`Request timed out after ${ms / 1000}s — reload and try again`)),
+        ms,
+      )
+    ),
+  ]);
+}
+
 // ══════════════════════════════════════════════════
 // BLACK-SCHOLES ENGINE — for accurate open estimates
 // ══════════════════════════════════════════════════
@@ -148,13 +163,16 @@ export async function getMarketData(
   const normalizedExpiry = normalizeExpiry(expiry);
   const normalizedName = normalizeIndexName(indexName);
 
-  const { data, error } = await supabase
-    .from('market_data')
-    .select('*')
-    .eq('index_name', normalizedName)
-    .eq('expiry', normalizedExpiry)
-    .order('trade_date', { ascending: false })
-    .limit(days);
+  const { data, error } = await withTimeout(
+    supabase
+      .from('market_data')
+      .select('*')
+      .eq('index_name', normalizedName)
+      .eq('expiry', normalizedExpiry)
+      .order('trade_date', { ascending: false })
+      .limit(days) as unknown as Promise<any>,
+    15000,
+  );
 
   if (error) throw new Error(error.message);
   return (data || []).reverse(); // return oldest-first for time-series analysis
@@ -163,11 +181,14 @@ export async function getMarketData(
 // ── GET AVAILABLE EXPIRIES FOR AN INDEX ──
 export async function getAvailableExpiries(indexName: string): Promise<string[]> {
   const normalizedName = normalizeIndexName(indexName);
-  const { data, error } = await supabase
-    .from('market_data')
-    .select('expiry')
-    .eq('index_name', normalizedName)
-    .order('expiry', { ascending: true });
+  const { data, error } = await withTimeout(
+    supabase
+      .from('market_data')
+      .select('expiry')
+      .eq('index_name', normalizedName)
+      .order('expiry', { ascending: true }) as unknown as Promise<any>,
+    15000,
+  );
 
   if (error) throw new Error(error.message);
   const expiries = [...new Set((data || []).map((r: any) => r.expiry))];
@@ -178,12 +199,15 @@ export async function getAvailableExpiries(indexName: string): Promise<string[]>
 export async function getAvailableDates(indexName: string, expiry: string): Promise<string[]> {
   const normalizedName = normalizeIndexName(indexName);
   const normalizedExpiry = normalizeExpiry(expiry);
-  const { data, error } = await supabase
-    .from('market_data')
-    .select('trade_date')
-    .eq('index_name', normalizedName)
-    .eq('expiry', normalizedExpiry)
-    .order('trade_date', { ascending: true });
+  const { data, error } = await withTimeout(
+    supabase
+      .from('market_data')
+      .select('trade_date')
+      .eq('index_name', normalizedName)
+      .eq('expiry', normalizedExpiry)
+      .order('trade_date', { ascending: true }) as unknown as Promise<any>,
+    15000,
+  );
 
   if (error) return [];
   return (data || []).map((r: any) => r.trade_date);
@@ -1350,12 +1374,15 @@ export async function generateIndexForecast(
   let fiiFuturesLongPct = 50;
   let fiiDate: string | null = null;
   try {
-    const { data: fiiRow } = await supabase
-      .from('fii_data')
-      .select('fii_long_pct, trade_date')
-      .order('trade_date', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const { data: fiiRow } = await withTimeout(
+      supabase
+        .from('fii_data')
+        .select('fii_long_pct, trade_date')
+        .order('trade_date', { ascending: false })
+        .limit(1)
+        .maybeSingle() as unknown as Promise<any>,
+      10000,
+    );
     if (fiiRow != null && fiiRow.fii_long_pct != null) {
       fiiFuturesLongPct = Number(fiiRow.fii_long_pct);
       fiiDate = fiiRow.trade_date ?? null;

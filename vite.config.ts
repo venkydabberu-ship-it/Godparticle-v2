@@ -31,27 +31,11 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,woff2,svg,ico,png}'],
         runtimeCaching: [
           {
-            // Supabase REST + Auth: NetworkFirst — always fetch live data first.
-            // Cache is only used as offline fallback (financial data must never be stale).
+            // Supabase REST + Auth: NetworkOnly — financial data must NEVER be served
+            // from a stale SW cache. Any caching here causes "stuck spinner" symptoms
+            // because users get a 60-second-old response while the UI waits for fresh data.
             urlPattern: ({ url }) => url.hostname.includes('supabase.co'),
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'supabase-api-v2',
-              networkTimeoutSeconds: 8,
-              expiration: { maxEntries: 60, maxAgeSeconds: 60 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
-          {
-            // Edge functions: NetworkFirst for the same reason
-            urlPattern: ({ url }) => url.pathname.includes('functions/v1'),
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'edge-fn-v2',
-              networkTimeoutSeconds: 8,
-              expiration: { maxEntries: 20, maxAgeSeconds: 60 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
+            handler: 'NetworkOnly',
           },
         ],
       },
