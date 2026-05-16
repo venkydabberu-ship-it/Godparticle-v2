@@ -575,6 +575,7 @@ export default function Dashboard() {
                         Conviction: <strong>{fc.convictionScore > 0 ? '+' : ''}{fc.convictionScore}</strong>
                         {fc.oiVelocitySignal !== 0 && <span> · OI Flow: <strong style={{ color: fc.oiVelocitySignal > 0 ? '#39d98a' : '#ff4d6d' }}>{fc.oiVelocitySignal > 0 ? '+' : ''}{fc.oiVelocitySignal} {fc.oiVelocitySignal > 5 ? '🟢 puts' : '🔴 calls'}</strong></span>}
                         {fc.fiiSignal !== 0 && <span> · FII: <strong style={{ color: fc.fiiSignal > 0 ? '#39d98a' : '#ff4d6d' }}>{fc.fiiSignal > 0 ? '+' : ''}{fc.fiiSignal} {fc.fiiSignal > 5 ? '🐂' : '🐻'}</strong></span>}
+                        {fc.gapSignal !== 0 && <span> · Gap: <strong style={{ color: fc.gapSignal > 0 ? '#39d98a' : '#ff4d6d' }}>{fc.gapSignal > 0 ? '+' : ''}{fc.gapSignal} {fc.gapPts > 0 ? '⬆' : '⬇'}{Math.abs(fc.gapPts)}pts</strong></span>}
                         {fc.sectorSignal !== 0 && <span> · Sector: <strong style={{ color: fc.sectorSignal > 0 ? '#39d98a' : '#ff4d6d' }}>{fc.sectorSignal > 0 ? '+' : ''}{fc.sectorSignal}</strong></span>}
                         {' '}· Max Pain gravity: <strong>{Math.round(fc.mpGravity * 100)}%</strong> · DTE: {fc.dte}d
                       </div>
