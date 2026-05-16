@@ -1338,6 +1338,29 @@ export function computeIndexForecast(
     if (pain < minPain) { minPain = pain; mp = testSk; }
   }
 
+  // ── 1b. Max Pain shift vs previous day ──
+  // If Max Pain moved UP, put writers rolled their positions higher → institutions
+  // expect support; bullish repositioning signal. Down = bearish. Range: ±10 pts.
+  let prevMaxPain = mp; // default: no shift
+  if (Object.keys(prevStrikeData).length > 0) {
+    const prevStrikes = Object.keys(prevStrikeData)
+      .map(Number).filter(s => s > 0 && s > openPrice * 0.90 && s < openPrice * 1.10);
+    let bestPrevPain = Infinity;
+    let bestPrevMP = mp;
+    for (const testSk of prevStrikes) {
+      let pain = 0;
+      for (const sk of prevStrikes) {
+        const d = prevStrikeData[String(sk)];
+        if (!d) continue;
+        pain += Math.max(0, testSk - sk) * (d.ce_oi ?? 0);
+        pain += Math.max(0, sk - testSk) * (d.pe_oi ?? 0);
+      }
+      if (pain < bestPrevPain) { bestPrevPain = pain; bestPrevMP = testSk; }
+    }
+    prevMaxPain = bestPrevMP;
+  }
+  const mpShiftSig = Math.max(-10, Math.min(10, Math.round((mp - prevMaxPain) / strikeGap * 5)));
+
   // ── 2. Far Gamma Walls (absolute highest OI) ──
   let maxCEOI = 0, ceWall = 0, maxPEOI = 0, peWall = 0;
   for (const sk of allStrikes) {
@@ -1438,7 +1461,7 @@ export function computeIndexForecast(
     : absGap < strikeGap * 0.5 ? 0
     : Math.sign(gapPts) * Math.min(15, Math.round(absGap / strikeGap * 10));
 
-  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal + ivSkewSig);
+  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal + ivSkewSig + mpShiftSig);
   // Asymmetric thresholds: BULL at +15, BEAR at -25.
   // Raising the BEAR bar to -25 (from -15) because false-BEAR calls in
   // FII-selling/DII-buying regimes are far more damaging than false-BULL calls.

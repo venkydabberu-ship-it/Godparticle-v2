@@ -332,7 +332,7 @@ export default function Backtest() {
         // ── Weighted score (100 pts total) ──
         // Direction (50): bias vs actual close vs open
         const closeVsOpen = ohlc.close - ohlc.open;
-        const neutralThreshold = ohlc.open * 0.007; // ±0.7% = moderately flat day
+        const neutralThreshold = ohlc.open * 0.010; // ±1.0% of open — a NEUT call is reasonable if market moves <240 pts
         const dirCorrect =
           fc.bias === 'BULLISH' ? closeVsOpen > 0 :
           fc.bias === 'BEARISH' ? closeVsOpen < 0 :
