@@ -24,12 +24,17 @@ const TOLERANCE: Record<string, number> = {
 
 interface BatchResult {
   date: string;
+  openPrice: number;
   predHigh: number; predLow: number; predClose: number;
   actualHigh: number; actualLow: number; actualClose: number;
   diffH: number; diffL: number; diffC: number;
-  passH: boolean; passL: boolean; passC: boolean;
-  pass: boolean;
   bias: string;
+  // New weighted scoring (max 100)
+  dirScore: number;   // 50 pts — bias matches actual close direction vs open
+  highScore: number;  // 15 pts — |predH - actH| ≤ 50
+  lowScore: number;   // 15 pts — |predL - actL| ≤ 50
+  closeScore: number; // 20 pts — |predC - actC| ≤ 50
+  totalScore: number; // 0–100
 }
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -323,13 +328,28 @@ export default function Backtest() {
         const diffH = Math.abs(predHigh - ohlc.high);
         const diffL = Math.abs(predLow  - ohlc.low);
         const diffC = Math.abs(predClose - ohlc.close);
-        const passH = diffH <= tol, passL = diffL <= tol, passC = diffC <= tol;
+
+        // ── Weighted score (100 pts total) ──
+        // Direction (50): bias vs actual close vs open
+        const closeVsOpen = ohlc.close - ohlc.open;
+        const neutralThreshold = ohlc.open * 0.003; // ±0.3% = flat day
+        const dirCorrect =
+          fc.bias === 'BULLISH' ? closeVsOpen > 0 :
+          fc.bias === 'BEARISH' ? closeVsOpen < 0 :
+          Math.abs(closeVsOpen) <= neutralThreshold;
+        const dirScore   = dirCorrect ? 50 : 0;
+        // Range components (±50 pt tolerance)
+        const SCORE_TOL  = 50;
+        const highScore  = diffH <= SCORE_TOL ? 15 : 0;
+        const lowScore   = diffL <= SCORE_TOL ? 15 : 0;
+        const closeScore = diffC <= SCORE_TOL ? 20 : 0;
+        const totalScore = dirScore + highScore + lowScore + closeScore;
 
         results.push({
-          date: entry.date, predHigh, predLow, predClose,
+          date: entry.date, openPrice: ohlc.open, predHigh, predLow, predClose,
           actualHigh: ohlc.high, actualLow: ohlc.low, actualClose: ohlc.close,
-          diffH, diffL, diffC, passH, passL, passC,
-          pass: passH && passL && passC, bias: fc.bias,
+          diffH, diffL, diffC, bias: fc.bias,
+          dirScore, highScore, lowScore, closeScore, totalScore,
         });
       } catch (_) { /* skip */ }
       setBatchProgress(Math.round(((i + 1) / eligible.length) * 100));
@@ -692,8 +712,6 @@ export default function Backtest() {
         {btDates.length > 0 && ohlcDates.size > 0 && (() => {
           const tol = TOLERANCE[indexName] ?? 25;
           const eligible = btDates.filter(d => ohlcDates.has(d.date)).length;
-          const passCount = batchResults.filter(r => r.pass).length;
-          const accPct = batchResults.length ? Math.round(passCount / batchResults.length * 100) : 0;
           const avgDiffH = batchResults.length ? Math.round(batchResults.reduce((s, r) => s + r.diffH, 0) / batchResults.length) : 0;
           const avgDiffL = batchResults.length ? Math.round(batchResults.reduce((s, r) => s + r.diffL, 0) / batchResults.length) : 0;
           const avgDiffC = batchResults.length ? Math.round(batchResults.reduce((s, r) => s + r.diffC, 0) / batchResults.length) : 0;
@@ -722,36 +740,43 @@ export default function Backtest() {
                 </div>
               )}
 
-              {batchDone && batchResults.length > 0 && (
+              {batchDone && batchResults.length > 0 && (() => {
+                  const avgScore = Math.round(batchResults.reduce((s, r) => s + r.totalScore, 0) / batchResults.length);
+                  const dirPct   = Math.round(batchResults.filter(r => r.dirScore > 0).length / batchResults.length * 100);
+                  const hPct     = Math.round(batchResults.filter(r => r.highScore > 0).length / batchResults.length * 100);
+                  const lPct     = Math.round(batchResults.filter(r => r.lowScore > 0).length / batchResults.length * 100);
+                  const cPct     = Math.round(batchResults.filter(r => r.closeScore > 0).length / batchResults.length * 100);
+                  const scoreCol = avgScore >= 70 ? '#39d98a' : avgScore >= 50 ? '#f0c040' : '#ff4d6d';
+                  return (
                 <>
-                  {/* Summary row */}
-                  <div className={`rounded-xl p-4 mb-4 border ${accPct >= 70 ? 'border-[#39d98a]/40 bg-[#39d98a]/5' : accPct >= 40 ? 'border-[#f0c040]/40 bg-[#f0c040]/5' : 'border-[#ff4d6d]/40 bg-[#ff4d6d]/5'}`}>
+                  {/* Summary */}
+                  <div className="rounded-xl p-4 mb-4 border" style={{ borderColor: scoreCol + '40', background: scoreCol + '08' }}>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest">Overall Accuracy (H+L+C all within ±{tol})</span>
-                      <span className={`text-3xl font-black ${accPct >= 70 ? 'text-[#39d98a]' : accPct >= 40 ? 'text-[#f0c040]' : 'text-[#ff4d6d]'}`}>
-                        {accPct}%
-                      </span>
+                      <div>
+                        <div className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest">Model Score (weighted average)</div>
+                        <div className="text-[9px] font-mono text-[#6b6b85] mt-0.5">Dir 50 + High 15 + Low 15 + Close 20 · H/L/C tolerance ±50 pts</div>
+                      </div>
+                      <span className="text-4xl font-black" style={{ color: scoreCol }}>{avgScore}%</span>
                     </div>
                     <div className="w-full h-3 bg-[#16161f] rounded-full overflow-hidden mb-3">
-                      <div className="h-full rounded-full" style={{ width: `${accPct}%`, background: accPct >= 70 ? '#39d98a' : accPct >= 40 ? '#f0c040' : '#ff4d6d' }} />
+                      <div className="h-full rounded-full transition-all" style={{ width: `${avgScore}%`, background: scoreCol }} />
                     </div>
-                    <div className="grid grid-cols-3 gap-3 text-[10px] font-mono">
+                    <div className="grid grid-cols-4 gap-2 text-[9px] font-mono">
                       {[
-                        { l: 'Avg High Error', v: avgDiffH, pass: avgDiffH <= tol },
-                        { l: 'Avg Low Error',  v: avgDiffL, pass: avgDiffL <= tol },
-                        { l: 'Avg Close Error', v: avgDiffC, pass: avgDiffC <= tol },
-                      ].map(({ l, v, pass }) => (
+                        { l: 'Direction', sub: '50 pts', v: dirPct, col: '#a78bfa' },
+                        { l: 'High ±50', sub: '15 pts', v: hPct,   col: '#39d98a' },
+                        { l: 'Low ±50',  sub: '15 pts', v: lPct,   col: '#ff4d6d' },
+                        { l: 'Close ±50',sub: '20 pts', v: cPct,   col: '#f0c040' },
+                      ].map(({ l, sub, v, col }) => (
                         <div key={l} className="bg-[#16161f] rounded-lg p-2 text-center">
-                          <div className="text-[#6b6b85] mb-0.5">{l}</div>
-                          <div className="font-bold" style={{ color: pass ? '#39d98a' : '#ff4d6d' }}>±{v} pts</div>
+                          <div className="text-[#6b6b85]">{l}</div>
+                          <div className="text-[8px] text-[#6b6b85] mb-1">{sub}</div>
+                          <div className="font-bold text-sm" style={{ color: col }}>{v}%</div>
                         </div>
                       ))}
                     </div>
                     <div className="mt-2 text-[10px] font-mono text-[#6b6b85]">
-                      H: {batchResults.filter(r => r.passH).length}/{batchResults.length} accurate ·
-                      L: {batchResults.filter(r => r.passL).length}/{batchResults.length} accurate ·
-                      C: {batchResults.filter(r => r.passC).length}/{batchResults.length} accurate ·
-                      All 3: {passCount}/{batchResults.length}
+                      Avg H err: ±{avgDiffH} · Avg L err: ±{avgDiffL} · Avg C err: ±{avgDiffC} pts
                     </div>
                   </div>
 
@@ -760,33 +785,39 @@ export default function Backtest() {
                     <table className="w-full text-[10px] font-mono">
                       <thead>
                         <tr className="border-b border-[#1e1e2e]">
-                          {['Date','Bias','Pred H','Act H','ΔH','Pred L','Act L','ΔL','Pred C','Act C','ΔC','✓'].map(h => (
-                            <th key={h} className={`px-2 py-2 text-[#6b6b85] uppercase font-normal text-[9px] ${h === '✓' ? 'text-center' : 'text-right'} first:text-left`}>{h}</th>
+                          {['Date','Bias','Dir','Pred H','Act H','ΔH','Pred L','Act L','ΔL','Pred C','Act C','ΔC','Score'].map(h => (
+                            <th key={h} className={`px-2 py-2 text-[#6b6b85] uppercase font-normal text-[9px] ${['Score','Dir'].includes(h) ? 'text-center' : 'text-right'} first:text-left`}>{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {batchResults.map(r => (
-                          <tr key={r.date} className={`border-b border-[#1e1e2e] last:border-0 ${r.pass ? '' : 'bg-[#ff4d6d]/3'}`}>
-                            <td className="px-2 py-1.5 text-[#e8e8f0] whitespace-nowrap">{fmtDate(r.date)}</td>
-                            <td className={`px-2 py-1.5 text-right font-bold text-[8px] ${r.bias === 'BULLISH' ? 'text-[#39d98a]' : r.bias === 'BEARISH' ? 'text-[#ff4d6d]' : 'text-[#f0c040]'}`}>{r.bias.slice(0,4)}</td>
-                            <td className="px-2 py-1.5 text-right text-[#39d98a]">{r.predHigh.toLocaleString('en-IN')}</td>
-                            <td className="px-2 py-1.5 text-right text-[#e8e8f0]">{r.actualHigh.toLocaleString('en-IN')}</td>
-                            <td className={`px-2 py-1.5 text-right font-bold ${r.passH ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>±{Math.round(r.diffH)}</td>
-                            <td className="px-2 py-1.5 text-right text-[#ff4d6d]">{r.predLow.toLocaleString('en-IN')}</td>
-                            <td className="px-2 py-1.5 text-right text-[#e8e8f0]">{r.actualLow.toLocaleString('en-IN')}</td>
-                            <td className={`px-2 py-1.5 text-right font-bold ${r.passL ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>±{Math.round(r.diffL)}</td>
-                            <td className="px-2 py-1.5 text-right text-[#f0c040]">{r.predClose.toLocaleString('en-IN')}</td>
-                            <td className="px-2 py-1.5 text-right text-[#e8e8f0]">{r.actualClose.toLocaleString('en-IN')}</td>
-                            <td className={`px-2 py-1.5 text-right font-bold ${r.passC ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>±{Math.round(r.diffC)}</td>
-                            <td className="px-2 py-1.5 text-center">{r.pass ? '✅' : '❌'}</td>
-                          </tr>
-                        ))}
+                        {batchResults.map(r => {
+                          const sc = r.totalScore;
+                          const scCol = sc >= 80 ? '#39d98a' : sc >= 60 ? '#f0c040' : sc >= 40 ? '#f0a020' : '#ff4d6d';
+                          return (
+                            <tr key={r.date} className="border-b border-[#1e1e2e] last:border-0">
+                              <td className="px-2 py-1.5 text-[#e8e8f0] whitespace-nowrap">{fmtDate(r.date)}</td>
+                              <td className={`px-2 py-1.5 text-right font-bold text-[8px] ${r.bias === 'BULLISH' ? 'text-[#39d98a]' : r.bias === 'BEARISH' ? 'text-[#ff4d6d]' : 'text-[#f0c040]'}`}>{r.bias.slice(0,4)}</td>
+                              <td className="px-2 py-1.5 text-center">{r.dirScore > 0 ? '✅' : '❌'}</td>
+                              <td className="px-2 py-1.5 text-right text-[#39d98a]">{r.predHigh.toLocaleString('en-IN')}</td>
+                              <td className="px-2 py-1.5 text-right text-[#e8e8f0]">{r.actualHigh.toLocaleString('en-IN')}</td>
+                              <td className={`px-2 py-1.5 text-right font-bold ${r.highScore > 0 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>±{Math.round(r.diffH)}</td>
+                              <td className="px-2 py-1.5 text-right text-[#ff4d6d]">{r.predLow.toLocaleString('en-IN')}</td>
+                              <td className="px-2 py-1.5 text-right text-[#e8e8f0]">{r.actualLow.toLocaleString('en-IN')}</td>
+                              <td className={`px-2 py-1.5 text-right font-bold ${r.lowScore > 0 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>±{Math.round(r.diffL)}</td>
+                              <td className="px-2 py-1.5 text-right text-[#f0c040]">{r.predClose.toLocaleString('en-IN')}</td>
+                              <td className="px-2 py-1.5 text-right text-[#e8e8f0]">{r.actualClose.toLocaleString('en-IN')}</td>
+                              <td className={`px-2 py-1.5 text-right font-bold ${r.closeScore > 0 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>±{Math.round(r.diffC)}</td>
+                              <td className="px-2 py-1.5 text-center font-black text-[11px]" style={{ color: scCol }}>{sc}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 </>
-              )}
+                  );
+              })()}
 
               {batchDone && batchResults.length === 0 && (
                 <div className="text-xs font-mono text-[#6b6b85] py-4 text-center">
