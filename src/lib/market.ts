@@ -178,6 +178,52 @@ export async function getMarketData(
   return (data || []).reverse(); // return oldest-first for time-series analysis
 }
 
+// ── GET MARKET DATA STRICTLY BEFORE A DATE (for backtesting) ──
+export async function getMarketDataBefore(
+  indexName: string,
+  expiry: string,
+  beforeDate: string,
+  days: number = 3,
+): Promise<any[]> {
+  const normalizedName = normalizeIndexName(indexName);
+  const normalizedExpiry = normalizeExpiry(expiry);
+  const { data, error } = await withTimeout(
+    supabase
+      .from('market_data')
+      .select('*')
+      .eq('index_name', normalizedName)
+      .eq('expiry', normalizedExpiry)
+      .lt('trade_date', beforeDate)
+      .order('trade_date', { ascending: false })
+      .limit(days) as unknown as Promise<any>,
+    15000,
+  );
+  if (error) throw new Error(error.message);
+  return (data || []).reverse();
+}
+
+// ── GET A SINGLE ROW FOR AN EXACT DATE (for backtest actual result) ──
+export async function getMarketDataForDate(
+  indexName: string,
+  expiry: string,
+  date: string,
+): Promise<any | null> {
+  const normalizedName = normalizeIndexName(indexName);
+  const normalizedExpiry = normalizeExpiry(expiry);
+  const { data, error } = await withTimeout(
+    supabase
+      .from('market_data')
+      .select('*')
+      .eq('index_name', normalizedName)
+      .eq('expiry', normalizedExpiry)
+      .eq('trade_date', date)
+      .maybeSingle() as unknown as Promise<any>,
+    15000,
+  );
+  if (error) return null;
+  return data ?? null;
+}
+
 // ── GET AVAILABLE EXPIRIES FOR AN INDEX ──
 export async function getAvailableExpiries(indexName: string): Promise<string[]> {
   const normalizedName = normalizeIndexName(indexName);

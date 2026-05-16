@@ -6,7 +6,7 @@ import { signOut } from '../lib/auth';
 import { getStale, setCached } from '../lib/cache';
 import {
   getAvailableExpiries, generateIndexForecast,
-  formatExpiryDisplay, getDTE, type IndexForecast,
+  formatExpiryDisplay, getDTE, type IndexForecast, useCredits,
 } from '../lib/market';
 
 export default function Dashboard() {
@@ -162,12 +162,21 @@ export default function Dashboard() {
   async function handleGenerateForecast() {
     const open = parseFloat(fcastOpen);
     if (!open || open <= 0) return;
+    const isPaidUser = ['admin', 'pro'].includes(role);
+    if (!isPaidUser && (profile?.credits ?? 0) < 2) {
+      setFcastError('Not enough credits! You need 2 credits to generate a forecast. Buy more credits or upgrade your plan.');
+      return;
+    }
     setFcastLoading(true);
     setFcastError('');
     setFcastForecast(null);
     try {
       const expiries = await getAvailableExpiries(fcastIndex);
       if (!expiries.length) { setFcastError('No option chain data uploaded for this index yet.'); return; }
+      if (!isPaidUser) {
+        await useCredits(user!.id, 2);
+        await refreshProfile();
+      }
       const { forecast, fiiDate, usedExpiry, spotClose } = await generateIndexForecast(fcastIndex, open);
       setFcastExpiry(usedExpiry);
       setFcastSpotClose(spotClose);
@@ -214,9 +223,17 @@ export default function Dashboard() {
               Admin Panel
             </Link>
           )}
-          <button onClick={() => window.location.reload()} title="Force reload app"
-            className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040] border border-[#1e1e2e] rounded px-2 py-1">
-            ↺
+          <button
+            onClick={() => window.location.reload()}
+            title="Refresh all data"
+            className="flex items-center gap-1.5 text-xs font-black text-[#0a0a0f] bg-[#f0c040] hover:bg-[#ffd060] active:scale-95 transition-all rounded-lg px-3 py-2"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="23 4 23 10 17 10" />
+              <polyline points="1 20 1 14 7 14" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
+            Refresh Data
           </button>
           <button onClick={handleSignOut} className="text-xs font-mono text-[#6b6b85] hover:text-[#ff4d6d] transition-all">
             Sign Out
@@ -497,14 +514,31 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 mb-4">
+              {!['admin', 'pro'].includes(role) && (profile?.credits ?? 0) < 2 && (
+                <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl px-4 py-3 flex items-center justify-between gap-3 mb-4">
+                  <div className="text-xs font-mono text-[#ff4d6d]">
+                    ⚠️ Need 2 credits to generate forecast. You have {profile?.credits ?? 0}.
+                  </div>
+                  <Link to="/pricing" className="shrink-0 bg-[#f0c040] text-black text-xs font-black px-3 py-1.5 rounded-lg whitespace-nowrap">
+                    Get Credits →
+                  </Link>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 mb-4 flex-wrap">
                 <button
                   onClick={handleGenerateForecast}
                   disabled={fcastLoading || !fcastOpen}
                   className="px-5 py-2 rounded-lg text-sm font-black bg-[#a855f7] text-white disabled:opacity-40 hover:bg-[#9333ea] transition-all"
                 >
-                  {fcastLoading ? '⏳ Loading...' : '🔮 Generate Forecast'}
+                  {fcastLoading ? '⏳ Loading...' : `🔮 Generate Forecast${!['admin','pro'].includes(role) ? ' — 2 Credits' : ''}`}
                 </button>
+                <Link
+                  to="/backtest"
+                  className="px-4 py-2 rounded-lg text-sm font-black border border-[#f0c040]/40 text-[#f0c040] hover:bg-[#f0c040]/10 transition-all flex items-center gap-1.5"
+                >
+                  ⏪ Back Test
+                </Link>
                 {fcastSpotClose > 0 && (
                   <span className="text-[10px] font-mono text-[#6b6b85]">
                     Prev close: <span className="text-[#f0c040]">{fcastSpotClose.toLocaleString('en-IN')}</span>

@@ -45,6 +45,7 @@ const AlertsCenter    = lazy(() => import('./pages/AlertsCenter'));
 const OptionsScanner  = lazy(() => import('./pages/OptionsScanner'));
 const DailyFocus      = lazy(() => import('./pages/DailyFocus'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const Backtest     = lazy(() => import('./pages/Backtest'));
 const Terms        = lazy(() => import('./pages/Terms'));
 const Privacy      = lazy(() => import('./pages/Privacy'));
 const Refund       = lazy(() => import('./pages/Refund'));
@@ -151,6 +152,9 @@ export default function App() {
             } />
             <Route path="/focus" element={
               <ProtectedRoute><DailyFocus /></ProtectedRoute>
+            } />
+            <Route path="/backtest" element={
+              <ProtectedRoute><Backtest /></ProtectedRoute>
             } />
             <Route path="/terms"   element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />
