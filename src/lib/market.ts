@@ -1141,8 +1141,10 @@ export function computeIndexForecast(
   // Gap-from-prev-close signal: significant overnight gap = institutional positioning.
   // A gap down means smart money sold overnight → bearish pressure into the session.
   // Gaps < half a strike-gap are noise. Scaled by gap size, capped at ±15.
+  // Guard: if spotClose is 0 (no prev data) or gap is impossibly large, skip.
   const absGap = Math.abs(gapPts);
-  const gapSignal = absGap < strikeGap * 0.5 ? 0
+  const gapSignal = (spotClose <= 0 || absGap > dailyRange * 3) ? 0
+    : absGap < strikeGap * 0.5 ? 0
     : Math.sign(gapPts) * Math.min(15, Math.round(absGap / strikeGap * 10));
 
   const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal);
