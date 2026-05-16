@@ -71,7 +71,7 @@ function candidateDates(fromYMD: string): string[] {
 async function fetchNSEOHLC(dateYMD: string): Promise<{ rows: any[]; date: string }> {
   const [yyyy, mm, dd] = dateYMD.split('-');
   const ddmmyyyy = `${dd}${mm}${yyyy}`;
-  const url = `https://archives.nseindia.com/content/indices/ind_close_all_${ddmmyyyy}.csv`;
+  const url = 'https://archives.nseindia.com/content/indices/ind_close_all_' + ddmmyyyy + '.csv';
 
   const res = await fetch(url, {
     headers: {
