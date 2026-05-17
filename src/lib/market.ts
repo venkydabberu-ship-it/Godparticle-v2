@@ -1568,14 +1568,21 @@ export function computeIndexForecast(
   // DTE dampener: far from expiry the market rarely exhausts its VIX-implied range in a
   // single day, so we reduce target ambition linearly (DTE=0→1.0, DTE=6→0.58, DTE=10+→0.30).
   const mpTarget = Math.round(openPrice + effectiveMpGravity * (mp - openPrice));
-  // Directional fraction: scale up to 0.50 for high-conviction days (was capped at 0.40).
-  // High-conviction BEAR/BULL days genuinely move 40-60% of dailyRange toward the call.
-  const maxDirectionalMove = dailyRange * Math.min(0.50, Math.abs(convictionScore) / 80);
-  const dteDampener = Math.max(0.20, 1.0 - dte * 0.07);
+  // Directional move: capped at 60% of daily range; denominator 65 means conviction ≥65 hits the cap.
+  // Raised from min(0.50, /80) — backtest shows the formula was systematically underpredicting
+  // directional closes because 0.30 × 75 × 0.65 ≈ 14 pts on a typical DTE=5 bull day.
+  const maxDirectionalMove = dailyRange * Math.min(0.60, Math.abs(convictionScore) / 65);
+  // DTE dampener: softer slope (0.05/day vs 0.07) and higher floor (0.45 vs 0.20).
+  // The market moves its full ATR range every session regardless of DTE; the original
+  // 0.07 slope over-penalised far-DTE days.
+  const dteDampener = Math.max(0.45, 1.0 - dte * 0.05);
   const directionSign = bias === 'BULLISH' ? 1 : bias === 'BEARISH' ? -1 : 0;
   const conservativeTarget = Math.round(openPrice + directionSign * maxDirectionalMove * dteDampener);
+  // convictionWeight raised to max 0.75 (from 0.55) and denominator 55 (from 100).
+  // Old formula: conv=30 → weight=0.30; new: conv=30 → weight=0.545.
+  // Net effect: eodTarget moves from ~open+21 to ~open+42 on a typical DTE=5 bull day.
   const convictionWeight = bias !== 'NEUTRAL'
-    ? Math.min(0.55, Math.abs(convictionScore) / 100)
+    ? Math.min(0.75, Math.abs(convictionScore) / 55)
     : Math.min(0.15, Math.abs(convictionScore) / 100);
   let eodTarget = Math.round(mpTarget * (1 - convictionWeight) + conservativeTarget * convictionWeight);
   // Directional consistency: strong-conviction BEARISH close must be ≤ open;
@@ -1585,6 +1592,16 @@ export function computeIndexForecast(
   }
   if (bias === 'BULLISH' && Math.abs(convictionScore) > 25 && eodTarget < openPrice) {
     eodTarget = Math.round((openPrice + conservativeTarget) / 2);
+  }
+  // Close-specific nudge from COI fresh writing + structural FII/PRO positioning.
+  // These signals were excluded from convictionScore (to protect direction accuracy) but
+  // are valid adjustments for the close magnitude: fresh PE below open = put sellers confident
+  // price stays up → push close higher; fresh CE above open = call sellers confident → lower.
+  // fiiLongPctSig (structural long %) and proSig (pro desk net) add smaller secondary nudge.
+  // Not applied on expiry day (DTE=0) where MP pin already dominates.
+  if (dte > 0) {
+    const closeNudge = Math.round(coiSignal * 2.5 + fiiLongPctSig * 1.0 + proSig * 0.8);
+    eodTarget = Math.round(eodTarget + closeNudge);
   }
   // ── 7. Morning first-move target ──
   // BULLISH: early dip to near support → CE entry zone, then rally
