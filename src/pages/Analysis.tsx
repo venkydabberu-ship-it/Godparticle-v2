@@ -60,6 +60,7 @@ export default function Analysis() {
   const [gctAiLoading, setGctAiLoading] = useState(false);
   const [gctAiError, setGctAiError] = useState('');
   const [generating, setGenerating] = useState(false);
+  const [forecastError, setForecastError] = useState('');
 
   const location = useLocation();
 
@@ -1392,18 +1393,22 @@ export default function Analysis() {
                 const open = parseFloat(forecastOpen);
                 if (!open || open <= 0) return;
                 setGenerating(true);
+                setForecastError('');
+                setForecast(null);
                 try {
-                  // Calls the exact same shared function as Dashboard — guaranteed identical output
                   const historicalSpotCloses = rowsData
                     .map((r: any) => r.strike_data?.['_spot_close'] ?? 0)
                     .filter((c: number) => c > 0);
-                  const { forecast: f, fiiDate: fd } = await generateIndexForecast(
-                    indexName, open, chainData, spotClose, vix, historicalSpotCloses,
-                  );
+                  const { forecast: f, fiiDate: fd } = await Promise.race([
+                    generateIndexForecast(indexName, open, chainData, spotClose, vix, historicalSpotCloses),
+                    new Promise<never>((_, rej) =>
+                      setTimeout(() => rej(new Error('Forecast timed out — Supabase is slow, please try again')), 22000)
+                    ),
+                  ]);
                   setFiiDate(fd);
                   setForecast(f);
                 } catch (err: any) {
-                  console.error('generateIndexForecast failed:', err?.message);
+                  setForecastError(err?.message ?? 'Failed to generate forecast — please try again');
                 } finally {
                   setGenerating(false);
                 }
@@ -1647,7 +1652,7 @@ export default function Analysis() {
                         <input
                           type="number"
                           value={forecastOpen}
-                          onChange={e => { setForecastOpen(e.target.value); setForecast(null); }}
+                          onChange={e => { setForecastOpen(e.target.value); setForecast(null); setForecastError(''); }}
                           placeholder={spotClose > 0 ? `e.g. ${Math.round(spotClose)}` : 'Enter open price'}
                           className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#a855f7]"
                         />
@@ -1667,6 +1672,17 @@ export default function Analysis() {
                       </div>
                     )}
                   </div>
+
+                  {forecastError && (
+                    <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-xl px-4 py-3 text-xs font-mono text-[#ff4d6d] flex items-start gap-2">
+                      <span>⚠</span>
+                      <div>
+                        <div className="font-bold mb-1">Forecast failed</div>
+                        <div className="opacity-80">{forecastError}</div>
+                        <button onClick={generate} className="mt-2 underline hover:no-underline">Tap to retry</button>
+                      </div>
+                    </div>
+                  )}
 
                   {forecast && (
                     <>

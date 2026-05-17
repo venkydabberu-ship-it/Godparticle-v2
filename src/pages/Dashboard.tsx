@@ -113,13 +113,22 @@ export default function Dashboard() {
     // Remember this user so the mount effect can paint stale data on next visit
     localStorage.setItem('gp_last_uid', uid);
 
+    // Abort all 4 queries if they take longer than 12 s — prevents the refresh
+    // button from spinning forever when Supabase is slow or the network is flaky.
+    const deadline = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error('Dashboard load timed out — check your connection')), 12000)
+    );
+
     // Fetch all 4 queries in parallel — no sequential waterfall
-    const [analysesRes, z2hRes, announcementRes, queriesRes] = await Promise.all([
-      supabase.from('analyses').select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(5),
-      supabase.from('z2h_signals').select('*').order('created_at', { ascending: false }).limit(1),
-      supabase.from('admin_settings').select('value').eq('key', 'announcement').single(),
-      supabase.from('customer_queries').select('id,category,status,created_at,query_text').eq('user_id', uid).order('created_at', { ascending: false }),
-    ]);
+    const [analysesRes, z2hRes, announcementRes, queriesRes] = await Promise.race([
+      Promise.all([
+        supabase.from('analyses').select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(5),
+        supabase.from('z2h_signals').select('*').order('created_at', { ascending: false }).limit(1),
+        supabase.from('admin_settings').select('value').eq('key', 'announcement').single(),
+        supabase.from('customer_queries').select('id,category,status,created_at,query_text').eq('user_id', uid).order('created_at', { ascending: false }),
+      ]),
+      deadline,
+    ]) as any[];
 
     const analyses  = analysesRes.data || [];
     const announcement = announcementRes.data?.value || '';
@@ -199,7 +208,12 @@ export default function Dashboard() {
         await useCredits(user!.id, 2);
         await refreshProfile();
       }
-      const { forecast, fiiDate, usedExpiry, spotClose } = await generateIndexForecast(fcastIndex, open);
+      const { forecast, fiiDate, usedExpiry, spotClose } = await Promise.race([
+        generateIndexForecast(fcastIndex, open),
+        new Promise<never>((_, rej) =>
+          setTimeout(() => rej(new Error('Forecast timed out — Supabase is slow, please try again in a moment')), 22000)
+        ),
+      ]);
       setFcastExpiry(usedExpiry);
       setFcastSpotClose(spotClose);
       setFcastFiiDate(fiiDate);

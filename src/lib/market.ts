@@ -1862,86 +1862,98 @@ export async function generateIndexForecast(
   fallbackVix = 0,
   historicalSpotCloses: number[] = [],
 ): Promise<ForecastResult> {
-  // 1. Find nearest expiry and fetch 2 rows
   const todayStr = new Date().toISOString().split('T')[0];
-  const allExpiries = await getAvailableExpiries(indexName);
-  const nearest = allExpiries
-    .filter(e => e >= todayStr)
-    .sort((a, b) => a.localeCompare(b))[0] ?? allExpiries[allExpiries.length - 1];
+  const sectorDefs = SECTOR_INDEX_MAP[indexName] ?? [];
 
-  const rows = await getMarketData(indexName, nearest, 2);
+  // Run chain fetch (sequential: expiry → rows) in parallel with all
+  // independent meta-data fetches (sectors, FII, OHLC).
+  // Old code was fully sequential — worst case 63 s. Now worst case is ~30 s.
+  const [chainResult, metaResult] = await Promise.allSettled([
+    // ── Group A: expiry lookup → market data (must be sequential) ──
+    (async () => {
+      const allExpiries = await getAvailableExpiries(indexName);
+      const nearest = allExpiries
+        .filter(e => e >= todayStr)
+        .sort((a, b) => a.localeCompare(b))[0] ?? allExpiries[allExpiries.length - 1];
+      const rows = await getMarketData(indexName, nearest, 2);
+      return { nearest, rows };
+    })(),
 
-  // spot_close is stored inside strike_data._spot_close (no standalone DB column)
+    // ── Group B: independent meta fetches (all parallel) ──
+    Promise.allSettled([
+      // B1: sector chains (8 s cap)
+      Promise.race([
+        Promise.all(sectorDefs.map(s => getLatestChainData(s.sectorIndex).then(sd => ({ s, sd })))),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('sector timeout')), 8000)),
+      ]).catch(() => [] as { s: typeof sectorDefs[0]; sd: any }[]),
+
+      // B2: FII structural positioning
+      withTimeout(
+        supabase
+          .from('fii_data')
+          .select('fii_long_pct, trade_date, dii_long_futures, dii_short_futures, pro_long_futures, pro_short_futures')
+          .order('trade_date', { ascending: false })
+          .limit(1)
+          .maybeSingle() as unknown as Promise<any>,
+        8000,
+      ).catch(() => ({ data: null })),
+
+      // B3: FII activity flows
+      getFIIActivity(todayStr).catch(() => null),
+
+      // B4: OHLC for ATR + trend signal
+      getRecentOHLC(indexName, todayStr, 10).catch(() => [] as IndexOHLC[]),
+    ]),
+  ]);
+
+  // ── Unpack Group A ──
+  const { nearest, rows } = chainResult.status === 'fulfilled'
+    ? chainResult.value
+    : { nearest: '', rows: [] as any[] };
+
   const getRowSpot = (r: any): number =>
     r?.spot_close > 0 ? r.spot_close : (r?.strike_data?._spot_close ?? 0);
-  const validRow = [...rows].reverse().find(r => getRowSpot(r) > 0) ?? rows[rows.length - 1];
+  const validRow   = [...rows].reverse().find(r => getRowSpot(r) > 0) ?? rows[rows.length - 1];
   const chainData  = rows.length ? (rows[rows.length - 1].strike_data ?? fallbackChainData) : fallbackChainData;
   const prevChainData = rows.length > 1 ? (rows[rows.length - 2].strike_data ?? {}) : {};
   const spotClose  = (validRow ? getRowSpot(validRow) : 0) || fallbackSpotClose;
   const vix        = rows[rows.length - 1]?.vix ?? validRow?.vix ?? fallbackVix;
-  const dte        = getDTE(nearest);
+  const dte        = getDTE(nearest || (new Date().toISOString().split('T')[0]));
 
-  // 2. Sector chain data
-  const sectorDefs = SECTOR_INDEX_MAP[indexName] ?? [];
+  // ── Unpack Group B ──
+  const [sectorResult, fiiStructResult, fiiActResult, ohlcResult] =
+    metaResult.status === 'fulfilled' ? metaResult.value : [null, null, null, null];
+
+  // B1: sector chains
   const sectorChainData: { indexName: string; weight: number; strikeData: Record<string, any> }[] = [];
-  await Promise.race([
-    Promise.all(sectorDefs.map(async s => {
-      const sd = await getLatestChainData(s.sectorIndex);
-      if (sd) sectorChainData.push({ indexName: s.sectorIndex, weight: s.weight, strikeData: sd });
-    })),
-    new Promise<void>((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
-  ]).catch(() => {});
-
-  // 3. FII structural positioning (fii_data) — same query as getFIIPositioning but live.
-  //    fiiFuturesLongPct kept at 50 (neutral) to match backtest — fiiSignal excluded from
-  //    conviction in both contexts. Actual long% goes to fiiLongPct (close nudge only).
-  let fiiLongPct = 50;
-  let diiNetFut = 0;
-  let proNetFut = 0;
-  let fiiDate: string | null = null;
-  try {
-    const { data: fiiRow } = await withTimeout(
-      supabase
-        .from('fii_data')
-        .select('fii_long_pct, trade_date, dii_long_futures, dii_short_futures, pro_long_futures, pro_short_futures')
-        .order('trade_date', { ascending: false })
-        .limit(1)
-        .maybeSingle() as unknown as Promise<any>,
-      10000,
-    );
-    if (fiiRow != null) {
-      fiiLongPct  = fiiRow.fii_long_pct ?? 50;
-      fiiDate     = fiiRow.trade_date ?? null;
-      diiNetFut   = (fiiRow.dii_long_futures ?? 0) - (fiiRow.dii_short_futures ?? 0);
-      proNetFut   = (fiiRow.pro_long_futures  ?? 0) - (fiiRow.pro_short_futures  ?? 0);
+  if (sectorResult?.status === 'fulfilled') {
+    for (const item of (sectorResult.value as { s: typeof sectorDefs[0]; sd: any }[])) {
+      if (item?.sd) sectorChainData.push({ indexName: item.s.sectorIndex, weight: item.s.weight, strikeData: item.sd });
     }
-  } catch { /* no FII data — neutral */ }
+  }
 
-  // 4. FII/DII cash market flows (fii_activity) — same as getFIIActivity but using today.
+  // B2: FII structural
+  let fiiLongPct = 50, diiNetFut = 0, proNetFut = 0, fiiDate: string | null = null;
+  const fiiRow = (fiiStructResult?.status === 'fulfilled' ? fiiStructResult.value : null)?.data ?? null;
+  if (fiiRow) {
+    fiiLongPct = fiiRow.fii_long_pct ?? 50;
+    fiiDate    = fiiRow.trade_date ?? null;
+    diiNetFut  = (fiiRow.dii_long_futures ?? 0) - (fiiRow.dii_short_futures ?? 0);
+    proNetFut  = (fiiRow.pro_long_futures  ?? 0) - (fiiRow.pro_short_futures  ?? 0);
+  }
+
+  // B3: FII activity
   let fiiCmNet = 0, diiCmNet = 0, fiiIdxFutNet = 0;
-  try {
-    const act = await getFIIActivity(todayStr);
-    if (act) { fiiCmNet = act.fii_cm_net; diiCmNet = act.dii_cm_net; fiiIdxFutNet = act.fii_idx_fut_net; }
-  } catch { /* silent */ }
+  const act = fiiActResult?.status === 'fulfilled' ? fiiActResult.value : null;
+  if (act) { fiiCmNet = act.fii_cm_net; diiCmNet = act.dii_cm_net; fiiIdxFutNet = act.fii_idx_fut_net; }
 
-  // 5. ATR + historicalSpotCloses — derive both from the same OHLC fetch so that
-  //    every call to generateIndexForecast (Dashboard, Analysis, any surface) uses
-  //    identical historical closes and therefore produces the same trendSignal.
-  let atr = 0;
-  let internalHistoricals: number[] = [];
-  try {
-    const recentOHLC = await getRecentOHLC(indexName, todayStr, 10);
-    atr = computeATR(recentOHLC);
-    internalHistoricals = recentOHLC.map(r => r.close).filter(c => c > 0);
-  } catch { /* fallback: atr=0 uses VIX-based range */ }
+  // B4: OHLC
+  const ohlcRows: IndexOHLC[] = ohlcResult?.status === 'fulfilled' ? (ohlcResult.value ?? []) : [];
+  const atr = computeATR(ohlcRows);
+  const internalHistoricals = ohlcRows.map(r => r.close).filter(c => c > 0);
+  const effectiveHistoricals = internalHistoricals.length >= 2 ? internalHistoricals : historicalSpotCloses;
 
-  // Prefer OHLC closes (consistent, reliable); fall back to caller-supplied array
-  // only if OHLC data is unavailable (e.g. first run before any OHLC is uploaded).
-  const effectiveHistoricals = internalHistoricals.length >= 2
-    ? internalHistoricals
-    : historicalSpotCloses;
-
-  // 6. Compute forecast — identical param order as Backtest.tsx for consistent predictions.
+  // ── Compute forecast ──
   const forecast = computeIndexForecast(
     openPrice, spotClose, chainData, vix, indexName, dte,
     effectiveHistoricals, sectorChainData, prevChainData,
