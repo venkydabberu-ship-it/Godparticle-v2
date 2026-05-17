@@ -1470,7 +1470,14 @@ export function computeIndexForecast(
   // Gamma pin boost: on expiry (DTE≤1) when open is within 1.5 strike-gaps of Max Pain,
   // dealer delta-hedging at the dominant OI strike creates a very strong close pull toward MP.
   const gammaPinActive = dte <= 1 && Math.abs(openPrice - mp) <= strikeGap * 1.5;
-  const effectiveMpGravity = gammaPinActive ? Math.min(0.92, mpGravity * 1.10) : mpGravity;
+  // MP fights bias: when Max Pain is on the OPPOSITE side of open from the directional call
+  // (e.g., BEAR day where mp > open), mpGravity actively cancels the directional move.
+  // Reduce it to 40% to prevent the cancel-out from inflating/deflating close predictions.
+  const mpFightsBias = (bias === 'BULLISH' && mp < openPrice) ||
+                       (bias === 'BEARISH' && mp > openPrice);
+  const effectiveMpGravity = mpFightsBias && Math.abs(convictionScore) > 15
+    ? mpGravity * 0.40
+    : gammaPinActive ? Math.min(0.92, mpGravity * 1.10) : mpGravity;
 
   // ── 6. EOD target: blend Max Pain gravity with a conviction-scaled directional move ──
   // Key design principle: directional component is a SMALL FRACTION of dailyRange scaled
@@ -1479,13 +1486,15 @@ export function computeIndexForecast(
   // DTE dampener: far from expiry the market rarely exhausts its VIX-implied range in a
   // single day, so we reduce target ambition linearly (DTE=0→1.0, DTE=6→0.58, DTE=10+→0.30).
   const mpTarget = Math.round(openPrice + effectiveMpGravity * (mp - openPrice));
-  const maxDirectionalMove = dailyRange * Math.min(0.40, Math.abs(convictionScore) / 100);
+  // Directional fraction: scale up to 0.50 for high-conviction days (was capped at 0.40).
+  // High-conviction BEAR/BULL days genuinely move 40-60% of dailyRange toward the call.
+  const maxDirectionalMove = dailyRange * Math.min(0.50, Math.abs(convictionScore) / 80);
   const dteDampener = Math.max(0.20, 1.0 - dte * 0.07);
   const directionSign = bias === 'BULLISH' ? 1 : bias === 'BEARISH' ? -1 : 0;
   const conservativeTarget = Math.round(openPrice + directionSign * maxDirectionalMove * dteDampener);
   const convictionWeight = bias !== 'NEUTRAL'
     ? Math.min(0.55, Math.abs(convictionScore) / 100)
-    : Math.min(0.20, Math.abs(convictionScore) / 100);
+    : Math.min(0.15, Math.abs(convictionScore) / 100);
   let eodTarget = Math.round(mpTarget * (1 - convictionWeight) + conservativeTarget * convictionWeight);
   // Directional consistency: strong-conviction BEARISH close must be ≤ open;
   // strong BULLISH must be ≥ open. (Weak conviction allows close near open.)
@@ -1511,11 +1520,13 @@ export function computeIndexForecast(
   // ── Point estimates for the day's HIGH and LOW ──
   //
   // HIGH: reachability check against nearResistance (≤ 1.5× vixHalfMove from open → market tests it).
-  //   BEAR/NEUT reachable: nearResistance (on true bear/neut days the morning pop targets resistance).
-  //   BEAR/NEUT not reachable: 0.65× fallback — calibrated to morning-pop level on true directional days.
-  //     (1.20× fallback was tried but caused ±63/±88 overestimates on 12-May/8-May true bear/neut days.)
+  //   BEAR reachable: nearResistance (morning pop, then rejected).
+  //   NEUT reachable: nearResistance + 0.10× breakout allowance — NEUT days frequently test
+  //     resistance and inch above it; small buffer avoids chronic undershoot vs actual highs.
+  //     (0.65× fallback was tried but caused ±63/±88 overestimates on 12-May/8-May true bear/neut days.)
   //   BULL reachable: nearResistance + 0.40× breakout buffer (bull momentum overshoots resistance).
-  //   BULL not reachable: 1.20× fallback (bull days reliably run higher than the 0.65× level).
+  //   BULL not reachable: 1.20× fallback (bull days reliably run higher than NEUT level).
+  //   NEUT not reachable: 0.75× fallback (increased from 0.65× — NEUT days move more than morning-pop).
   //
   // LOW: actual lows consistently break below OI walls (avg −32 across 21 sessions).
   //   BEAR: nearSupport − 0.30× cushion (flat nearSupport caused ±186/±152 round-number anchor misses).
@@ -1527,16 +1538,18 @@ export function computeIndexForecast(
   const predHighFallback = resistanceReachable
     ? 0  // unused branch
     : bias === 'BULLISH'
-      ? Math.round(openPrice + vixHalfMove * 1.20)  // BULL: runs higher than 0.65× level
-      : Math.round(openPrice + vixHalfMove * 0.65); // BEAR/NEUT: morning-pop calibrated
+      ? Math.round(openPrice + vixHalfMove * 1.20)  // BULL: runs higher than NEUT level
+      : Math.round(openPrice + vixHalfMove * 0.75); // BEAR/NEUT: increased from 0.65×
 
   // Hard ceiling: when nearResistance holds ≥15% of total CE OI, dealer gamma-hedging will
   // aggressively sell into any approach → price is repelled AT the wall, not through it.
   // Remove the 0.40× breakout buffer for BULL days with a dominant CE wall.
   const predictedHigh = resistanceReachable
-    ? (bias === 'BULLISH' && !hardCeiling
+    ? bias === 'BULLISH' && !hardCeiling
         ? nearResistance + Math.round(vixHalfMove * 0.40)  // no dominant wall → breakout buffer
-        : nearResistance)                                    // dominant CE wall or non-BULL → wall caps
+      : bias === 'NEUTRAL'
+        ? nearResistance + Math.round(vixHalfMove * 0.10)  // NEUT: small breakout allowance
+        : nearResistance                                     // BEAR or hard ceiling → wall caps
     : predHighFallback;
 
   // Hard floor: when nearSupport holds ≥15% of total PE OI, dealer gamma-hedging absorbs
