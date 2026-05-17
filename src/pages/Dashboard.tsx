@@ -54,17 +54,20 @@ export default function Dashboard() {
     if (refreshing) return;
     setRefreshing(true);
     setRefreshDone(false);
-    // Clear localStorage so stale paint doesn't fire on next hard reload
     const uid = user?.id;
     if (uid) localStorage.removeItem(`dashboard_v1_${uid}`);
-    // Clear current data so user sees loading state, not stale data
     setAnalyses([]);
     setAnnouncement('');
     setMyQueries([]);
-    await loadDashboard();
-    setRefreshing(false);
-    setRefreshDone(true);
-    setTimeout(() => setRefreshDone(false), 2500);
+    try {
+      await loadDashboard();
+      setRefreshDone(true);
+      setTimeout(() => setRefreshDone(false), 2500);
+    } catch {
+      // silent — user can try again
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   function handleRevisit(a: any) {

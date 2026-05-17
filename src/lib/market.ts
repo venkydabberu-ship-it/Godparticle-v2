@@ -1922,17 +1922,27 @@ export async function generateIndexForecast(
     if (act) { fiiCmNet = act.fii_cm_net; diiCmNet = act.dii_cm_net; fiiIdxFutNet = act.fii_idx_fut_net; }
   } catch { /* silent */ }
 
-  // 5. ATR from recent OHLC — more accurate daily-range estimate than pure VIX formula.
+  // 5. ATR + historicalSpotCloses — derive both from the same OHLC fetch so that
+  //    every call to generateIndexForecast (Dashboard, Analysis, any surface) uses
+  //    identical historical closes and therefore produces the same trendSignal.
   let atr = 0;
+  let internalHistoricals: number[] = [];
   try {
     const recentOHLC = await getRecentOHLC(indexName, todayStr, 10);
     atr = computeATR(recentOHLC);
-  } catch { /* fallback: computeIndexForecast uses VIX-based range when atr=0 */ }
+    internalHistoricals = recentOHLC.map(r => r.close).filter(c => c > 0);
+  } catch { /* fallback: atr=0 uses VIX-based range */ }
+
+  // Prefer OHLC closes (consistent, reliable); fall back to caller-supplied array
+  // only if OHLC data is unavailable (e.g. first run before any OHLC is uploaded).
+  const effectiveHistoricals = internalHistoricals.length >= 2
+    ? internalHistoricals
+    : historicalSpotCloses;
 
   // 6. Compute forecast — identical param order as Backtest.tsx for consistent predictions.
   const forecast = computeIndexForecast(
     openPrice, spotClose, chainData, vix, indexName, dte,
-    historicalSpotCloses, sectorChainData, prevChainData,
+    effectiveHistoricals, sectorChainData, prevChainData,
     50, atr, fiiCmNet, fiiIdxFutNet, diiCmNet, fiiLongPct, diiNetFut, proNetFut,
   );
 

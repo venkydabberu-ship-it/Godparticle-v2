@@ -252,7 +252,6 @@ export default function Backtest() {
       const prevChainData = rows.length > 1 ? (rows[rows.length - 2].strike_data ?? {}) : {};
       const vix           = rows[rows.length - 1]?.vix ?? 0;
       const dte           = dteBetween(date, expiry);
-      const historicals   = rows.map((r: any) => r.strike_data?._spot_close ?? 0).filter((c: number) => c > 0);
 
       // Real ATR from last 10 OHLC sessions (more accurate than VIX formula)
       const [recentOHLC, fiiActivity, fiiPos] = await Promise.all([
@@ -261,6 +260,11 @@ export default function Backtest() {
         getFIIPositioning(date),
       ]);
       const atr = computeATR(recentOHLC);
+      // Use OHLC closes as historicalSpotCloses — same source as generateIndexForecast,
+      // ensuring trendSignal is identical across backtest, Dashboard, and Analysis.
+      const historicals = recentOHLC.length >= 2
+        ? recentOHLC.map((r: any) => r.close).filter((c: number) => c > 0)
+        : rows.map((r: any) => r.strike_data?._spot_close ?? 0).filter((c: number) => c > 0);
       // Use actual previous-day close from index_ohlc when available — more accurate
       // than the spot_close recorded in the options chain data (which can lag by a day).
       const prevClose = recentOHLC.length > 0 ? recentOHLC[0].close
@@ -303,7 +307,6 @@ export default function Backtest() {
         const prevChainData = rows.length > 1 ? (rows[rows.length - 2].strike_data ?? {}) : {};
         const vix           = rows[rows.length - 1]?.vix ?? 0;
         const dte           = dteBetween(entry.date, entry.expiry);
-        const historicals   = rows.map((r: any) => r.strike_data?._spot_close ?? 0).filter((c: number) => c > 0);
 
         const [recentOHLC, fiiActivity, fiiPos] = await Promise.all([
           getRecentOHLC(indexName, entry.date, 10),
@@ -311,6 +314,9 @@ export default function Backtest() {
           getFIIPositioning(entry.date),
         ]);
         const atr       = computeATR(recentOHLC);
+        const historicals = recentOHLC.length >= 2
+          ? recentOHLC.map((r: any) => r.close).filter((c: number) => c > 0)
+          : rows.map((r: any) => r.strike_data?._spot_close ?? 0).filter((c: number) => c > 0);
         const prevClose = recentOHLC.length > 0 ? recentOHLC[0].close
           : (validRow?.spot_close ?? 0);
         const spotClose = prevClose;
