@@ -1736,6 +1736,8 @@ export function computeIndexForecast(
   // Max Pain gravity. BULL closes near 72% of range from predicted low; BEAR near 28%;
   // NEUT tilts ±22% based on momentum. Blend weight scales with conviction / momentum.
   // Not applied on expiry (DTE=0) — mp pin dominates there.
+  // Directional guard: for BULL the anchor acts as a FLOOR only (never drags close down);
+  // for BEAR it acts as a CEILING only (never lifts close up). NEUT blends unconditionally.
   if (dte > 0) {
     const hlCloseRatio = bias === 'BULLISH' ? 0.72
       : bias === 'BEARISH' ? 0.28
@@ -1744,7 +1746,12 @@ export function computeIndexForecast(
     const hlWeight = bias !== 'NEUTRAL'
       ? Math.min(0.50, Math.abs(convictionScore) / 65)
       : Math.min(0.50, Math.abs(momentumFactor));
-    eodTarget = Math.round(eodTarget * (1 - hlWeight) + hlClose * hlWeight);
+    const shouldApply = bias === 'NEUTRAL'
+      || (bias === 'BULLISH' && hlClose > eodTarget)
+      || (bias === 'BEARISH' && hlClose < eodTarget);
+    if (shouldApply) {
+      eodTarget = Math.round(eodTarget * (1 - hlWeight) + hlClose * hlWeight);
+    }
   }
 
   // ── 8. Intraday path checkpoints ──
