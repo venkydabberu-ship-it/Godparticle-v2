@@ -1871,11 +1871,13 @@ export async function generateIndexForecast(
 
   const rows = await getMarketData(indexName, nearest, 2);
 
-  // Pick spotClose from the most recent row that has a valid value
-  const validRow = [...rows].reverse().find(r => (r.spot_close ?? 0) > 0) ?? rows[rows.length - 1];
+  // spot_close is stored inside strike_data._spot_close (no standalone DB column)
+  const getRowSpot = (r: any): number =>
+    r?.spot_close > 0 ? r.spot_close : (r?.strike_data?._spot_close ?? 0);
+  const validRow = [...rows].reverse().find(r => getRowSpot(r) > 0) ?? rows[rows.length - 1];
   const chainData  = rows.length ? (rows[rows.length - 1].strike_data ?? fallbackChainData) : fallbackChainData;
   const prevChainData = rows.length > 1 ? (rows[rows.length - 2].strike_data ?? {}) : {};
-  const spotClose  = validRow ? (validRow.spot_close ?? fallbackSpotClose) : fallbackSpotClose;
+  const spotClose  = (validRow ? getRowSpot(validRow) : 0) || fallbackSpotClose;
   const vix        = rows[rows.length - 1]?.vix ?? validRow?.vix ?? fallbackVix;
   const dte        = getDTE(nearest);
 
