@@ -1597,18 +1597,17 @@ export function computeIndexForecast(
   // These signals were excluded from convictionScore (to protect direction accuracy) but
   // are valid adjustments for the close magnitude: fresh PE below open = put sellers confident
   // price stays up → push close higher; fresh CE above open = call sellers confident → lower.
-  // Multipliers raised (coiSignal 2.5→3.5) — several NEUT/BULL borderline misses were 6-11 pts
-  // outside ±50; stronger nudge converts them. Not applied on DTE=0 (MP pin dominates).
+  // Multipliers at 3.5/1.2/1.0 — several NEUT/BULL borderline misses sit 4-14 pts outside ±50
+  // and the COI signal fires in the correct direction on those days.
+  // Not applied on DTE=0 (MP pin already dominates).
   if (dte > 0) {
-    const closeNudge = Math.round(coiSignal * 3.5 + fiiLongPctSig * 1.2 + proSig * 1.0);
+    // diiCmSig: DII cash-market net buying is a market floor/ceiling signal independent of FII.
+    // DII buys heavily when FII sells → institutional support floor → mildly bullish close.
+    // DII rarely shorts; treat small-negative as noise. Range: ±6 pts.
+    const diiCmSig = diiCmNet > 3000 ? 6 : diiCmNet > 1000 ? 3 : diiCmNet > 0 ? 1
+      : diiCmNet < -1000 ? -4 : diiCmNet < 0 ? -1 : 0;
+    const closeNudge = Math.round(coiSignal * 3.5 + fiiLongPctSig * 1.2 + proSig * 1.0 + diiCmSig);
     eodTarget = Math.round(eodTarget + closeNudge);
-    // NEUT gap-fill: on neutral days the market partially reverses overnight gaps by EOD.
-    // Gap up → close tends to drift back toward prev close (negative adjustment).
-    // Gap down → close tends to recover partially (positive adjustment). Capped ±25 pts.
-    if (bias === 'NEUTRAL' && gapPts !== 0) {
-      const gapFillAdj = Math.max(-25, Math.min(25, -Math.round(gapPts * 0.22)));
-      eodTarget = Math.round(eodTarget + gapFillAdj);
-    }
   }
   // ── 7. Morning first-move target ──
   // BULLISH: early dip to near support → CE entry zone, then rally
