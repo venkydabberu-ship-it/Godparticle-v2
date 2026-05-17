@@ -1338,29 +1338,6 @@ export function computeIndexForecast(
     if (pain < minPain) { minPain = pain; mp = testSk; }
   }
 
-  // ── 1b. Max Pain shift vs previous day ──
-  // If Max Pain moved UP, put writers rolled their positions higher → institutions
-  // expect support; bullish repositioning signal. Down = bearish. Range: ±10 pts.
-  let prevMaxPain = mp; // default: no shift
-  if (Object.keys(prevStrikeData).length > 0) {
-    const prevStrikes = Object.keys(prevStrikeData)
-      .map(Number).filter(s => s > 0 && s > openPrice * 0.90 && s < openPrice * 1.10);
-    let bestPrevPain = Infinity;
-    let bestPrevMP = mp;
-    for (const testSk of prevStrikes) {
-      let pain = 0;
-      for (const sk of prevStrikes) {
-        const d = prevStrikeData[String(sk)];
-        if (!d) continue;
-        pain += Math.max(0, testSk - sk) * (d.ce_oi ?? 0);
-        pain += Math.max(0, sk - testSk) * (d.pe_oi ?? 0);
-      }
-      if (pain < bestPrevPain) { bestPrevPain = pain; bestPrevMP = testSk; }
-    }
-    prevMaxPain = bestPrevMP;
-  }
-  const mpShiftSig = Math.max(-10, Math.min(10, Math.round((mp - prevMaxPain) / strikeGap * 5)));
-
   // ── 2. Far Gamma Walls (absolute highest OI) ──
   let maxCEOI = 0, ceWall = 0, maxPEOI = 0, peWall = 0;
   for (const sk of allStrikes) {
@@ -1371,10 +1348,27 @@ export function computeIndexForecast(
   if (!ceWall) ceWall = mp + strikeGap * 4;
   if (!peWall) peWall = mp - strikeGap * 4;
 
+  // Total OI across the relevant strike range — used for concentration ratios below.
+  let totalCEOI = 0, totalPEOI = 0;
+  for (const sk of allStrikes) {
+    const d = strikeData[String(sk)]; if (!d) continue;
+    totalCEOI += d.ce_oi ?? 0;
+    totalPEOI += d.pe_oi ?? 0;
+  }
+
   // ── 3. Near-term gamma walls + PCR + trend ──
   const pcr = computePCR(strikeData);
   const { nearResistance, nearSupport } = findNearGammaWalls(strikeData, openPrice, strikeGap);
   const trendSig = computeTrendSignal(historicalSpotCloses);
+
+  // OI at the dominant near-term gamma walls.
+  // Used for hard ceiling/floor detection — gamma mechanics mean that when a single
+  // strike holds ≥15% of total OI on that side, dealers' delta-hedging creates a
+  // magnetic → reversal effect: price is pulled to the wall then sharply repelled.
+  const nearResOI = nearResistance > 0 ? (strikeData[String(nearResistance)]?.ce_oi ?? 0) : 0;
+  const nearSupOI = nearSupport   > 0 ? (strikeData[String(nearSupport)]?.pe_oi   ?? 0) : 0;
+  const hardCeiling = totalCEOI > 0 && nearResOI / totalCEOI >= 0.15;
+  const hardFloor   = totalPEOI > 0 && nearSupOI / totalPEOI >= 0.15;
 
   // ── 4. ATM option signals: straddle range + IV skew ──
   // Use only the ATM strike for LTP/IV (don't aggregate ±3 strikes for OI here —
@@ -1461,7 +1455,7 @@ export function computeIndexForecast(
     : absGap < strikeGap * 0.5 ? 0
     : Math.sign(gapPts) * Math.min(15, Math.round(absGap / strikeGap * 10));
 
-  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal + ivSkewSig + mpShiftSig);
+  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal + ivSkewSig);
   // Asymmetric thresholds: BULL at +15, BEAR at -25.
   // Raising the BEAR bar to -25 (from -15) because false-BEAR calls in
   // FII-selling/DII-buying regimes are far more damaging than false-BULL calls.
@@ -1473,6 +1467,10 @@ export function computeIndexForecast(
 
   // ── 5. DTE-weighted Max Pain gravity ──
   const mpGravity = Math.max(0.10, Math.min(0.85, 0.85 * Math.exp(-0.45 * Math.max(dte, 0))));
+  // Gamma pin boost: on expiry (DTE≤1) when open is within 1.5 strike-gaps of Max Pain,
+  // dealer delta-hedging at the dominant OI strike creates a very strong close pull toward MP.
+  const gammaPinActive = dte <= 1 && Math.abs(openPrice - mp) <= strikeGap * 1.5;
+  const effectiveMpGravity = gammaPinActive ? Math.min(0.92, mpGravity * 1.10) : mpGravity;
 
   // ── 6. EOD target: blend Max Pain gravity with a conviction-scaled directional move ──
   // Key design principle: directional component is a SMALL FRACTION of dailyRange scaled
@@ -1480,7 +1478,7 @@ export function computeIndexForecast(
   // causes massive close-prediction errors on low-conviction or far-DTE days).
   // DTE dampener: far from expiry the market rarely exhausts its VIX-implied range in a
   // single day, so we reduce target ambition linearly (DTE=0→1.0, DTE=6→0.58, DTE=10+→0.30).
-  const mpTarget = Math.round(openPrice + mpGravity * (mp - openPrice));
+  const mpTarget = Math.round(openPrice + effectiveMpGravity * (mp - openPrice));
   const maxDirectionalMove = dailyRange * Math.min(0.40, Math.abs(convictionScore) / 100);
   const dteDampener = Math.max(0.20, 1.0 - dte * 0.07);
   const directionSign = bias === 'BULLISH' ? 1 : bias === 'BEARISH' ? -1 : 0;
@@ -1521,7 +1519,8 @@ export function computeIndexForecast(
   //
   // LOW: actual lows consistently break below OI walls (avg −32 across 21 sessions).
   //   BEAR: nearSupport − 0.30× cushion (flat nearSupport caused ±186/±152 round-number anchor misses).
-  //   NEUT: reachable → nearSupport − 0.50×; not reachable → 1.20× fallback (was 0.70×).
+  //     When hardFloor (dominant PE wall ≥15% of total PE OI): dealers absorb selling → 0.15× only.
+  //   NEUT: reachable → nearSupport − 0.50× (or 0.20× with hardFloor); not reachable → 1.20× fallback.
   //   BULL: morningDipTarget (1.20×, deeper than 0.70× — actual BULL lows avg 41 pts below old formula).
   const reachThreshold = vixHalfMove * 1.5;
   const resistanceReachable = (nearResistance - openPrice) <= reachThreshold;
@@ -1531,18 +1530,23 @@ export function computeIndexForecast(
       ? Math.round(openPrice + vixHalfMove * 1.20)  // BULL: runs higher than 0.65× level
       : Math.round(openPrice + vixHalfMove * 0.65); // BEAR/NEUT: morning-pop calibrated
 
+  // Hard ceiling: when nearResistance holds ≥15% of total CE OI, dealer gamma-hedging will
+  // aggressively sell into any approach → price is repelled AT the wall, not through it.
+  // Remove the 0.40× breakout buffer for BULL days with a dominant CE wall.
   const predictedHigh = resistanceReachable
-    ? (bias === 'BULLISH'
-        ? nearResistance + Math.round(vixHalfMove * 0.40)
-        : nearResistance)
+    ? (bias === 'BULLISH' && !hardCeiling
+        ? nearResistance + Math.round(vixHalfMove * 0.40)  // no dominant wall → breakout buffer
+        : nearResistance)                                    // dominant CE wall or non-BULL → wall caps
     : predHighFallback;
 
+  // Hard floor: when nearSupport holds ≥15% of total PE OI, dealer gamma-hedging absorbs
+  // the selling → price barely breaks below the floor before bouncing.
   const predLowNeutral = (openPrice - nearSupport) <= reachThreshold
-    ? nearSupport - Math.round(vixHalfMove * 0.50)
+    ? nearSupport - Math.round(vixHalfMove * (hardFloor ? 0.20 : 0.50))
     : Math.round(openPrice - vixHalfMove * 1.20);
 
   const predictedLow = bias === 'BULLISH' ? morningDipTarget
-    : bias === 'BEARISH' ? nearSupport - Math.round(vixHalfMove * 0.30)
+    : bias === 'BEARISH' ? nearSupport - Math.round(vixHalfMove * (hardFloor ? 0.15 : 0.30))
     : predLowNeutral;
 
   // ── 8. Intraday path checkpoints ──
