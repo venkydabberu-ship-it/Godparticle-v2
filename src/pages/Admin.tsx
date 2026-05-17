@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase, callEdge } from '../lib/supabase';
 import { getStale, setCached } from '../lib/cache';
-import { runDailyAutoFetch, autoFetchAllIndices, autoFetchAllStockOptions, autoFetchAllStockPrices, autoFetchAllFundamentals } from '../lib/autofetch';
+import { runDailyAutoFetch, autoFetchAllIndices, autoFetchAllStockOptions, autoFetchAllStockPrices, autoFetchAllFundamentals, fixWrongTradeDate } from '../lib/autofetch';
 import { upsertIndexOHLC, parseOHLCCSV } from '../lib/market';
 
 const DEFAULT_INDICES = [
@@ -593,6 +593,17 @@ export default function Admin() {
       setFetchDone(true);
     } finally {
       setFetchLoading(false);
+    }
+  }
+
+  async function handleFixWrongDate(wrongDate: string, correctDate: string) {
+    if (!confirm(`This will move all market_data and constituent_daily_data rows from ${wrongDate} → ${correctDate}. Continue?`)) return;
+    try {
+      const results = await fixWrongTradeDate(wrongDate, correctDate);
+      const summary = results.map(r => `${r.table}: ${r.updated ?? 0} rows${r.error ? ` (ERR: ${r.error})` : ''}`).join('\n');
+      alert(`Date fix complete:\n${summary}`);
+    } catch (err: any) {
+      alert(`Date fix failed: ${err.message}`);
     }
   }
 
@@ -1287,6 +1298,10 @@ export default function Admin() {
               <button onClick={handleFetchIntraday} disabled={intradayLoading}
                 className="bg-[#4d9fff] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40 md:col-span-3 lg:col-span-3">
                 {intradayLoading ? 'Fetching 30-min candles...' : '🕯 Fetch Intraday 30-min Candles (Upstox)'}
+              </button>
+              <button onClick={() => handleFixWrongDate('2026-05-16', '2026-05-15')}
+                className="bg-[#ff4d6d] text-white font-black text-sm py-4 rounded-xl md:col-span-3 lg:col-span-3">
+                🔧 Fix Wrong Date: May 16 → May 15
               </button>
             </div>
 

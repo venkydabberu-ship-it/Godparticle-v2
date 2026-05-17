@@ -1,6 +1,19 @@
 import { supabase } from './supabase';
 import { INDEX_CONFIG, calculateMaxPain, SnapshotType } from './z2h';
 
+function lastTradingDay(): string {
+  const now = new Date();
+  const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+  const hour = ist.getUTCHours();
+  const minute = ist.getUTCMinutes();
+  const marketClosed = hour > 15 || (hour === 15 && minute >= 45);
+  const target = new Date(ist);
+  if (!marketClosed) target.setUTCDate(target.getUTCDate() - 1);
+  while (target.getUTCDay() === 0 || target.getUTCDay() === 6)
+    target.setUTCDate(target.getUTCDate() - 1);
+  return target.toISOString().split('T')[0];
+}
+
 // Backoff delays in ms: 3s, 8s, 20s, 45s, 90s
 const BACKOFF = [3000, 8000, 20000, 45000, 90000];
 // Fast-fail backoff for stock options (don't hang forever if Upstox token expired)
@@ -464,10 +477,15 @@ export async function runDailyAutoFetch(adminUserId: string) {
   console.log(`🚀 Starting complete auto-fetch...`);
 
   // Get effective trade date from edge function (handles holidays)
-  let tradeDate = new Date().toISOString().split('T')[0];
+  let tradeDate = lastTradingDay();
   try {
     const expData = await callEdge('get_expiries');
-    if (expData?.trade_date) tradeDate = expData.trade_date;
+    if (expData?.trade_date) {
+      // Validate edge function date is a weekday before trusting it
+      const d = new Date(expData.trade_date);
+      const day = d.getUTCDay();
+      if (day !== 0 && day !== 6) tradeDate = expData.trade_date;
+    }
     if (expData?.is_holiday) {
       results.push({
         index: 'SYSTEM',
@@ -797,5 +815,20 @@ export async function fetchAndSaveZ2HSnapshot(
   return { spot, maxPain, vix, strikesCount: Object.keys(strikes).length };
 }
 
+// One-time migration: reassign records stored under a wrong (weekend) date to the correct trading date
+export async function fixWrongTradeDate(wrongDate: string, correctDate: string) {
+  const results: { table: string; updated: number | null; error?: string }[] = [];
 
+  const tables = ['market_data', 'constituent_daily_data'];
+  for (const table of tables) {
+    const { data, error } = await supabase
+      .from(table)
+      .update({ trade_date: correctDate })
+      .eq('trade_date', wrongDate)
+      .select('id');
+    results.push({ table, updated: data?.length ?? 0, error: error?.message });
+  }
+
+  return results;
+}
 
