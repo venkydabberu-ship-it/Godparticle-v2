@@ -219,14 +219,10 @@ export default function Backtest() {
     }).finally(() => setLoadingDates(false));
   }, [indexName]);
 
-  // Auto-run backtest when date changes (if OHLC available)
+  // Auto-run backtest when date changes
   useEffect(() => {
     if (!btDate) return;
-    if (ohlcDates.has(btDate)) {
-      runBacktest(btDate);
-    } else {
-      setForecast(null); setBtOHLC(null); setError('');
-    }
+    runBacktest(btDate);
   }, [btDate]);
 
   async function runBacktest(date: string) {
@@ -548,7 +544,7 @@ export default function Backtest() {
                 {btDate && <span className="text-[#f0c040] ml-2 normal-case font-normal">— {fmtDate(btDate)}</span>}
               </label>
               <DateCalendar
-                available={ohlcDates.size > 0 ? ohlcDates : new Set(btDates.map(d => d.date))}
+                available={new Set(btDates.map(d => d.date))}
                 selected={btDate}
                 onSelect={d => setBtDate(d)}
               />

@@ -50,6 +50,8 @@ export default function Admin() {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchResults, setFetchResults] = useState<any[]>([]);
   const [fetchDone, setFetchDone] = useState(false);
+  const [fixFromDate, setFixFromDate] = useState('');
+  const [fixToDate, setFixToDate] = useState('');
   const [fetchStocksLoading, setFetchStocksLoading] = useState(false);
   const [fetchStocksResults, setFetchStocksResults] = useState<any[]>([]);
   const [fetchStocksDone, setFetchStocksDone] = useState(false);
@@ -596,10 +598,12 @@ export default function Admin() {
     }
   }
 
-  async function handleFixWrongDate(wrongDate: string, correctDate: string) {
-    if (!confirm(`This will move all market_data and constituent_daily_data rows from ${wrongDate} → ${correctDate}. Continue?`)) return;
+  async function handleFixWrongDate() {
+    if (!fixFromDate || !fixToDate) { alert('Select both dates first.'); return; }
+    if (fixFromDate === fixToDate) { alert('From and To dates must be different.'); return; }
+    if (!confirm(`Move ALL data from ${fixFromDate} → ${fixToDate} in market_data, index_ohlc, and constituent_daily_data. Continue?`)) return;
     try {
-      const results = await fixWrongTradeDate(wrongDate, correctDate);
+      const results = await fixWrongTradeDate(fixFromDate, fixToDate);
       const summary = results.map(r => `${r.table}: ${r.updated ?? 0} rows${r.error ? ` (ERR: ${r.error})` : ''}`).join('\n');
       alert(`Date fix complete:\n${summary}`);
     } catch (err: any) {
@@ -1299,9 +1303,41 @@ export default function Admin() {
                 className="bg-[#4d9fff] text-black font-black text-sm py-4 rounded-xl disabled:opacity-40 md:col-span-3 lg:col-span-3">
                 {intradayLoading ? 'Fetching 30-min candles...' : '🕯 Fetch Intraday 30-min Candles (Upstox)'}
               </button>
-              <button onClick={() => handleFixWrongDate('2026-05-16', '2026-05-15')}
-                className="bg-[#ff4d6d] text-white font-black text-sm py-4 rounded-xl md:col-span-3 lg:col-span-3">
-                🔧 Fix Wrong Date: May 16 → May 15
+            </div>
+
+            {/* Fix Wrong Trade Date */}
+            <div className="bg-[#111118] border border-[#ff4d6d]/30 rounded-xl p-4 space-y-3">
+              <div className="text-xs font-mono text-[#ff4d6d] font-bold uppercase tracking-widest">Fix Wrong Trade Date</div>
+              <p className="text-[10px] font-mono text-[#6b6b85]">
+                Use this if auto-fetch saved data under the wrong date (e.g. Saturday instead of Friday).
+                Updates market_data, index_ohlc, and constituent_daily_data.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Wrong Date (From)</label>
+                  <input
+                    type="date"
+                    value={fixFromDate}
+                    onChange={e => setFixFromDate(e.target.value)}
+                    className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#ff4d6d] transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Correct Date (To)</label>
+                  <input
+                    type="date"
+                    value={fixToDate}
+                    onChange={e => setFixToDate(e.target.value)}
+                    className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#ff4d6d] transition-colors"
+                  />
+                </div>
+              </div>
+              <button
+                onClick={handleFixWrongDate}
+                disabled={!fixFromDate || !fixToDate || fixFromDate === fixToDate}
+                className="w-full bg-[#ff4d6d] text-white font-black text-sm py-3 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                🔧 Fix Date {fixFromDate && fixToDate && fixFromDate !== fixToDate ? `(${fixFromDate} → ${fixToDate})` : ''}
               </button>
             </div>
 

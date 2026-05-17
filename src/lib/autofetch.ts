@@ -819,7 +819,7 @@ export async function fetchAndSaveZ2HSnapshot(
 export async function fixWrongTradeDate(wrongDate: string, correctDate: string) {
   const results: { table: string; updated: number | null; error?: string }[] = [];
 
-  const tables = ['market_data', 'constituent_daily_data'];
+  const tables = ['market_data', 'constituent_daily_data', 'index_ohlc'];
   for (const table of tables) {
     const { data, error } = await supabase
       .from(table)

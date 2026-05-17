@@ -8,7 +8,7 @@ import {
   saveAnalysis, generateScenarioMatrix, normalizeIndexName,
   normalizeExpiry, formatExpiryDisplay, getDTE,
   getGapStep, getMaxGap, INDEX_DISPLAY, useCredits,
-  computeIndexForecast, generateIndexForecast, getLatestChainData, SECTOR_INDEX_MAP,
+  generateIndexForecast, getLatestChainData, SECTOR_INDEX_MAP,
   type IndexForecast, bsPrice,
 } from '../lib/market';
 
@@ -1401,8 +1401,8 @@ export default function Analysis() {
                   );
                   setFiiDate(fd);
                   setForecast(f);
-                } catch {
-                  setForecast(computeIndexForecast(open, spotClose, chainData, vix, indexName, getDTE(expiry), [], [], rowsData[1]?.strike_data ?? {}));
+                } catch (err: any) {
+                  console.error('generateIndexForecast failed:', err?.message);
                 } finally {
                   setGenerating(false);
                 }
