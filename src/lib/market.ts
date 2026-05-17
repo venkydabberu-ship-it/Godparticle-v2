@@ -1597,11 +1597,18 @@ export function computeIndexForecast(
   // These signals were excluded from convictionScore (to protect direction accuracy) but
   // are valid adjustments for the close magnitude: fresh PE below open = put sellers confident
   // price stays up → push close higher; fresh CE above open = call sellers confident → lower.
-  // fiiLongPctSig (structural long %) and proSig (pro desk net) add smaller secondary nudge.
-  // Not applied on expiry day (DTE=0) where MP pin already dominates.
+  // Multipliers raised (coiSignal 2.5→3.5) — several NEUT/BULL borderline misses were 6-11 pts
+  // outside ±50; stronger nudge converts them. Not applied on DTE=0 (MP pin dominates).
   if (dte > 0) {
-    const closeNudge = Math.round(coiSignal * 2.5 + fiiLongPctSig * 1.0 + proSig * 0.8);
+    const closeNudge = Math.round(coiSignal * 3.5 + fiiLongPctSig * 1.2 + proSig * 1.0);
     eodTarget = Math.round(eodTarget + closeNudge);
+    // NEUT gap-fill: on neutral days the market partially reverses overnight gaps by EOD.
+    // Gap up → close tends to drift back toward prev close (negative adjustment).
+    // Gap down → close tends to recover partially (positive adjustment). Capped ±25 pts.
+    if (bias === 'NEUTRAL' && gapPts !== 0) {
+      const gapFillAdj = Math.max(-25, Math.min(25, -Math.round(gapPts * 0.22)));
+      eodTarget = Math.round(eodTarget + gapFillAdj);
+    }
   }
   // ── 7. Morning first-move target ──
   // BULLISH: early dip to near support → CE entry zone, then rally
@@ -1820,29 +1827,50 @@ export async function generateIndexForecast(
     new Promise<void>((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
   ]).catch(() => {});
 
-  // 3. FII futures positioning
-  let fiiFuturesLongPct = 50;
+  // 3. FII structural positioning (fii_data) — same query as getFIIPositioning but live.
+  //    fiiFuturesLongPct kept at 50 (neutral) to match backtest — fiiSignal excluded from
+  //    conviction in both contexts. Actual long% goes to fiiLongPct (close nudge only).
+  let fiiLongPct = 50;
+  let diiNetFut = 0;
+  let proNetFut = 0;
   let fiiDate: string | null = null;
   try {
     const { data: fiiRow } = await withTimeout(
       supabase
         .from('fii_data')
-        .select('fii_long_pct, trade_date')
+        .select('fii_long_pct, trade_date, dii_long_futures, dii_short_futures, pro_long_futures, pro_short_futures')
         .order('trade_date', { ascending: false })
         .limit(1)
         .maybeSingle() as unknown as Promise<any>,
       10000,
     );
-    if (fiiRow != null && fiiRow.fii_long_pct != null) {
-      fiiFuturesLongPct = Number(fiiRow.fii_long_pct);
-      fiiDate = fiiRow.trade_date ?? null;
+    if (fiiRow != null) {
+      fiiLongPct  = fiiRow.fii_long_pct ?? 50;
+      fiiDate     = fiiRow.trade_date ?? null;
+      diiNetFut   = (fiiRow.dii_long_futures ?? 0) - (fiiRow.dii_short_futures ?? 0);
+      proNetFut   = (fiiRow.pro_long_futures  ?? 0) - (fiiRow.pro_short_futures  ?? 0);
     }
   } catch { /* no FII data — neutral */ }
 
-  // 4. Compute forecast
+  // 4. FII/DII cash market flows (fii_activity) — same as getFIIActivity but using today.
+  let fiiCmNet = 0, diiCmNet = 0, fiiIdxFutNet = 0;
+  try {
+    const act = await getFIIActivity(todayStr);
+    if (act) { fiiCmNet = act.fii_cm_net; diiCmNet = act.dii_cm_net; fiiIdxFutNet = act.fii_idx_fut_net; }
+  } catch { /* silent */ }
+
+  // 5. ATR from recent OHLC — more accurate daily-range estimate than pure VIX formula.
+  let atr = 0;
+  try {
+    const recentOHLC = await getRecentOHLC(indexName, todayStr, 10);
+    atr = computeATR(recentOHLC);
+  } catch { /* fallback: computeIndexForecast uses VIX-based range when atr=0 */ }
+
+  // 6. Compute forecast — identical param order as Backtest.tsx for consistent predictions.
   const forecast = computeIndexForecast(
     openPrice, spotClose, chainData, vix, indexName, dte,
-    historicalSpotCloses, sectorChainData, prevChainData, fiiFuturesLongPct,
+    historicalSpotCloses, sectorChainData, prevChainData,
+    50, atr, fiiCmNet, fiiIdxFutNet, diiCmNet, fiiLongPct, diiNetFut, proNetFut,
   );
 
   return { forecast, fiiDate, usedExpiry: nearest, spotClose };
