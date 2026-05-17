@@ -735,6 +735,13 @@ export default function Dashboard() {
               <div className="font-black text-sm text-[#f0c040] mb-1">Strike Focus — Today's Strikes</div>
               <div className="text-xs font-mono text-[#6b6b85]">One PE + one CE strike per index to focus on today — max pain walls, support & resistance levels, and exact trade plan</div>
             </Link>
+
+            <Link to="/methodology"
+              className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 hover:border-[#4ade80] transition-all md:col-span-2">
+              <div className="text-2xl mb-2">📐</div>
+              <div className="font-black text-sm text-[#4ade80] mb-1">How It Works — Full Methodology</div>
+              <div className="text-xs font-mono text-[#6b6b85]">Step-by-step formulas and calculation details for every analysis tool — Max Pain, Gamma Trap, Sector Rotation, GCT, and more</div>
+            </Link>
           </div>
         </div>
 
