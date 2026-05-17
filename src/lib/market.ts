@@ -1642,11 +1642,10 @@ export function computeIndexForecast(
   const dteDampener = Math.max(0.45, 1.0 - dte * 0.05);
   const directionSign = bias === 'BULLISH' ? 1 : bias === 'BEARISH' ? -1 : 0;
   const conservativeTarget = Math.round(openPrice + directionSign * maxDirectionalMove * dteDampener);
-  // convictionWeight raised to max 0.75 (from 0.55) and denominator 55 (from 100).
-  // Old formula: conv=30 → weight=0.30; new: conv=30 → weight=0.545.
-  // Net effect: eodTarget moves from ~open+21 to ~open+42 on a typical DTE=5 bull day.
+  // convictionWeight capped at 0.65 (reduced from 0.75) — 22-day backtest shows EOD target
+  // was too bullish 55% of the time; reducing directional pull by ~13% corrects the mild upward bias.
   const convictionWeight = bias !== 'NEUTRAL'
-    ? Math.min(0.75, Math.abs(convictionScore) / 55)
+    ? Math.min(0.65, Math.abs(convictionScore) / 55)
     : Math.min(0.15, Math.abs(convictionScore) / 100);
   let eodTarget = Math.round(mpTarget * (1 - convictionWeight) + conservativeTarget * convictionWeight);
   // Directional consistency: strong-conviction BEARISH close must be ≤ open;
@@ -1689,46 +1688,39 @@ export function computeIndexForecast(
   // ── Point estimates for the day's HIGH and LOW ──
   //
   // HIGH: reachability check against nearResistance (≤ 1.5× vixHalfMove from open → market tests it).
-  //   BEAR reachable: nearResistance (morning pop, then rejected).
-  //   NEUT reachable: nearResistance + 0.10× breakout allowance — NEUT days frequently test
-  //     resistance and inch above it; small buffer avoids chronic undershoot vs actual highs.
-  //     (0.65× fallback was tried but caused ±63/±88 overestimates on 12-May/8-May true bear/neut days.)
-  //   BULL reachable: nearResistance + 0.40× breakout buffer (bull momentum overshoots resistance).
-  //   BULL not reachable: 1.20× fallback (bull days reliably run higher than NEUT level).
-  //   NEUT not reachable: 0.75× fallback (increased from 0.65× — NEUT days move more than morning-pop).
+  //   BULL reachable (no hardCeiling): nearResistance + 0.65× — 22-day backtest: actual broke
+  //     through resistance 59% of the time; 0.40× was chronically too conservative.
+  //   NEUT reachable: nearResistance + 0.50× — old 0.10× added only ~7 pts; actual NEUT highs
+  //     averaged 100+ pts above nearResistance → raised substantially.
+  //   BEAR reachable or hardCeiling: nearResistance (pop capped by wall).
+  //   BULL fallback (resistance not reachable): 1.50× — raised from 1.20×.
+  //   NEUT/BEAR fallback: 1.00× — raised from 0.75×.
   //
-  // LOW: actual lows consistently break below OI walls (avg −32 across 21 sessions).
-  //   BEAR: nearSupport − 0.30× cushion (flat nearSupport caused ±186/±152 round-number anchor misses).
-  //     When hardFloor (dominant PE wall ≥15% of total PE OI): dealers absorb selling → 0.15× only.
-  //   NEUT: reachable → nearSupport − 0.50× (or 0.20× with hardFloor); not reachable → 1.20× fallback.
-  //   BULL: morningDipTarget (1.20×, deeper than 0.70× — actual BULL lows avg 41 pts below old formula).
+  // LOW: actual lows consistently fail to reach the predicted floor (55% undershoot).
+  //   BEAR no hardFloor: 0.22× cushion — reduced from 0.30×.
+  //   NEUT reachable no hardFloor: 0.35× — reduced from 0.50×.
+  //   NEUT not reachable: 1.00× fallback — reduced from 1.20×.
+  //   BULL: morningDipTarget (unchanged — BULL lows well-calibrated in backtest).
   const reachThreshold = vixHalfMove * 1.5;
   const resistanceReachable = (nearResistance - openPrice) <= reachThreshold;
-  const predHighFallback = resistanceReachable
-    ? 0  // unused branch
-    : bias === 'BULLISH'
-      ? Math.round(openPrice + vixHalfMove * 1.20)  // BULL: runs higher than NEUT level
-      : Math.round(openPrice + vixHalfMove * 0.75); // BEAR/NEUT: increased from 0.65×
+  const predHighFallback = bias === 'BULLISH'
+    ? Math.round(openPrice + vixHalfMove * 1.50)   // raised 1.20 → 1.50
+    : Math.round(openPrice + vixHalfMove * 1.00);  // raised 0.75 → 1.00
 
-  // Hard ceiling: when nearResistance holds ≥15% of total CE OI, dealer gamma-hedging will
-  // aggressively sell into any approach → price is repelled AT the wall, not through it.
-  // Remove the 0.40× breakout buffer for BULL days with a dominant CE wall.
   const predictedHigh = resistanceReachable
     ? bias === 'BULLISH' && !hardCeiling
-        ? nearResistance + Math.round(vixHalfMove * 0.40)  // no dominant wall → breakout buffer
+        ? nearResistance + Math.round(vixHalfMove * 0.65)  // raised 0.40 → 0.65
       : bias === 'NEUTRAL'
-        ? nearResistance + Math.round(vixHalfMove * 0.10)  // NEUT: small breakout allowance
-        : nearResistance                                     // BEAR or hard ceiling → wall caps
+        ? nearResistance + Math.round(vixHalfMove * 0.50)  // raised 0.10 → 0.50
+        : nearResistance                                    // BEAR or hard ceiling
     : predHighFallback;
 
-  // Hard floor: when nearSupport holds ≥15% of total PE OI, dealer gamma-hedging absorbs
-  // the selling → price barely breaks below the floor before bouncing.
   const predLowNeutral = (openPrice - nearSupport) <= reachThreshold
-    ? nearSupport - Math.round(vixHalfMove * (hardFloor ? 0.20 : 0.50))
-    : Math.round(openPrice - vixHalfMove * 1.20);
+    ? nearSupport - Math.round(vixHalfMove * (hardFloor ? 0.20 : 0.35))  // reduced 0.50 → 0.35
+    : Math.round(openPrice - vixHalfMove * 1.00);  // reduced 1.20 → 1.00
 
   const predictedLow = bias === 'BULLISH' ? morningDipTarget
-    : bias === 'BEARISH' ? nearSupport - Math.round(vixHalfMove * (hardFloor ? 0.15 : 0.30))
+    : bias === 'BEARISH' ? nearSupport - Math.round(vixHalfMove * (hardFloor ? 0.15 : 0.22))  // reduced 0.30 → 0.22
     : predLowNeutral;
 
   // ── 8. Intraday path checkpoints ──
