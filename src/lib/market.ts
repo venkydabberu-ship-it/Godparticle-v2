@@ -1535,7 +1535,7 @@ export function computeIndexForecast(
     : absGap < strikeGap * 0.5 ? 0
     : Math.sign(gapPts) * Math.min(15, Math.round(absGap / strikeGap * 10));
 
-  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + fiiLongPctSig + proSig + coiSignal + gapSignal + ivSkewSig);
+  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal + ivSkewSig);
   // Asymmetric thresholds: BULL at +15, BEAR at -25.
   // Raising the BEAR bar to -25 (from -15) because false-BEAR calls in
   // FII-selling/DII-buying regimes are far more damaging than false-BULL calls.
