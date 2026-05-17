@@ -31,9 +31,9 @@ interface BatchResult {
   bias: string;
   // New weighted scoring (max 100)
   dirScore: number;   // 50 pts — bias matches actual close direction vs open
-  highScore: number;  // 15 pts — |predH - actH| ≤ 50
-  lowScore: number;   // 15 pts — |predL - actL| ≤ 50
-  closeScore: number; // 20 pts — |predC - actC| ≤ 50
+  highScore: number;  // 15 pts — |predH - actH| ≤ 75
+  lowScore: number;   // 15 pts — |predL - actL| ≤ 75
+  closeScore: number; // 20 pts — |predC - actC| ≤ 75
   totalScore: number; // 0–100
 }
 
@@ -344,8 +344,8 @@ export default function Backtest() {
           fc.bias === 'BEARISH' ? closeVsOpen < 0 :
           Math.abs(closeVsOpen) <= neutralThreshold;
         const dirScore   = dirCorrect ? 50 : 0;
-        // Range components (±50 pt tolerance)
-        const SCORE_TOL  = 50;
+        // Range components (±75 pt tolerance)
+        const SCORE_TOL  = 75;
         const highScore  = diffH <= SCORE_TOL ? 15 : 0;
         const lowScore   = diffL <= SCORE_TOL ? 15 : 0;
         const closeScore = diffC <= SCORE_TOL ? 20 : 0;
@@ -760,7 +760,7 @@ export default function Backtest() {
                     <div className="flex items-center justify-between mb-2">
                       <div>
                         <div className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest">Model Score (weighted average)</div>
-                        <div className="text-[9px] font-mono text-[#6b6b85] mt-0.5">Dir 50 + High 15 + Low 15 + Close 20 · H/L/C tolerance ±50 pts</div>
+                        <div className="text-[9px] font-mono text-[#6b6b85] mt-0.5">Dir 50 + High 15 + Low 15 + Close 20 · H/L/C tolerance ±75 pts</div>
                       </div>
                       <span className="text-4xl font-black" style={{ color: scoreCol }}>{avgScore}%</span>
                     </div>
@@ -770,9 +770,9 @@ export default function Backtest() {
                     <div className="grid grid-cols-4 gap-2 text-[9px] font-mono">
                       {[
                         { l: 'Direction', sub: '50 pts', v: dirPct, col: '#a78bfa' },
-                        { l: 'High ±50', sub: '15 pts', v: hPct,   col: '#39d98a' },
-                        { l: 'Low ±50',  sub: '15 pts', v: lPct,   col: '#ff4d6d' },
-                        { l: 'Close ±50',sub: '20 pts', v: cPct,   col: '#f0c040' },
+                        { l: 'High ±75', sub: '15 pts', v: hPct,   col: '#39d98a' },
+                        { l: 'Low ±75',  sub: '15 pts', v: lPct,   col: '#ff4d6d' },
+                        { l: 'Close ±75',sub: '20 pts', v: cPct,   col: '#f0c040' },
                       ].map(({ l, sub, v, col }) => (
                         <div key={l} className="bg-[#16161f] rounded-lg p-2 text-center">
                           <div className="text-[#6b6b85]">{l}</div>

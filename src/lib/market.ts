@@ -1705,13 +1705,24 @@ export function computeIndexForecast(
     ? Math.round(openPrice + vixHalfMove * 1.20)
     : Math.round(openPrice + vixHalfMove * 0.75);
 
-  const predictedHigh = resistanceReachable
+  let predictedHigh = resistanceReachable
     ? bias === 'BULLISH' && !hardCeiling
         ? nearResistance + Math.round(vixHalfMove * 0.40)
       : bias === 'NEUTRAL'
         ? nearResistance + Math.round(vixHalfMove * 0.10)
         : nearResistance
     : predHighFallback;
+
+  // Dynamic upside buffer: 0–~52 pts on strong-momentum days (non-BEAR, no hard CE wall).
+  // Prevents chronically underestimating the HIGH when FII inflows + sector breadth + gap all align.
+  if (bias !== 'BEARISH' && !hardCeiling) {
+    const uptrendFactor = Math.min(1.0,
+      Math.max(0, sectorSignal / 20) * 0.45 +
+      Math.max(0, (fiiCashSig + fiiFutSig) / 20) * 0.35 +
+      Math.max(0, gapSignal / 15) * 0.20
+    );
+    predictedHigh += Math.round(vixHalfMove * uptrendFactor * 0.75);
+  }
 
   const predLowNeutral = (openPrice - nearSupport) <= reachThreshold
     ? nearSupport - Math.round(vixHalfMove * (hardFloor ? 0.20 : 0.35))
