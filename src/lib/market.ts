@@ -1713,15 +1713,15 @@ export function computeIndexForecast(
         : nearResistance
     : predHighFallback;
 
-  // Dynamic upside buffer: 0–~52 pts on strong-momentum days (non-BEAR, no hard CE wall).
-  // Prevents chronically underestimating the HIGH when FII inflows + sector breadth + gap all align.
-  if (bias !== 'BEARISH' && !hardCeiling) {
-    const uptrendFactor = Math.min(1.0,
-      Math.max(0, sectorSignal / 20) * 0.45 +
-      Math.max(0, (fiiCashSig + fiiFutSig) / 20) * 0.35 +
-      Math.max(0, gapSignal / 15) * 0.20
-    );
-    predictedHigh += Math.round(vixHalfMove * uptrendFactor * 0.75);
+  // Signed momentum factor (−1 to +1): positive = institutional upside pressure.
+  // Shared between the HIGH breakout buffer and the H/L close correction below.
+  const momentumFactor = Math.max(-1.0, Math.min(1.0,
+    (sectorSignal / 20) * 0.45 +
+    ((fiiCashSig + fiiFutSig) / 20) * 0.35 +
+    (gapSignal / 15) * 0.20
+  ));
+  if (bias !== 'BEARISH' && !hardCeiling && momentumFactor > 0) {
+    predictedHigh += Math.round(vixHalfMove * momentumFactor * 0.75);
   }
 
   const predLowNeutral = (openPrice - nearSupport) <= reachThreshold
@@ -1731,6 +1731,21 @@ export function computeIndexForecast(
   const predictedLow = bias === 'BULLISH' ? morningDipTarget
     : bias === 'BEARISH' ? nearSupport - Math.round(vixHalfMove * (hardFloor ? 0.15 : 0.22))
     : predLowNeutral;
+
+  // H/L-anchored close: on trending days the close tracks the range band better than
+  // Max Pain gravity. BULL closes near 72% of range from predicted low; BEAR near 28%;
+  // NEUT tilts ±22% based on momentum. Blend weight scales with conviction / momentum.
+  // Not applied on expiry (DTE=0) — mp pin dominates there.
+  if (dte > 0) {
+    const hlCloseRatio = bias === 'BULLISH' ? 0.72
+      : bias === 'BEARISH' ? 0.28
+      : 0.50 + momentumFactor * 0.22;
+    const hlClose = Math.round(predictedLow + hlCloseRatio * (predictedHigh - predictedLow));
+    const hlWeight = bias !== 'NEUTRAL'
+      ? Math.min(0.50, Math.abs(convictionScore) / 65)
+      : Math.min(0.50, Math.abs(momentumFactor));
+    eodTarget = Math.round(eodTarget * (1 - hlWeight) + hlClose * hlWeight);
+  }
 
   // ── 8. Intraday path checkpoints ──
   function pt(timeLabel: string, minuteOffset: number, central: number, halfRange: number, event: string): ForecastPoint {
