@@ -1305,6 +1305,62 @@ export async function getFIIActivity(date: string): Promise<{ fii_cm_net: number
   return data?.[0] ?? null;
 }
 
+// Fetch FII/DII/PRO futures positioning from fii_data (previous trading day).
+// fii_long_pct: FII index futures long %, shows structural positioning (not just daily flow).
+// dii_net_fut: DII futures net (long - short). DII long fut = bullish institutional positioning.
+// pro_net_fut: Proprietary desk net. Pro desks tend to be directionally correct medium-term.
+export async function getFIIPositioning(date: string): Promise<{
+  fii_long_pct: number;
+  dii_net_fut: number;
+  pro_net_fut: number;
+} | null> {
+  const { data } = await withTimeout(
+    supabase.from('fii_data')
+      .select('fii_long_pct, dii_long_futures, dii_short_futures, pro_long_futures, pro_short_futures')
+      .lt('trade_date', date)
+      .order('trade_date', { ascending: false })
+      .limit(1) as unknown as Promise<any>,
+    5000,
+  );
+  if (!data?.[0]) return null;
+  const r = data[0];
+  return {
+    fii_long_pct: r.fii_long_pct ?? 50,
+    dii_net_fut:  (r.dii_long_futures ?? 0) - (r.dii_short_futures ?? 0),
+    pro_net_fut:  (r.pro_long_futures ?? 0) - (r.pro_short_futures ?? 0),
+  };
+}
+
+// ── COI (Change in Open Interest) signal ──
+// Uses NSE-reported ce_coi/pe_coi stored directly in strikeData — more accurate than
+// computing change from prevStrikeData (which may be 2 sessions old).
+//
+// Fresh PE writing at support (pe_coi > 0 below open) = put sellers adding position,
+//   believing support holds → bullish signal.
+// Fresh CE writing at resistance (ce_coi > 0 above open) = call sellers capping ceiling
+//   → bearish signal.
+// Proximity-weighted so near-ATM fresh OI matters more. Range: ±12 pts.
+function computeCOISignal(
+  strikeData: Record<string, any>,
+  openPrice: number,
+  strikeGap: number,
+): number {
+  const window = strikeGap * 6;
+  let freshPE = 0, freshCE = 0;
+  for (const [key, val] of Object.entries(strikeData)) {
+    const sk = parseFloat(key);
+    if (isNaN(sk) || sk <= 0 || Math.abs(sk - openPrice) > window) continue;
+    const prox = 1 - Math.abs(sk - openPrice) / (window + strikeGap);
+    const ceCOI = val?.ce_coi ?? val?.ce_chng_oi ?? 0;
+    const peCOI = val?.pe_coi ?? val?.pe_chng_oi ?? 0;
+    if (sk < openPrice)  freshPE += Math.max(0, peCOI) * prox;
+    else if (sk > openPrice) freshCE += Math.max(0, ceCOI) * prox;
+  }
+  const total = freshPE + freshCE;
+  if (total < 1000) return 0; // insufficient data
+  return Math.round(Math.max(-12, Math.min(12, ((freshPE - freshCE) / total) * 20)));
+}
+
 export function computeIndexForecast(
   openPrice: number,
   spotClose: number,
@@ -1320,6 +1376,9 @@ export function computeIndexForecast(
   fiiCmNet: number = 0,            // FII cash market net (₹Cr), previous trading day
   fiiIdxFutNet: number = 0,        // FII index futures net (₹Cr), previous trading day
   diiCmNet: number = 0,            // DII cash market net (₹Cr), previous trading day
+  fiiLongPct: number = 50,         // FII index futures long % (structural positioning, from fii_data)
+  diiNetFut: number = 0,           // DII net futures (long - short contracts, from fii_data)
+  proNetFut: number = 0,           // Proprietary desk net futures (from fii_data)
 ): IndexForecast {
   const strikeGap = getGapStep(indexName);
 
@@ -1446,6 +1505,27 @@ export function computeIndexForecast(
     : fiiFuturesLongPct === 50 ? 0
       : Math.round(Math.max(-20, Math.min(20, (fiiFuturesLongPct - 50) * 0.4)));
 
+  // FII structural long % (from fii_data): complements flow signal with positioning signal.
+  // fii_long_pct > 60%: FII are structurally long futures → sustained bullish.
+  // fii_long_pct < 40%: FII structurally short → persistent bearish pressure.
+  // Only fires when clearly away from 50% neutral. Range: ±8 pts.
+  const fiiLongPctSig = fiiLongPct === 50 ? 0
+    : fiiLongPct >= 68 ? 8 : fiiLongPct >= 60 ? 4 : fiiLongPct >= 55 ? 2
+    : fiiLongPct <= 32 ? -8 : fiiLongPct <= 40 ? -4 : fiiLongPct <= 45 ? -2 : 0;
+
+  // PRO desk net futures (proprietary desks): tends to be directionally positioned medium-term.
+  // Large positive = pro desks are net long → bullish. Negative = net short → bearish.
+  // Absolute contract numbers vary, use ±1M as meaningful threshold. Range: ±6 pts.
+  const proNetNorm = proNetFut / 1_000_000;
+  const proSig = proNetFut === 0 ? 0
+    : proNetNorm > 1.5 ? 6 : proNetNorm > 0.5 ? 3 : proNetNorm > 0.1 ? 1
+    : proNetNorm < -1.5 ? -6 : proNetNorm < -0.5 ? -3 : proNetNorm < -0.1 ? -1 : 0;
+
+  // COI (Change in Open Interest): NSE-reported fresh OI writing for today's session.
+  // More accurate than prevStrikeData diff because it's the actual COI reported at time of snapshot.
+  // Fresh PE at support = put writers adding conviction → bullish. Range: ±12 pts.
+  const coiSignal = computeCOISignal(strikeData, openPrice, strikeGap);
+
   // Gap-from-prev-close signal: significant overnight gap = institutional positioning.
   // A gap down means smart money sold overnight → bearish pressure into the session.
   // Gaps < half a strike-gap are noise. Scaled by gap size, capped at ±15.
@@ -1455,7 +1535,7 @@ export function computeIndexForecast(
     : absGap < strikeGap * 0.5 ? 0
     : Math.sign(gapPts) * Math.min(15, Math.round(absGap / strikeGap * 10));
 
-  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + gapSignal + ivSkewSig);
+  const convictionScore = Math.round(pcrSignal + mpSignal + roomSignal + trendSignal + proximitySignal + sectorSignal + oiVelocitySignal + fiiSignal + fiiLongPctSig + proSig + coiSignal + gapSignal + ivSkewSig);
   // Asymmetric thresholds: BULL at +15, BEAR at -25.
   // Raising the BEAR bar to -25 (from -15) because false-BEAR calls in
   // FII-selling/DII-buying regimes are far more damaging than false-BULL calls.
@@ -1467,17 +1547,19 @@ export function computeIndexForecast(
 
   // ── 5. DTE-weighted Max Pain gravity ──
   const mpGravity = Math.max(0.10, Math.min(0.85, 0.85 * Math.exp(-0.45 * Math.max(dte, 0))));
-  // Gamma pin boost: on expiry (DTE≤1) when open is within 1.5 strike-gaps of Max Pain,
-  // dealer delta-hedging at the dominant OI strike creates a very strong close pull toward MP.
+  // Expiry day pin: on DTE=0, options settlement creates very strong close pull toward Max Pain.
+  // Market makers and arbitrageurs actively pin price near MP as options expire. 0.92 gravity.
+  // MP fights bias: when Max Pain is OPPOSITE to directional call, reduce its weight to 40%
+  // so it doesn't cancel the directional move (e.g., BEAR day with mp above open).
+  // Priority order: expiry pin > mp-fights-bias > gamma pin (proximity) > normal.
   const gammaPinActive = dte <= 1 && Math.abs(openPrice - mp) <= strikeGap * 1.5;
-  // MP fights bias: when Max Pain is on the OPPOSITE side of open from the directional call
-  // (e.g., BEAR day where mp > open), mpGravity actively cancels the directional move.
-  // Reduce it to 40% to prevent the cancel-out from inflating/deflating close predictions.
   const mpFightsBias = (bias === 'BULLISH' && mp < openPrice) ||
                        (bias === 'BEARISH' && mp > openPrice);
-  const effectiveMpGravity = mpFightsBias && Math.abs(convictionScore) > 15
-    ? mpGravity * 0.40
-    : gammaPinActive ? Math.min(0.92, mpGravity * 1.10) : mpGravity;
+  const effectiveMpGravity = dte === 0
+    ? (mpFightsBias ? Math.min(0.92, mpGravity * 0.70) : 0.92)  // expiry: strong pin, still reduce if fighting
+    : mpFightsBias && Math.abs(convictionScore) > 15
+      ? mpGravity * 0.40
+      : gammaPinActive ? Math.min(0.92, mpGravity * 1.10) : mpGravity;
 
   // ── 6. EOD target: blend Max Pain gravity with a conviction-scaled directional move ──
   // Key design principle: directional component is a SMALL FRACTION of dailyRange scaled

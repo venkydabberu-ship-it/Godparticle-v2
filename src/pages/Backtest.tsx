@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   getBacktestDates, getMarketDataBefore, getIndexOHLC, getOHLCDates,
-  getRecentOHLC, computeATR, getFIIActivity,
+  getRecentOHLC, computeATR, getFIIActivity, getFIIPositioning,
   computeIndexForecast, formatExpiryDisplay, type IndexForecast, type IndexOHLC,
 } from '../lib/market';
 
@@ -259,9 +259,10 @@ export default function Backtest() {
       const historicals   = rows.map((r: any) => r.strike_data?._spot_close ?? 0).filter((c: number) => c > 0);
 
       // Real ATR from last 10 OHLC sessions (more accurate than VIX formula)
-      const [recentOHLC, fiiActivity] = await Promise.all([
+      const [recentOHLC, fiiActivity, fiiPos] = await Promise.all([
         getRecentOHLC(indexName, date, 10),
         getFIIActivity(date),
+        getFIIPositioning(date),
       ]);
       const atr = computeATR(recentOHLC);
       // Use actual previous-day close from index_ohlc when available — more accurate
@@ -276,6 +277,7 @@ export default function Backtest() {
       const fc = computeIndexForecast(
         ohlc.open, spotClose, chainData, vix, indexName, dte, historicals, [], prevChainData,
         50, atr, fiiActivity?.fii_cm_net ?? 0, fiiActivity?.fii_idx_fut_net ?? 0, fiiActivity?.dii_cm_net ?? 0,
+        fiiPos?.fii_long_pct ?? 50, fiiPos?.dii_net_fut ?? 0, fiiPos?.pro_net_fut ?? 0,
       );
       setForecast(fc);
     } catch (e: any) {
@@ -307,9 +309,10 @@ export default function Backtest() {
         const dte           = dteBetween(entry.date, entry.expiry);
         const historicals   = rows.map((r: any) => r.strike_data?._spot_close ?? 0).filter((c: number) => c > 0);
 
-        const [recentOHLC, fiiActivity] = await Promise.all([
+        const [recentOHLC, fiiActivity, fiiPos] = await Promise.all([
           getRecentOHLC(indexName, entry.date, 10),
           getFIIActivity(entry.date),
+          getFIIPositioning(entry.date),
         ]);
         const atr       = computeATR(recentOHLC);
         const prevClose = recentOHLC.length > 0 ? recentOHLC[0].close
@@ -319,6 +322,7 @@ export default function Backtest() {
         const fc = computeIndexForecast(
           ohlc.open, spotClose, chainData, vix, indexName, dte, historicals, [], prevChainData,
           50, atr, fiiActivity?.fii_cm_net ?? 0, fiiActivity?.fii_idx_fut_net ?? 0, fiiActivity?.dii_cm_net ?? 0,
+          fiiPos?.fii_long_pct ?? 50, fiiPos?.dii_net_fut ?? 0, fiiPos?.pro_net_fut ?? 0,
         );
 
         const predHigh  = fc.predictedHigh;
