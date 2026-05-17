@@ -502,6 +502,70 @@ export function parseOHLCCSV(
   return result;
 }
 
+// NSE index name → our internal key mapping
+const NSE_SNAPSHOT_NAME_MAP: Record<string, string> = {
+  'NIFTY 50': 'NIFTY50',
+  'NIFTY50': 'NIFTY50',
+  'NIFTY BANK': 'BANKNIFTY',
+  'NIFTY NEXT 50': 'NIFTYNEXT50',
+  'NIFTY MIDCAP SELECT': 'MIDCAPNIFTY',
+  'NIFTY FIN SERVICE': 'FINNIFTY',
+  'NIFTY FINANCIAL SERVICES': 'FINNIFTY',
+  'NIFTY FINANCIAL SERVICES 25/50': 'FINNIFTY',
+  'S&P BSE SENSEX': 'SENSEX',
+  'SENSEX': 'SENSEX',
+  'S&P BSE BANKEX': 'BANKEX',
+  'BANKEX': 'BANKEX',
+};
+
+// Parse NSE "Daily Snapshot" CSV (ind_close_all_DDMMYYYY.csv).
+// Columns: Index Name, Open Index Value, High Index Value, Low Index Value, Closing Index Value, ...
+// date param is the trade date in YYYY-MM-DD format (from the date picker — not embedded in this CSV).
+export function parseNSESnapshotCSV(
+  text: string,
+  date: string,
+): { indexName: string; date: string; open: number; high: number; low: number; close: number }[] {
+  function parseNum(s: string) {
+    return parseFloat(s.replace(/[,'" ]/g, ''));
+  }
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  const results: { indexName: string; date: string; open: number; high: number; low: number; close: number }[] = [];
+  for (const line of lines) {
+    const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+    if (cols.length < 5) continue;
+    const rawName = cols[0].toUpperCase().trim();
+    const indexName = NSE_SNAPSHOT_NAME_MAP[rawName];
+    if (!indexName) continue;
+    const open  = parseNum(cols[1]);
+    const high  = parseNum(cols[2]);
+    const low   = parseNum(cols[3]);
+    const close = parseNum(cols[4]);
+    if ([open, high, low, close].some(v => isNaN(v) || v <= 0)) continue;
+    results.push({ indexName, date, open, high, low, close });
+  }
+  return results;
+}
+
+// Bulk upsert OHLC rows for multiple indices in one call.
+export async function upsertBulkOHLC(
+  rows: { indexName: string; date: string; open: number; high: number; low: number; close: number }[],
+): Promise<{ inserted: number; error: string | null }> {
+  if (!rows.length) return { inserted: 0, error: null };
+  const payload = rows.map(r => ({
+    index_name: normalizeIndexName(r.indexName),
+    trade_date: r.date,
+    open: r.open,
+    high: r.high,
+    low: r.low,
+    close: r.close,
+    source: 'manual',
+  }));
+  const { error } = await supabase
+    .from('index_ohlc')
+    .upsert(payload, { onConflict: 'index_name,trade_date' });
+  return { inserted: error ? 0 : rows.length, error: error?.message ?? null };
+}
+
 function parseCSVLine(line: string): string[] {
   const out: string[] = [];
   let cur = '', q = false;

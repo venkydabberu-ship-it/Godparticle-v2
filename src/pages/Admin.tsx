@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase, callEdge } from '../lib/supabase';
 import { getStale, setCached } from '../lib/cache';
 import { runDailyAutoFetch, autoFetchAllIndices, autoFetchAllStockOptions, autoFetchAllStockPrices, autoFetchAllFundamentals, fixWrongTradeDate } from '../lib/autofetch';
-import { upsertIndexOHLC, parseOHLCCSV } from '../lib/market';
+import { upsertIndexOHLC, parseOHLCCSV, parseNSESnapshotCSV, upsertBulkOHLC } from '../lib/market';
 
 const DEFAULT_INDICES = [
   { key: 'NIFTY50',     name: 'Nifty 50',     exchange: 'NSE', expiry: 'weekly',  upstoxKey: 'NSE_INDEX|Nifty 50',            color: '#f0c040', edgeType: 'nifty_chain' },
@@ -125,6 +125,9 @@ export default function Admin() {
   const [ohlcUploadIndex, setOhlcUploadIndex] = useState('NIFTY50');
   const [ohlcUploading, setOhlcUploading] = useState(false);
   const [ohlcUploadMsg, setOhlcUploadMsg] = useState('');
+  const [snapshotDate, setSnapshotDate] = useState(new Date().toISOString().split('T')[0]);
+  const [snapshotUploading, setSnapshotUploading] = useState(false);
+  const [snapshotMsg, setSnapshotMsg] = useState('');
   const [intradayLoading, setIntradayLoading] = useState(false);
   const [intradayResult, setIntradayResult] = useState<any>(null);
 
@@ -706,6 +709,28 @@ export default function Admin() {
       setOhlcUploadMsg(`❌ ${err.message}`);
     } finally {
       setOhlcUploading(false);
+      e.target.value = '';
+    }
+  }
+
+  async function handleSnapshotUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!snapshotDate) { setSnapshotMsg('❌ Select a date first.'); return; }
+    setSnapshotUploading(true); setSnapshotMsg('');
+    try {
+      const text = await file.text();
+      const rows = parseNSESnapshotCSV(text, snapshotDate);
+      if (!rows.length) { setSnapshotMsg('❌ No recognised NSE index rows found — check file format.'); return; }
+      const { inserted, error } = await upsertBulkOHLC(rows);
+      const indices = [...new Set(rows.map(r => r.indexName))].join(', ');
+      setSnapshotMsg(error
+        ? `❌ DB error: ${error}`
+        : `✅ Saved ${inserted} rows for ${snapshotDate} → ${indices}`);
+    } catch (err: any) {
+      setSnapshotMsg(`❌ ${err.message}`);
+    } finally {
+      setSnapshotUploading(false);
       e.target.value = '';
     }
   }
@@ -1384,6 +1409,35 @@ export default function Admin() {
               {ohlcUploadMsg && (
                 <div className={`text-xs font-mono px-3 py-2 rounded-lg ${ohlcUploadMsg.startsWith('✅') ? 'bg-[#39d98a]/10 text-[#39d98a]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
                   {ohlcUploadMsg}
+                </div>
+              )}
+            </div>
+
+            {/* NSE Daily Snapshot Bulk Upload */}
+            <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-5 space-y-3">
+              <div className="text-xs font-mono font-bold text-[#4d9fff]">📸 Upload NSE Daily Snapshot (All Indices at Once)</div>
+              <div className="text-[10px] font-mono text-[#6b6b85]">
+                NSE website → Market Data → Capital Market → Indices → Daily Reports → "Daily Snapshot (csv)".
+                One upload saves OHLC for all recognised indices (Nifty 50, Bank Nifty, Fin Nifty, Midcap, Next 50, Sensex, Bankex).
+              </div>
+              <div className="flex gap-3 items-center flex-wrap">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest">Trade Date</label>
+                  <input
+                    type="date"
+                    value={snapshotDate}
+                    onChange={e => setSnapshotDate(e.target.value)}
+                    className="bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#4d9fff] transition-colors"
+                  />
+                </div>
+                <label className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-[#1e1e2e] hover:border-[#4d9fff] rounded-xl p-4 cursor-pointer transition-all">
+                  <input type="file" accept=".csv" className="hidden" onChange={handleSnapshotUpload} disabled={snapshotUploading} />
+                  <div className="text-xs font-mono text-[#6b6b85]">{snapshotUploading ? '⏳ Uploading...' : '📄 Click to upload Daily Snapshot CSV'}</div>
+                </label>
+              </div>
+              {snapshotMsg && (
+                <div className={`text-xs font-mono px-3 py-2 rounded-lg ${snapshotMsg.startsWith('✅') ? 'bg-[#39d98a]/10 text-[#39d98a]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
+                  {snapshotMsg}
                 </div>
               )}
             </div>

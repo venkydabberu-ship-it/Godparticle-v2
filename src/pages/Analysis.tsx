@@ -24,6 +24,7 @@ const INDICES = [
 
 export default function Analysis() {
   const { user, profile, refreshProfile } = useAuth();
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Upload section
   const [uploadIndex, setUploadIndex] = useState('NIFTY50');
@@ -91,7 +92,7 @@ export default function Analysis() {
       .then(e => setAvailableExpiries(e))
       .catch(() => setAvailableExpiries([]))
       .finally(() => setLoadingExpiries(false));
-  }, [indexName]);
+  }, [indexName, refreshKey]);
 
   // Load dates when expiry changes
   useEffect(() => {
@@ -99,7 +100,7 @@ export default function Analysis() {
     getAvailableDates(indexName, expiry)
       .then(d => setAvailableDates(d))
       .catch(() => setAvailableDates([]));
-  }, [expiry, indexName]);
+  }, [expiry, indexName, refreshKey]);
 
   const canUpload = (idx: string) => {
     if (!profile) return false;
@@ -378,10 +379,10 @@ export default function Analysis() {
             Credits: <span className="text-[#f0c040] font-bold">{['pro', 'admin'].includes(profile?.role ?? '') ? '∞' : profile?.credits ?? 0}</span>
           </span>
           <button
-            onClick={() => { window.location.reload(); }}
-            title="Force reload app"
+            onClick={() => setRefreshKey(k => k + 1)}
+            title="Refresh data from Supabase"
             className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040] border border-[#1e1e2e] rounded px-2 py-1">
-            ↺ Reload
+            ↺ Refresh
           </button>
           <Link to="/dashboard" className="text-xs font-mono text-[#6b6b85] hover:text-[#f0c040]">← Dashboard</Link>
         </div>

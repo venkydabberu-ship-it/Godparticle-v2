@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { signIn, sendPasswordResetOTP, verifyPasswordResetOTP } from '../lib/auth';
 
 type LoginMode = 'password' | 'otp';
-type OtpStep = 'email' | 'verify';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -11,69 +10,63 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [otp, setOtp] = useState('');
-  const [otpStep, setOtpStep] = useState<OtpStep>('email');
+  const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
+  function handleEmailChange(val: string) {
+    setEmail(val);
+    // If email changes after OTP was sent, reset so user re-sends
+    if (otpSent) { setOtpSent(false); setOtp(''); }
+  }
+
   function switchMode(m: LoginMode) {
+    if (m === mode) return; // don't reset if clicking same tab
     setMode(m);
     setError('');
-    setOtpStep('email');
+    setOtpSent(false);
     setOtp('');
   }
 
   async function handlePasswordLogin(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
       await signIn(email, password);
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Login failed. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }
 
-  async function handleSendOtp(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
+  async function handleSendOtp() {
+    if (!email) { setError('Enter your email first.'); return; }
+    setLoading(true); setError('');
     try {
       await sendPasswordResetOTP(email);
-      setOtpStep('verify');
+      setOtpSent(true);
     } catch (err: any) {
       setError(err.message || 'Failed to send OTP. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }
 
   async function handleVerifyOtp(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
       await verifyPasswordResetOTP(email, otp.trim());
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Invalid OTP. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center px-4">
-
-      {/* Grid background */}
       <div className="fixed inset-0 bg-[linear-gradient(rgba(240,192,64,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(240,192,64,0.03)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none" />
 
       <div className="relative z-10 w-full max-w-md">
-
-        {/* Logo */}
         <div className="text-center mb-8">
           <div className="w-14 h-14 bg-[#f0c040] rounded-2xl flex items-center justify-center text-2xl shadow-[0_0_30px_rgba(240,192,64,0.3)] mx-auto mb-4">
             ⚛
@@ -82,31 +75,15 @@ export default function Login() {
           <p className="text-sm text-[#6b6b85] font-mono mt-1">Sign in to God Particle</p>
         </div>
 
-        {/* Form */}
         <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-8">
-
           {/* Mode toggle */}
           <div className="flex bg-[#16161f] border border-[#1e1e2e] rounded-lg p-1 mb-6">
-            <button
-              type="button"
-              onClick={() => switchMode('password')}
-              className={`flex-1 py-2 rounded-md text-xs font-mono font-bold transition-all ${
-                mode === 'password'
-                  ? 'bg-[#f0c040] text-black'
-                  : 'text-[#6b6b85] hover:text-[#e8e8f0]'
-              }`}
-            >
+            <button type="button" onClick={() => switchMode('password')}
+              className={`flex-1 py-2 rounded-md text-xs font-mono font-bold transition-all ${mode === 'password' ? 'bg-[#f0c040] text-black' : 'text-[#6b6b85] hover:text-[#e8e8f0]'}`}>
               Password
             </button>
-            <button
-              type="button"
-              onClick={() => switchMode('otp')}
-              className={`flex-1 py-2 rounded-md text-xs font-mono font-bold transition-all ${
-                mode === 'otp'
-                  ? 'bg-[#f0c040] text-black'
-                  : 'text-[#6b6b85] hover:text-[#e8e8f0]'
-              }`}
-            >
+            <button type="button" onClick={() => switchMode('otp')}
+              className={`flex-1 py-2 rounded-md text-xs font-mono font-bold transition-all ${mode === 'otp' ? 'bg-[#f0c040] text-black' : 'text-[#6b6b85] hover:text-[#e8e8f0]'}`}>
               OTP
             </button>
           </div>
@@ -117,36 +94,21 @@ export default function Login() {
             </div>
           )}
 
-          {/* Password mode */}
+          {/* ── Password mode ── */}
           {mode === 'password' && (
             <form onSubmit={handlePasswordLogin} className="space-y-5">
               <div>
-                <label className="block text-xs font-mono text-[#6b6b85] tracking-widest uppercase mb-2">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  required
-                  className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-4 py-3 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040] transition-colors"
-                />
+                <label className="block text-xs font-mono text-[#6b6b85] tracking-widest uppercase mb-2">Email</label>
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                  placeholder="you@example.com" required
+                  className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-4 py-3 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040] transition-colors" />
               </div>
-
               <div>
-                <label className="block text-xs font-mono text-[#6b6b85] tracking-widest uppercase mb-2">
-                  Password
-                </label>
+                <label className="block text-xs font-mono text-[#6b6b85] tracking-widest uppercase mb-2">Password</label>
                 <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    required
-                    className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-4 py-3 pr-11 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040] transition-colors"
-                  />
+                  <input type={showPassword ? 'text' : 'password'} value={password}
+                    onChange={e => setPassword(e.target.value)} placeholder="••••••••" required
+                    className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-4 py-3 pr-11 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040] transition-colors" />
                   <button type="button" onClick={() => setShowPassword(v => !v)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6b6b85] hover:text-[#e8e8f0] transition-colors">
                     {showPassword
@@ -156,82 +118,54 @@ export default function Login() {
                   </button>
                 </div>
               </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-[#f0c040] text-black font-black py-3 rounded-lg hover:bg-[#ffd060] transition-all shadow-[0_0_20px_rgba(240,192,64,0.2)] disabled:opacity-40 disabled:cursor-not-allowed text-sm"
-              >
+              <button type="submit" disabled={loading}
+                className="w-full bg-[#f0c040] text-black font-black py-3 rounded-lg hover:bg-[#ffd060] transition-all shadow-[0_0_20px_rgba(240,192,64,0.2)] disabled:opacity-40 disabled:cursor-not-allowed text-sm">
                 {loading ? '⏳ Signing in...' : '⚛ Sign In'}
               </button>
             </form>
           )}
 
-          {/* OTP mode — Step 1: enter email */}
-          {mode === 'otp' && otpStep === 'email' && (
-            <form onSubmit={handleSendOtp} className="space-y-5">
-              <div>
-                <label className="block text-xs font-mono text-[#6b6b85] tracking-widest uppercase mb-2">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  required
-                  className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-4 py-3 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040] transition-colors"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-[#f0c040] text-black font-black py-3 rounded-lg hover:bg-[#ffd060] transition-all shadow-[0_0_20px_rgba(240,192,64,0.2)] disabled:opacity-40 disabled:cursor-not-allowed text-sm"
-              >
-                {loading ? '⏳ Sending OTP...' : '⚛ Send OTP'}
-              </button>
-            </form>
-          )}
-
-          {/* OTP mode — Step 2: enter code */}
-          {mode === 'otp' && otpStep === 'verify' && (
+          {/* ── OTP mode ── */}
+          {mode === 'otp' && (
             <form onSubmit={handleVerifyOtp} className="space-y-5">
-              <div className="text-xs font-mono text-[#6b6b85] text-center">
-                OTP sent to <span className="text-[#f0c040]">{email}</span>
+              {/* Email + Send OTP */}
+              <div>
+                <label className="block text-xs font-mono text-[#6b6b85] tracking-widest uppercase mb-2">Email</label>
+                <div className="flex gap-2">
+                  <input type="email" value={email} onChange={e => handleEmailChange(e.target.value)}
+                    placeholder="you@example.com" required
+                    className="flex-1 bg-[#16161f] border border-[#1e1e2e] rounded-lg px-4 py-3 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040] transition-colors" />
+                  <button type="button" onClick={handleSendOtp} disabled={loading || !email}
+                    className="shrink-0 bg-[#1e1e2e] hover:bg-[#2a2a3e] border border-[#2a2a3e] text-[#f0c040] font-bold text-xs font-mono rounded-lg px-3 py-3 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap">
+                    {loading && !otpSent ? '⏳' : otpSent ? 'Resend' : 'Send OTP'}
+                  </button>
+                </div>
+                {otpSent && (
+                  <p className="text-[10px] font-mono text-[#39d98a] mt-1.5">
+                    ✓ OTP sent to {email} — check your inbox
+                  </p>
+                )}
               </div>
 
+              {/* OTP input */}
               <div>
                 <label className="block text-xs font-mono text-[#6b6b85] tracking-widest uppercase mb-2">
-                  Enter OTP
+                  OTP Code
                 </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={otp}
-                  onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="000000"
-                  maxLength={6}
-                  required
-                  autoFocus
-                  className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-4 py-3 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040] transition-colors tracking-[0.5em] text-center"
-                />
+                <input type="text" inputMode="numeric"
+                  value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="0  0  0  0  0  0" maxLength={6}
+                  className="w-full bg-[#16161f] border border-[#1e1e2e] rounded-lg px-4 py-3 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#f0c040] transition-colors tracking-[0.6em] text-center" />
+                {!otpSent && (
+                  <p className="text-[10px] font-mono text-[#6b6b85] mt-1.5">
+                    Enter your email and click "Send OTP" first
+                  </p>
+                )}
               </div>
 
-              <button
-                type="submit"
-                disabled={loading || otp.length < 6}
-                className="w-full bg-[#f0c040] text-black font-black py-3 rounded-lg hover:bg-[#ffd060] transition-all shadow-[0_0_20px_rgba(240,192,64,0.2)] disabled:opacity-40 disabled:cursor-not-allowed text-sm"
-              >
-                {loading ? '⏳ Verifying...' : '⚛ Verify & Sign In'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => { setOtpStep('email'); setOtp(''); setError(''); }}
-                className="w-full text-xs font-mono text-[#6b6b85] hover:text-[#e8e8f0] transition-colors"
-              >
-                Change email or resend OTP
+              <button type="submit" disabled={loading || !otpSent || otp.length < 6}
+                className="w-full bg-[#f0c040] text-black font-black py-3 rounded-lg hover:bg-[#ffd060] transition-all shadow-[0_0_20px_rgba(240,192,64,0.2)] disabled:opacity-40 disabled:cursor-not-allowed text-sm">
+                {loading && otpSent ? '⏳ Verifying...' : '⚛ Verify & Sign In'}
               </button>
             </form>
           )}
@@ -244,13 +178,10 @@ export default function Login() {
             </div>
             <div>
               Don't have an account?{' '}
-              <Link to="/signup" className="text-[#f0c040] hover:underline">
-                Sign up free
-              </Link>
+              <Link to="/signup" className="text-[#f0c040] hover:underline">Sign up free</Link>
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );
