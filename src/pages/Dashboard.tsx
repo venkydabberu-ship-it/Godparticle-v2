@@ -50,24 +50,16 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshDone, setRefreshDone] = useState(false);
 
-  async function handleRefresh() {
+  function handleRefresh() {
     if (refreshing) return;
     setRefreshing(true);
-    setRefreshDone(false);
+    // Clear localStorage so stale-paint on next mount shows nothing instead of old data
     const uid = user?.id;
     if (uid) localStorage.removeItem(`dashboard_v1_${uid}`);
-    setAnalyses([]);
-    setAnnouncement('');
-    setMyQueries([]);
-    try {
-      await loadDashboard();
-      setRefreshDone(true);
-      setTimeout(() => setRefreshDone(false), 2500);
-    } catch {
-      // silent — user can try again
-    } finally {
-      setRefreshing(false);
-    }
+    // Full reload — only reliable way to guarantee every piece of state
+    // (forecast, chain data, expiries, FII, OHLC) is fetched fresh from Supabase.
+    // In-app partial refresh leaves too many stale slices. Page reload fixes it every time.
+    window.location.reload();
   }
 
   function handleRevisit(a: any) {
