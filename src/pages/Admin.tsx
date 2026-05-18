@@ -135,6 +135,7 @@ export default function Admin() {
   const [intradayResult, setIntradayResult] = useState<any>(null);
   const [schedIndex, setSchedIndex] = useState('ALL');
   const [schedExpiry, setSchedExpiry] = useState(new Date().toISOString().split('T')[0]);
+  const [schedTime, setSchedTime] = useState('09:30');
   const [schedSnap, setSchedSnap] = useState('EXPIRY_930');
   const [schedLoading, setSchedLoading] = useState(false);
   const [schedMsg, setSchedMsg] = useState('');
@@ -768,19 +769,10 @@ export default function Admin() {
   }
 
   // ── Z2H SCHEDULER ──
-  const SNAP_OPTIONS: Record<string, { time: string; label: string }> = {
-    'EXPIRY_930':  { time: '09:30', label: '9:30 AM' },
-    'EXPIRY_1115': { time: '11:15', label: '11:15 AM' },
-    'EXPIRY_115':  { time: '13:15', label: '1:15 PM' },
-    'EXPIRY_315':  { time: '15:15', label: '3:15 PM' },
-    'DAY_BEFORE':  { time: '15:30', label: '3:30 PM (day before expiry)' },
-  };
-
   async function handleAddSchedule() {
     setSchedLoading(true);
     setSchedMsg('');
     try {
-      const meta = SNAP_OPTIONS[schedSnap];
       const captureDate = schedSnap === 'DAY_BEFORE'
         ? new Date(new Date(schedExpiry).getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]
         : schedExpiry;
@@ -788,11 +780,11 @@ export default function Admin() {
         index_name:    schedIndex,
         expiry_date:   schedExpiry,
         capture_date:  captureDate,
-        capture_time:  meta.time,
+        capture_time:  schedTime,
         snapshot_type: schedSnap,
       });
       if (error) throw new Error(error.message);
-      setSchedMsg(`✅ Scheduled: ${schedIndex} · ${schedSnap} · ${captureDate} at ${meta.time} IST`);
+      setSchedMsg(`✅ Scheduled: ${schedIndex} · ${schedSnap} · ${captureDate} at ${schedTime} IST`);
       await loadSchedules();
     } catch (err: any) {
       setSchedMsg(`❌ ${err.message}`);
@@ -1403,18 +1395,28 @@ export default function Admin() {
                       className="w-full bg-[#16161f] border border-[#2a2a3a] rounded-lg px-3 py-2 text-xs font-mono text-[#e8e8f0] focus:outline-none focus:border-[#4d9fff]" />
                   </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Capture Time (IST)</label>
-                  <select
-                    value={schedSnap}
-                    onChange={e => setSchedSnap(e.target.value)}
-                    className="w-full bg-[#16161f] border border-[#2a2a3a] rounded-lg px-3 py-2 text-xs font-mono text-[#e8e8f0] focus:outline-none focus:border-[#4d9fff]">
-                    <option value="EXPIRY_930">9:30 AM — Opening Snapshot</option>
-                    <option value="EXPIRY_1115">11:15 AM — Analysis Snapshot</option>
-                    <option value="EXPIRY_115">1:15 PM — Entry Snapshot</option>
-                    <option value="EXPIRY_315">3:15 PM — Close Snapshot</option>
-                    <option value="DAY_BEFORE">3:30 PM (day before) — Prev Day Close</option>
-                  </select>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Capture Time (IST)</label>
+                    <input
+                      type="time"
+                      value={schedTime}
+                      onChange={e => setSchedTime(e.target.value)}
+                      className="w-full bg-[#16161f] border border-[#2a2a3a] rounded-lg px-3 py-2 text-xs font-mono text-[#e8e8f0] focus:outline-none focus:border-[#4d9fff]" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest mb-1">Snapshot Label</label>
+                    <select
+                      value={schedSnap}
+                      onChange={e => setSchedSnap(e.target.value)}
+                      className="w-full bg-[#16161f] border border-[#2a2a3a] rounded-lg px-3 py-2 text-xs font-mono text-[#e8e8f0] focus:outline-none focus:border-[#4d9fff]">
+                      <option value="EXPIRY_930">Opening (9:30 AM)</option>
+                      <option value="EXPIRY_1115">Analysis (11:15 AM)</option>
+                      <option value="EXPIRY_115">Entry (1:15 PM)</option>
+                      <option value="EXPIRY_315">Close (3:15 PM)</option>
+                      <option value="DAY_BEFORE">Prev Day Close</option>
+                    </select>
+                  </div>
                 </div>
                 <button
                   onClick={handleAddSchedule}
