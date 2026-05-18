@@ -9,7 +9,7 @@ import {
   normalizeExpiry, formatExpiryDisplay, getDTE,
   getGapStep, getMaxGap, INDEX_DISPLAY, useCredits,
   generateIndexForecast, getLatestChainData, SECTOR_INDEX_MAP,
-  type IndexForecast, bsPrice,
+  type IndexForecast, bsPrice, getChainIVForSpot,
 } from '../lib/market';
 
 const INDICES = [
@@ -1435,17 +1435,17 @@ export default function Analysis() {
               const optionIV = (() => {
                 const rawIV = result.latestIV ?? 0;
                 if (rawIV > 0) return rawIV / 100;
-                // back-calc from last close if no chain IV
                 const lc = result.lc ?? 0;
                 const spotClose = result.spotClose ?? 0;
                 const strike = result.strike ?? 0;
                 const dte = result.dte ?? 1;
                 if (lc > 0 && spotClose > 0 && strike > 0) {
+                  const T = dte / 365;
                   let lo = 0.01, hi = 5.0;
-                  for (let i = 0; i < 60; i++) {
+                  for (let i = 0; i < 80; i++) {
                     const mid = (lo + hi) / 2;
-                    const p = bsPrice(spotClose, strike, dte / 365, mid, result.optType === 'CE' ? 'CE' : 'PE');
-                    if (Math.abs(p - lc) < 0.05) return mid;
+                    const p = bsPrice(spotClose, strike, T, mid, result.optType === 'CE' ? 'CE' : 'PE');
+                    if (Math.abs(p - lc) < Math.max(0.01, lc * 0.001)) return mid;
                     if (p < lc) lo = mid; else hi = mid;
                   }
                   return (lo + hi) / 2;
@@ -1543,27 +1543,32 @@ export default function Analysis() {
                 const optCol = isCE ? '#39d98a' : '#ff4d6d';
                 const TOTAL_MIN = 375;
 
-                // Compute option price at each checkpoint
                 interface OptPt { minuteOffset: number; timeLabel: string; central: number; high: number; low: number; }
-                // Gap-adjusted IV at open: same estimateIVChange logic as the scenario matrix,
-                // so the 9:15 AM opening price on this chart matches the matrix's openEst row.
-                const openIvAdjust = actualGap > 0
-                  ? Math.max(-0.08, -0.02 * (actualGap / 100))
-                  : actualGap < 0
-                  ? Math.min(0.12, 0.025 * (Math.abs(actualGap) / 100))
-                  : 0;
-                // IV mean-reverts exponentially through the morning session (time constant 90 min).
-                // At open: full adjustment. By 11am (~105 min): ~31% remaining. By 2pm: essentially base.
-                const ivReverted = (minuteOffset: number) =>
-                  Math.max(0.05, optionIV + openIvAdjust * Math.exp(-minuteOffset / 90));
+                // Chain-aware vol-smile pricing — same IV lookup used by the scenario matrix openEst.
+                // IV at each (time, spot) = chain IV at that spot × e^(-t/τ) + optionIV × (1-e^(-t/τ))
+                // At open (t=0): full chain IV from smile; reverts to yesterday's IV as day progresses.
+                const hasChain = chainData && Object.keys(chainData).length > 0;
+                const latestIVFallback = (result.latestIV ?? 0) > 0 ? (result.latestIV as number) : 15;
+
+                // Adaptive reversion time constant: bigger gap keeps IV elevated longer
+                const maxGapVal = getMaxGap(indexName);
+                const absGapFraction = Math.min(1, Math.abs(actualGap) / maxGapVal);
+                const ivTau = 60 + 90 * absGapFraction; // 60 min (flat open) → 150 min (max gap)
+
+                const ivReverted = (minuteOffset: number, spotPrice: number): number => {
+                  const decay = Math.exp(-minuteOffset / ivTau);
+                  const spotIV = hasChain
+                    ? Math.max(0.05, getChainIVForSpot(chainData, spotPrice, isCE ? 'CE' : 'PE', latestIVFallback) / 100)
+                    : Math.max(0.05, latestIVFallback / 100);
+                  return Math.max(0.05, spotIV * decay + optionIV * (1 - decay));
+                };
 
                 const optPts: OptPt[] = forecast.points.map((p) => {
                   const dteRemaining = Math.max(dte - p.minuteOffset / TOTAL_MIN, 0.001);
                   const T = dteRemaining / 365;
-                  const effectiveIV = ivReverted(p.minuteOffset);
-                  const optC = bsPrice(p.central, strike, T, effectiveIV, isCE ? 'CE' : 'PE');
-                  const optH = bsPrice(p.high,    strike, T, effectiveIV, isCE ? 'CE' : 'PE');
-                  const optL = bsPrice(p.low,     strike, T, effectiveIV, isCE ? 'CE' : 'PE');
+                  const optC = bsPrice(p.central, strike, T, ivReverted(p.minuteOffset, p.central), isCE ? 'CE' : 'PE');
+                  const optH = bsPrice(p.high,    strike, T, ivReverted(p.minuteOffset, p.high),    isCE ? 'CE' : 'PE');
+                  const optL = bsPrice(p.low,     strike, T, ivReverted(p.minuteOffset, p.low),     isCE ? 'CE' : 'PE');
                   return {
                     minuteOffset: p.minuteOffset,
                     timeLabel: p.timeLabel,
@@ -1573,26 +1578,20 @@ export default function Analysis() {
                   };
                 });
 
-                // Index-path-derived option levels (not scenario matrix)
-                // Entry = option price when Nifty at morningDipTarget (the dip buy level)
-                // T1 = option price when Nifty at nearResistance (first take profit)
-                // T2 = option price when Nifty at eodTarget
-                // SL = option price when Nifty breaks 1 strike below nearSupport (CE) or above nearResistance (PE)
                 const strikeGapIdx = getGapStep(indexName);
-                // Entry/SL: reached ~30 min into session (still elevated IV from gap).
-                // T1: ~105 min (IV ~31% reverted). T2: ~285 min (essentially base IV).
-                const dipBuyOptPrice = Math.round(bsPrice(forecast.morningDipTarget, strike, Math.max(dte - 0.05, 0.001) / 365, ivReverted(30), isCE ? 'CE' : 'PE'));
+                const dipBuyOptPrice = Math.round(bsPrice(forecast.morningDipTarget, strike, Math.max(dte - 0.05, 0.001) / 365, ivReverted(30, forecast.morningDipTarget), isCE ? 'CE' : 'PE'));
                 const t1NiftyLevel = isCE ? forecast.nearResistance : forecast.nearSupport;
-                const t1OptPrice = Math.round(bsPrice(t1NiftyLevel, strike, Math.max(dte - 0.35, 0.001) / 365, ivReverted(105), isCE ? 'CE' : 'PE'));
+                const t1OptPrice = Math.round(bsPrice(t1NiftyLevel, strike, Math.max(dte - 0.35, 0.001) / 365, ivReverted(105, t1NiftyLevel), isCE ? 'CE' : 'PE'));
                 const eodNifty = Math.round(parseFloat(forecastOpen) + forecast.mpGravity * (forecast.maxPain - parseFloat(forecastOpen)));
                 const blendedEod = forecast.convictionScore > 20
                   ? Math.round(eodNifty * 0.6 + forecast.nearResistance * 0.4)
                   : forecast.convictionScore < -20
                   ? Math.round(eodNifty * 0.6 + forecast.nearSupport * 0.4)
                   : eodNifty;
-                const t2OptPrice = Math.round(bsPrice(isCE ? Math.max(blendedEod, t1NiftyLevel + strikeGapIdx) : Math.min(blendedEod, t1NiftyLevel - strikeGapIdx), strike, Math.max(dte - 0.8, 0.001) / 365, ivReverted(285), isCE ? 'CE' : 'PE'));
+                const t2NiftyLevel = isCE ? Math.max(blendedEod, t1NiftyLevel + strikeGapIdx) : Math.min(blendedEod, t1NiftyLevel - strikeGapIdx);
+                const t2OptPrice = Math.round(bsPrice(t2NiftyLevel, strike, Math.max(dte - 0.8, 0.001) / 365, ivReverted(285, t2NiftyLevel), isCE ? 'CE' : 'PE'));
                 const slNiftyLevel = isCE ? forecast.nearSupport - strikeGapIdx : forecast.nearResistance + strikeGapIdx;
-                const slOptPrice = Math.round(bsPrice(slNiftyLevel, strike, Math.max(dte - 0.2, 0.001) / 365, ivReverted(20), isCE ? 'CE' : 'PE'));
+                const slOptPrice = Math.round(bsPrice(slNiftyLevel, strike, Math.max(dte - 0.2, 0.001) / 365, ivReverted(20, slNiftyLevel), isCE ? 'CE' : 'PE'));
                 const targetLines = [
                   { price: Math.max(t2OptPrice, t1OptPrice + 1), label: 'T2', color: '#f0c040', dash: '6,3' },
                   { price: t1OptPrice, label: 'T1', color: '#39d98a', dash: '6,3' },

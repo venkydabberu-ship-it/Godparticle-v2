@@ -109,26 +109,47 @@ function impliedVolatility(
   return (lo + hi) / 2;
 }
 
-// Returns the IV (in %, e.g. 13.5) of the strike nearest to spotAtGap in the chain.
-// This gives us the actual market vol-skew for each gap scenario instead of a crude linear estimate.
-function getChainIVForSpot(
+// Returns the IV (in %, e.g. 13.5) for spotAtGap, linearly interpolated between
+// adjacent strikes in the chain. This accurately models the vol smile across gaps
+// instead of snapping to the nearest strike (which creates step-function artifacts).
+export function getChainIVForSpot(
   chainData: Record<string, any>,
   spotAtGap: number,
   optType: 'CE' | 'PE',
   fallback: number
 ): number {
-  let bestStrike = -1;
-  let bestDist = Infinity;
-  for (const k of Object.keys(chainData)) {
-    const sk = parseFloat(k);
-    if (isNaN(sk)) continue;
-    const dist = Math.abs(sk - spotAtGap);
-    if (dist < bestDist) { bestDist = dist; bestStrike = sk; }
+  const strikes = Object.keys(chainData)
+    .map(k => parseFloat(k))
+    .filter(k => !isNaN(k))
+    .sort((a, b) => a - b);
+
+  if (strikes.length === 0) return fallback;
+
+  const getIV = (k: number): number => {
+    const row = chainData[String(k)] as any;
+    const iv = optType === 'CE' ? (row?.ce_iv ?? 0) : (row?.pe_iv ?? 0);
+    return iv > 0 ? iv : 0;
+  };
+
+  if (spotAtGap <= strikes[0]) return getIV(strikes[0]) || fallback;
+  if (spotAtGap >= strikes[strikes.length - 1]) return getIV(strikes[strikes.length - 1]) || fallback;
+
+  // Binary search for lower bracket
+  let lo = 0, hi = strikes.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (strikes[mid] <= spotAtGap) lo = mid; else hi = mid;
   }
-  if (bestStrike < 0) return fallback;
-  const row = chainData[String(bestStrike)] as any;
-  const iv = optType === 'CE' ? (row?.ce_iv ?? 0) : (row?.pe_iv ?? 0);
-  return iv > 0 ? iv : fallback;
+
+  const loIV = getIV(strikes[lo]);
+  const hiIV = getIV(strikes[hi]);
+
+  if (loIV <= 0 && hiIV <= 0) return fallback;
+  if (loIV <= 0) return hiIV;
+  if (hiIV <= 0) return loIV;
+
+  const t = (spotAtGap - strikes[lo]) / (strikes[hi] - strikes[lo]);
+  return loIV + t * (hiIV - loIV);
 }
 
 
