@@ -54,15 +54,18 @@ function fmtDate(d: string) {
 // ── Calendar component ──
 function DateCalendar({
   available,
+  ohlcOnly,
   selected,
   onSelect,
 }: {
   available: Set<string>;
+  ohlcOnly: Set<string>;
   selected: string;
   onSelect: (d: string) => void;
 }) {
-  // Start at the month of the most recent available date
-  const lastAvailable = [...available].sort().pop() ?? new Date().toISOString().slice(0, 7) + '-01';
+  // Start at the month of the most recent date in either set
+  const allKnown = [...available, ...ohlcOnly].sort();
+  const lastAvailable = allKnown[allKnown.length - 1] ?? new Date().toISOString().slice(0, 7) + '-01';
   const initialYM = lastAvailable.slice(0, 7);
 
   const [ym, setYm] = useState(initialYM);
@@ -107,21 +110,29 @@ function DateCalendar({
       <div className="grid grid-cols-7 gap-1">
         {cells.map((date, i) => {
           if (!date) return <div key={`empty-${i}`} />;
-          const hasData = available.has(date);
+          const hasChain  = available.has(date);
+          const hasOhlcOnly = !hasChain && ohlcOnly.has(date);
           const isSelected = date === selected;
           return (
             <button
               key={date}
-              onClick={() => hasData && onSelect(date)}
-              disabled={!hasData}
-              title={hasData ? fmtDate(date) : 'No data'}
+              onClick={() => hasChain && onSelect(date)}
+              disabled={!hasChain}
+              title={
+                isSelected     ? fmtDate(date) :
+                hasChain       ? fmtDate(date) :
+                hasOhlcOnly    ? `${fmtDate(date)} — OHLC uploaded ✓, collect option chain to backtest` :
+                'No data'
+              }
               className={`
                 aspect-square rounded-lg text-xs font-bold transition-all flex items-center justify-center
                 ${isSelected
                   ? 'bg-[#f0c040] text-black ring-2 ring-[#f0c040] ring-offset-1 ring-offset-[#0a0a0f]'
-                  : hasData
+                  : hasChain
                     ? 'bg-[#f0c040]/15 text-[#f0c040] hover:bg-[#f0c040]/30 cursor-pointer'
-                    : 'text-[#2a2a3a] cursor-not-allowed'}
+                    : hasOhlcOnly
+                      ? 'bg-[#f0a020]/20 text-[#f0a020] cursor-not-allowed'
+                      : 'text-[#2a2a3a] cursor-not-allowed'}
               `}
             >
               {parseInt(date.split('-')[2])}
@@ -131,8 +142,9 @@ function DateCalendar({
       </div>
 
       {/* Legend */}
-      <div className="flex gap-3 mt-3 text-[9px] font-mono text-[#6b6b85]">
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#f0c040]/20 inline-block" />Data available</span>
+      <div className="flex flex-wrap gap-3 mt-3 text-[9px] font-mono text-[#6b6b85]">
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#f0c040]/20 inline-block" />Chain + OHLC</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#f0a020]/20 inline-block" />OHLC only</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#f0c040] inline-block" />Selected</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#1e1e2e] inline-block" />No data</span>
       </div>
@@ -551,6 +563,7 @@ export default function Backtest() {
               </label>
               <DateCalendar
                 available={new Set(btDates.map(d => d.date))}
+                ohlcOnly={new Set([...ohlcDates].filter(d => !btDates.find(b => b.date === d)))}
                 selected={btDate}
                 onSelect={d => setBtDate(d)}
               />
