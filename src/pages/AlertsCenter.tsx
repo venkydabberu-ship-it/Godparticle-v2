@@ -178,13 +178,10 @@ export default function AlertsCenter() {
       intervalRef.current = null;
     }
     if (pollingActive) {
-      // Run immediately, then every 60 s
+      // Run immediately, then every 60 s — never call async inside setState
       runPollCycle(alerts);
       intervalRef.current = setInterval(() => {
-        setAlerts(prev => {
-          runPollCycle(prev);
-          return prev;
-        });
+        runPollCycle(alerts);
       }, 60_000);
     }
     return () => {

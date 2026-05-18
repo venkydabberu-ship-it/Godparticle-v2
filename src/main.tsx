@@ -10,9 +10,11 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!refreshing) { refreshing = true; window.location.reload(); }
   });
-  // Also check for SW updates every 60 s so long-running sessions pick up new code.
+  // Check for SW updates every 10 min — 60s was freezing the tab on slow networks.
   navigator.serviceWorker.ready.then(reg => {
-    setInterval(() => reg.update(), 60_000);
+    setInterval(() => {
+      reg.update().catch(() => { /* ignore update errors silently */ });
+    }, 10 * 60_000);
   });
 }
 

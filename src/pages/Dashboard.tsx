@@ -105,29 +105,24 @@ export default function Dashboard() {
     // Remember this user so the mount effect can paint stale data on next visit
     localStorage.setItem('gp_last_uid', uid);
 
-    // Abort all 4 queries if they take longer than 12 s — prevents the refresh
-    // button from spinning forever when Supabase is slow or the network is flaky.
-    const deadline = new Promise<never>((_, rej) =>
-      setTimeout(() => rej(new Error('Dashboard load timed out — check your connection')), 12000)
-    );
+    // Each query gets its own 8s timeout — one slow query won't block the others.
+    function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+      return Promise.race([p, new Promise<null>(res => setTimeout(() => res(null), ms))]);
+    }
 
-    // Fetch all 4 queries in parallel — no sequential waterfall
-    const [analysesRes, z2hRes, announcementRes, queriesRes] = await Promise.race([
-      Promise.all([
-        supabase.from('analyses').select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(5),
-        supabase.from('z2h_signals').select('*').order('created_at', { ascending: false }).limit(1),
-        supabase.from('admin_settings').select('value').eq('key', 'announcement').single(),
-        supabase.from('customer_queries').select('id,category,status,created_at,query_text').eq('user_id', uid).order('created_at', { ascending: false }),
-      ]),
-      deadline,
-    ]) as any[];
+    const [analysesRes, z2hRes, announcementRes, queriesRes] = await Promise.all([
+      withTimeout(supabase.from('analyses').select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(5), 8000),
+      withTimeout(supabase.from('z2h_signals').select('*').order('created_at', { ascending: false }).limit(1), 8000),
+      withTimeout(supabase.from('admin_settings').select('value').eq('key', 'announcement').single(), 5000),
+      withTimeout(supabase.from('customer_queries').select('id,category,status,created_at,query_text').eq('user_id', uid).order('created_at', { ascending: false }), 8000),
+    ]);
 
-    const analyses  = analysesRes.data || [];
-    const announcement = announcementRes.data?.value || '';
-    const queries   = queriesRes.data || [];
+    const analyses     = (analysesRes as any)?.data || [];
+    const announcement = (announcementRes as any)?.data?.value || '';
+    const queries      = (queriesRes as any)?.data || [];
 
     setAnalyses(analyses);
-    if (z2hRes.data?.[0]) setZ2hSignal(z2hRes.data[0]);
+    if ((z2hRes as any)?.data?.[0]) setZ2hSignal((z2hRes as any).data[0]);
     setAnnouncement(announcement);
     setMyQueries(queries);
 

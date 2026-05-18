@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase, callEdge } from '../lib/supabase';
@@ -30,6 +30,7 @@ export default function ZeroToHero() {
   const [calMonth, setCalMonth] = useState(new Date().getMonth());
   const [snapshots, setSnapshots] = useState<any[]>([]);
   const [prevDaySnap, setPrevDaySnap] = useState<Z2HSnapshot | null>(null);
+  const loadingRef = useRef(false); // prevents overlapping snapshot loads
   const [result, setResult] = useState<any>(null);
   const [reversal, setReversal] = useState<ReversalAnalysis | null>(null);
   const [fetchingMorning, setFetchingMorning] = useState(false);
@@ -77,7 +78,7 @@ export default function ZeroToHero() {
     loadSnapshots();
   }, [expiry, index]);
 
-  // Anti-staleness: when user returns to the tab, silently refresh auth + reload snapshots
+  // Anti-staleness: when user returns to the tab after 5+ min, silently refresh
   useEffect(() => {
     let hiddenAt = 0;
     function onVisibility() {
@@ -85,9 +86,9 @@ export default function ZeroToHero() {
         hiddenAt = Date.now();
       } else {
         const awayMs = Date.now() - hiddenAt;
-        if (awayMs > 3 * 60 * 1000 && expiry) { // away > 3 min
-          supabase.auth.getSession(); // refreshes token if expired
-          loadSnapshots();            // silently reload snapshot data
+        if (awayMs > 5 * 60 * 1000 && expiry && !loadingRef.current) {
+          supabase.auth.getSession();
+          loadSnapshots();
         }
       }
     }
@@ -127,12 +128,15 @@ export default function ZeroToHero() {
   }, []);
 
   async function loadSnapshots() {
+    if (loadingRef.current) return; // skip if already loading
+    loadingRef.current = true;
     const { data } = await supabase
       .from('z2h_snapshots')
       .select('*')
       .eq('index_name', index)
       .eq('expiry_date', expiry)
       .order('snapshot_type');
+    loadingRef.current = false;
     setSnapshots(data || []);
 
     // If no DAY_BEFORE in z2h_snapshots, load from market_data (saved by admin auto-fetch)
