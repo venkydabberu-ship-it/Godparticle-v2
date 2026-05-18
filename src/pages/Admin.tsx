@@ -128,6 +128,9 @@ export default function Admin() {
   const [snapshotDate, setSnapshotDate] = useState(new Date().toISOString().split('T')[0]);
   const [snapshotUploading, setSnapshotUploading] = useState(false);
   const [snapshotMsg, setSnapshotMsg] = useState('');
+  const [deleteOhlcDate, setDeleteOhlcDate] = useState(new Date().toISOString().split('T')[0]);
+  const [deleteOhlcRunning, setDeleteOhlcRunning] = useState(false);
+  const [deleteOhlcMsg, setDeleteOhlcMsg] = useState('');
   const [intradayLoading, setIntradayLoading] = useState(false);
   const [intradayResult, setIntradayResult] = useState<any>(null);
 
@@ -732,6 +735,24 @@ export default function Admin() {
     } finally {
       setSnapshotUploading(false);
       e.target.value = '';
+    }
+  }
+
+  async function handleDeleteOhlcDate() {
+    if (!deleteOhlcDate) { setDeleteOhlcMsg('❌ Select a date first.'); return; }
+    setDeleteOhlcRunning(true); setDeleteOhlcMsg('');
+    try {
+      const { error, count } = await supabase
+        .from('index_ohlc')
+        .delete({ count: 'exact' })
+        .eq('trade_date', deleteOhlcDate);
+      setDeleteOhlcMsg(error
+        ? `❌ DB error: ${error.message}`
+        : `✅ Deleted ${count ?? 0} OHLC row(s) for ${deleteOhlcDate}. You can now re-upload the correct snapshot.`);
+    } catch (err: any) {
+      setDeleteOhlcMsg(`❌ ${err.message}`);
+    } finally {
+      setDeleteOhlcRunning(false);
     }
   }
 
@@ -1438,6 +1459,38 @@ export default function Admin() {
               {snapshotMsg && (
                 <div className={`text-xs font-mono px-3 py-2 rounded-lg ${snapshotMsg.startsWith('✅') ? 'bg-[#39d98a]/10 text-[#39d98a]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
                   {snapshotMsg}
+                </div>
+              )}
+            </div>
+
+            {/* Delete OHLC for a date */}
+            <div className="bg-[#111118] border border-[#ff4d6d]/20 rounded-xl p-5 space-y-3">
+              <div className="text-xs font-mono font-bold text-[#ff4d6d]">🗑 Delete OHLC Data for a Date</div>
+              <div className="text-[10px] font-mono text-[#6b6b85]">
+                Removes all index OHLC rows (Nifty 50, Bank Nifty, etc.) for the selected date.
+                Use this to correct a wrong snapshot upload — delete, then re-upload the correct file.
+              </div>
+              <div className="flex gap-3 items-end flex-wrap">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest">Date to Delete</label>
+                  <input
+                    type="date"
+                    value={deleteOhlcDate}
+                    onChange={e => { setDeleteOhlcDate(e.target.value); setDeleteOhlcMsg(''); }}
+                    className="bg-[#16161f] border border-[#1e1e2e] rounded-lg px-3 py-2 text-sm font-mono text-[#e8e8f0] outline-none focus:border-[#ff4d6d] transition-colors"
+                  />
+                </div>
+                <button
+                  onClick={handleDeleteOhlcDate}
+                  disabled={deleteOhlcRunning || !deleteOhlcDate}
+                  className="px-4 py-2 rounded-xl text-xs font-black bg-[#ff4d6d]/10 border border-[#ff4d6d]/40 text-[#ff4d6d] hover:bg-[#ff4d6d]/20 disabled:opacity-50 transition-all"
+                >
+                  {deleteOhlcRunning ? '⏳ Deleting...' : '🗑 Delete OHLC'}
+                </button>
+              </div>
+              {deleteOhlcMsg && (
+                <div className={`text-xs font-mono px-3 py-2 rounded-lg ${deleteOhlcMsg.startsWith('✅') ? 'bg-[#39d98a]/10 text-[#39d98a]' : 'bg-[#ff4d6d]/10 text-[#ff4d6d]'}`}>
+                  {deleteOhlcMsg}
                 </div>
               )}
             </div>
