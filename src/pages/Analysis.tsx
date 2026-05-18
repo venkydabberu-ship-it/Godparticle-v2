@@ -1545,12 +1545,23 @@ export default function Analysis() {
 
                 // Compute option price at each checkpoint
                 interface OptPt { minuteOffset: number; timeLabel: string; central: number; high: number; low: number; }
-                const optPts: OptPt[] = forecast.points.map(p => {
+                // Gap-adjusted IV at open: same estimateIVChange logic as the scenario matrix,
+                // so the 9:15 AM opening price on this chart matches the matrix's openEst row.
+                const openIvAdjust = actualGap > 0
+                  ? Math.max(-0.08, -0.02 * (actualGap / 100))
+                  : actualGap < 0
+                  ? Math.min(0.12, 0.025 * (Math.abs(actualGap) / 100))
+                  : 0;
+                const ivAtOpen = Math.max(0.05, optionIV + openIvAdjust);
+                const optPts: OptPt[] = forecast.points.map((p, i) => {
                   const dteRemaining = Math.max(dte - p.minuteOffset / TOTAL_MIN, 0.001);
                   const T = dteRemaining / 365;
-                  const optC = bsPrice(p.central, strike, T, optionIV, isCE ? 'CE' : 'PE');
-                  const optH = bsPrice(p.high,    strike, T, optionIV, isCE ? 'CE' : 'PE');
-                  const optL = bsPrice(p.low,     strike, T, optionIV, isCE ? 'CE' : 'PE');
+                  // Opening (i=0): use gap-adjusted IV to match the scenario matrix openEst.
+                  // Subsequent checkpoints: base IV (IV mean-reverts after the first 30–60 min).
+                  const effectiveIV = i === 0 ? ivAtOpen : optionIV;
+                  const optC = bsPrice(p.central, strike, T, effectiveIV, isCE ? 'CE' : 'PE');
+                  const optH = bsPrice(p.high,    strike, T, effectiveIV, isCE ? 'CE' : 'PE');
+                  const optL = bsPrice(p.low,     strike, T, effectiveIV, isCE ? 'CE' : 'PE');
                   return {
                     minuteOffset: p.minuteOffset,
                     timeLabel: p.timeLabel,
