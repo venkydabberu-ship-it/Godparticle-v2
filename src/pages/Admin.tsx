@@ -133,6 +133,10 @@ export default function Admin() {
   const [deleteOhlcMsg, setDeleteOhlcMsg] = useState('');
   const [intradayLoading, setIntradayLoading] = useState(false);
   const [intradayResult, setIntradayResult] = useState<any>(null);
+  const [z2hCapturing, setZ2hCapturing] = useState<'930' | '1115' | null>(null);
+  const [z2hCaptureResult, setZ2hCaptureResult] = useState<any>(null);
+  const [z2hCaptureLog, setZ2hCaptureLog] = useState<any[]>([]);
+  const [z2hLogLoading, setZ2hLogLoading] = useState(false);
 
   // Paint stale stats immediately on mount so Overview cards aren't blank
   useEffect(() => {
@@ -159,6 +163,10 @@ export default function Admin() {
     else if (dbSubTab === 'prices') loadStockPrices();
     else if (dbSubTab === 'fundamentals') loadFundamentals();
   }, [activeTab, dbSubTab]);
+
+  useEffect(() => {
+    if (activeTab === 'autofetch') loadZ2HCaptureLog();
+  }, [activeTab]);
 
   // Filter useEffect kept for prices/fundamentals search if needed in future
 
@@ -756,6 +764,39 @@ export default function Admin() {
     }
   }
 
+  // ── Z2H AUTO-CAPTURE ──
+  async function handleZ2HCapture(snapshotType: 'EXPIRY_930' | 'EXPIRY_1115') {
+    const slot = snapshotType === 'EXPIRY_930' ? '930' : '1115';
+    setZ2hCapturing(slot as '930' | '1115');
+    setZ2hCaptureResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('z2h-auto-capture', {
+        body: { snapshot_type: snapshotType },
+      });
+      if (error) throw new Error(error.message);
+      setZ2hCaptureResult(data);
+      await loadZ2HCaptureLog();
+    } catch (err: any) {
+      setZ2hCaptureResult({ success: false, error: err.message });
+    } finally {
+      setZ2hCapturing(null);
+    }
+  }
+
+  async function loadZ2HCaptureLog() {
+    setZ2hLogLoading(true);
+    try {
+      const { data } = await supabase
+        .from('z2h_capture_log')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(10);
+      setZ2hCaptureLog(data ?? []);
+    } finally {
+      setZ2hLogLoading(false);
+    }
+  }
+
   // Load FII history on autofetch tab open
   async function loadFiiHistory() {
     const { data } = await supabase
@@ -1301,6 +1342,141 @@ export default function Admin() {
 
         {activeTab === 'autofetch' && (
           <div className="space-y-6">
+
+            {/* ── Z2H AUTO-CAPTURE SCHEDULER ── */}
+            <div className="bg-[#111118] border border-[#4d9fff]/30 rounded-2xl p-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="text-base">⏰</div>
+                <div className="text-xs font-black uppercase tracking-widest text-[#4d9fff]">Z2H Scheduled Capture</div>
+                <div className="ml-auto text-[9px] font-mono bg-[#39d98a]/15 text-[#39d98a] px-2 py-0.5 rounded-full border border-[#39d98a]/30">SERVER-SIDE · NO MANUAL WORK</div>
+              </div>
+              <p className="text-[10px] font-mono text-[#6b6b85] mb-4">
+                Captures option chain snapshots automatically at 9:30 AM and 11:15 AM IST on every expiry day.
+                All customers get the data instantly from our database — no manual fetch needed.
+              </p>
+
+              {/* Manual capture buttons */}
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                <button
+                  onClick={() => handleZ2HCapture('EXPIRY_930')}
+                  disabled={!!z2hCapturing}
+                  className="bg-[#39d98a] text-black font-black text-sm py-3 rounded-xl disabled:opacity-40 transition-all">
+                  {z2hCapturing === '930' ? '⏳ Capturing...' : '📡 Capture Now · 9:30 AM'}
+                </button>
+                <button
+                  onClick={() => handleZ2HCapture('EXPIRY_1115')}
+                  disabled={!!z2hCapturing}
+                  className="bg-[#f0c040] text-black font-black text-sm py-3 rounded-xl disabled:opacity-40 transition-all">
+                  {z2hCapturing === '1115' ? '⏳ Capturing...' : '📊 Capture Now · 11:15 AM'}
+                </button>
+              </div>
+
+              {/* Last capture result */}
+              {z2hCaptureResult && (
+                <div className={`rounded-xl p-3 mb-4 text-[10px] font-mono border ${
+                  z2hCaptureResult.success ? 'bg-[#39d98a]/10 border-[#39d98a]/30 text-[#39d98a]' : 'bg-[#ff4d6d]/10 border-[#ff4d6d]/30 text-[#ff4d6d]'
+                }`}>
+                  {z2hCaptureResult.success ? (
+                    <div>
+                      <div className="font-black mb-1">✅ Capture complete · {z2hCaptureResult.snapshotType} · {z2hCaptureResult.date}</div>
+                      <div className="text-[#6b6b85]">
+                        Saved: <span className="text-[#39d98a] font-bold">{z2hCaptureResult.saved}</span> &nbsp;·&nbsp;
+                        Skipped: {z2hCaptureResult.skipped} (not expiry day) &nbsp;·&nbsp;
+                        Errors: <span className={z2hCaptureResult.errors > 0 ? 'text-[#ff4d6d]' : ''}>{z2hCaptureResult.errors}</span>
+                      </div>
+                      {(z2hCaptureResult.results || []).filter((r: any) => r.status === 'saved').map((r: any) => (
+                        <div key={r.index} className="mt-1">→ {r.index} · Spot {r.spot?.toLocaleString('en-IN')} · MaxPain {r.maxPain?.toLocaleString('en-IN')} · {r.strikes} strikes</div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div>❌ {z2hCaptureResult.error}</div>
+                  )}
+                </div>
+              )}
+
+              {/* Capture log */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] font-mono text-[#6b6b85] uppercase tracking-widest">Last 10 Captures</div>
+                  <button onClick={loadZ2HCaptureLog} className="text-[10px] font-mono text-[#6b6b85] hover:text-[#4d9fff]">🔄 Refresh</button>
+                </div>
+                {z2hLogLoading ? (
+                  <div className="text-[10px] font-mono text-[#6b6b85]">Loading...</div>
+                ) : z2hCaptureLog.length === 0 ? (
+                  <div className="text-[10px] font-mono text-[#6b6b85]">No captures yet. Set up pg_cron below, or click Capture Now above.</div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {z2hCaptureLog.map((log: any) => (
+                      <div key={log.id} className="flex items-center justify-between bg-[#16161f] rounded-lg px-3 py-2 text-[10px] font-mono">
+                        <div className="flex items-center gap-3">
+                          <span className={`font-black ${log.snapshot_type === 'EXPIRY_930' ? 'text-[#39d98a]' : 'text-[#f0c040]'}`}>
+                            {log.snapshot_type === 'EXPIRY_930' ? '9:30' : '11:15'}
+                          </span>
+                          <span className="text-[#6b6b85]">{log.capture_date}</span>
+                          <span className="text-[#e8e8f0]">{log.saved_count} saved</span>
+                          {log.error_count > 0 && <span className="text-[#ff4d6d]">{log.error_count} errors</span>}
+                        </div>
+                        <span className="text-[#3a3a4a]">{new Date(log.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* One-time pg_cron setup */}
+              <div className="border border-[#1e1e2e] rounded-xl p-4">
+                <div className="text-[10px] font-mono text-[#f0c040] font-black uppercase tracking-widest mb-2">
+                  One-Time Setup · Paste in Supabase SQL Editor
+                </div>
+                <p className="text-[9px] font-mono text-[#6b6b85] mb-3">
+                  Run this once in your Supabase dashboard → SQL Editor. After that, captures happen automatically every weekday.
+                  Replace <span className="text-[#f0c040]">YOUR-PROJECT-REF</span> and <span className="text-[#f0c040]">YOUR-ANON-KEY</span> with your project values.
+                </p>
+                <pre className="bg-black/40 rounded-lg p-3 text-[9px] font-mono text-[#e8e8f0] overflow-x-auto whitespace-pre leading-relaxed border border-[#1e1e2e]">{`-- Step 1: Enable extensions (one-time)
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
+-- Step 2: Schedule 9:30 AM IST capture (= 4:00 AM UTC)
+SELECT cron.schedule(
+  'z2h-auto-930',
+  '0 4 * * 1-5',
+  $$
+    SELECT net.http_post(
+      url     := 'https://YOUR-PROJECT-REF.supabase.co/functions/v1/z2h-auto-capture',
+      headers := jsonb_build_object(
+        'Content-Type',  'application/json',
+        'Authorization', 'Bearer YOUR-ANON-KEY'
+      ),
+      body    := '{"snapshot_type":"EXPIRY_930"}'::jsonb
+    );
+  $$
+);
+
+-- Step 3: Schedule 11:15 AM IST capture (= 5:45 AM UTC)
+SELECT cron.schedule(
+  'z2h-auto-1115',
+  '45 5 * * 1-5',
+  $$
+    SELECT net.http_post(
+      url     := 'https://YOUR-PROJECT-REF.supabase.co/functions/v1/z2h-auto-capture',
+      headers := jsonb_build_object(
+        'Content-Type',  'application/json',
+        'Authorization', 'Bearer YOUR-ANON-KEY'
+      ),
+      body    := '{"snapshot_type":"EXPIRY_1115"}'::jsonb
+    );
+  $$
+);
+
+-- Verify jobs are registered:
+SELECT jobname, schedule FROM cron.job;`}</pre>
+                <div className="mt-2 text-[9px] font-mono text-[#6b6b85]">
+                  Your project URL: <span className="text-[#4d9fff]">{import.meta.env.VITE_SUPABASE_URL ?? 'check .env'}</span>
+                  &nbsp;· Anon key: find in Supabase → Settings → API
+                </div>
+              </div>
+            </div>
+
             <h2 className="text-base font-black">Auto Fetch Market Data</h2>
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-xl p-4 text-center">
