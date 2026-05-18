@@ -8,7 +8,7 @@ import {
   computeZ2H, calculateMaxPain, analyzeReversal,
   computeMaxPainPull, buildTodayExpirySetup,
   type Z2HSnapshot, type SnapshotType, type ReversalAnalysis,
-  type MaxPainPullResult, type TodayExpirySetup,
+  type MaxPainPullResult, type TodayExpirySetup, type Z2HStrikeCandidate,
 } from '../lib/z2h';
 import { fetchAndSaveZ2HSnapshot } from '../lib/autofetch';
 
@@ -41,6 +41,8 @@ export default function ZeroToHero() {
   const [z2hAiInsight, setZ2hAiInsight] = useState('');
   const [z2hAiLoading, setZ2hAiLoading] = useState(false);
   const [z2hAiError, setZ2hAiError] = useState('');
+  const [activeTier, setActiveTier] = useState<0|1|2|3>(0);
+  const [activeDir, setActiveDir] = useState<'PE'|'CE'>('PE');
 
   const todayStr = new Date().toISOString().split('T')[0];
   const cfg = INDEX_CONFIG[index];
@@ -62,12 +64,16 @@ export default function ZeroToHero() {
     setResult(null);
     setSnapshots([]);
     setPrevDaySnap(null);
+    setActiveTier(0);
+    setActiveDir('PE');
   }, [index]);
 
   useEffect(() => {
     if (!expiry) return;
     setResult(null);
     setError('');
+    setActiveTier(0);
+    setActiveDir('PE');
     loadSnapshots();
   }, [expiry, index]);
 
@@ -261,17 +267,19 @@ export default function ZeroToHero() {
   }
 
   async function runAnalysis() {
-    if (!snap930 || !snap1115) return;
+    if (!snap930) return;
     setAnalyzing(true);
     setError('');
     try {
       const r = computeZ2H(
         snapDayBefore as Z2HSnapshot | null,
         snap930 as Z2HSnapshot,
-        snap1115 as Z2HSnapshot,
+        snap1115 as Z2HSnapshot | null,
         index
       );
       setResult(r);
+      setActiveDir(r.direction === 'BEARISH' ? 'PE' : 'CE');
+      setActiveTier(0);
     } catch (e: any) {
       setError('Analysis error: ' + e.message);
     } finally {
@@ -706,153 +714,275 @@ export default function ZeroToHero() {
             )}
 
             {/* STEP 4 — Get Z2H Trade */}
-            {selectedIsExpiry && snap930 && snap1115 && !result && (
+            {selectedIsExpiry && snap930 && !result && (
               <div className="bg-[#111118] border border-[#1e1e2e] rounded-2xl p-6 mb-4">
+                {!snap1115 && (
+                  <div className="bg-[#f0c040]/10 border border-[#f0c040]/20 rounded-lg px-4 py-2 text-xs font-mono text-[#f0c040] mb-4">
+                    ⚠ Analysis CSV not uploaded yet — running <span className="font-black">Preliminary Analysis</span> using 9:30 AM data.
+                    Upload the 11:15 AM CSV for final 5-force confirmation.
+                  </div>
+                )}
                 {error && (
                   <div className="bg-[#ff4d6d]/10 border border-[#ff4d6d]/30 rounded-lg px-4 py-2 text-xs font-mono text-[#ff4d6d] mb-4">{error}</div>
                 )}
                 <button onClick={runAnalysis} disabled={analyzing}
-                  className="w-full bg-[#f0c040] text-black font-black py-3 rounded-xl text-sm hover:bg-[#ffd060] transition-all disabled:opacity-40">
-                  {analyzing ? '⏳ Computing 5 Forces...' : '🚀 Get Z2H Trade'}
+                  className={`w-full font-black py-3 rounded-xl text-sm transition-all disabled:opacity-40 ${
+                    snap1115
+                      ? 'bg-[#f0c040] text-black hover:bg-[#ffd060]'
+                      : 'bg-[#f0c040]/70 text-black hover:bg-[#f0c040]/90'
+                  }`}>
+                  {analyzing
+                    ? '⏳ Scanning All Strikes...'
+                    : snap1115
+                    ? '🚀 Run Full Z2H Analysis'
+                    : '⚡ Run Preliminary Analysis (9:30 AM only)'}
                 </button>
               </div>
             )}
 
             {/* RESULT */}
-            {result && (
-              <div>
-                {/* Low-force warning (but still show both setups) */}
-                {result.signal === 'NO_TRADE' && (
-                  <div className="bg-[#ff8c42]/10 border border-[#ff8c42]/30 rounded-xl px-4 py-3 text-xs font-mono text-[#ff8c42] mb-4">
-                    ⚠️ Only {result.forces?.count ?? 0}/5 forces aligned — trade with caution or skip. Both setups shown below for reference.
-                  </div>
-                )}
+            {result && (() => {
+              const isPrimBull = result.direction === 'BULLISH';
+              const dirCol = isPrimBull ? '#39d98a' : '#ff4d6d';
+              const candidates: Z2HStrikeCandidate[] = activeDir === 'PE'
+                ? (result.peCandidates ?? [])
+                : (result.ceCandidates ?? []);
+              const filtered = activeTier === 0
+                ? candidates
+                : candidates.filter((c: Z2HStrikeCandidate) => c.tier === activeTier);
 
-                {/* Primary signal header */}
-                {(() => {
-                  const isPrimBull = result.direction === 'BULLISH';
-                  const col = isPrimBull ? '#39d98a' : '#ff4d6d';
-                  return (
-                    <div className="text-center mb-4">
-                      <div className="text-xs font-mono tracking-[3px] mb-1 text-[#6b6b85]">🚀 ZERO TO HERO SIGNAL</div>
-                      <div className="text-xs font-mono text-[#6b6b85]">{index} · Expiry: {expiry}</div>
-                      <div className="mt-2 inline-block px-4 py-1 rounded-full text-xs font-bold"
-                        style={{ background: `${col}1a`, color: col, border: `1px solid ${col}4d` }}>
-                        {isPrimBull ? '📈 BULLISH' : '📉 BEARISH'} BIAS · {result.forces?.count ?? 0}/5 Forces · Entry 1:15 PM
+              const TIER_META = {
+                1: { label: '🎰 T1 ₹2–50',   color: '#f0c040', bg: '#f0c04015', border: '#f0c04030', tag: 'Lottery' },
+                2: { label: '⚡ T2 ₹50–150',  color: '#ff8c42', bg: '#ff8c4215', border: '#ff8c4230', tag: 'Power Play' },
+                3: { label: '🎯 T3 ₹150–350', color: '#a855f7', bg: '#a855f715', border: '#a855f730', tag: 'Calculated' },
+              } as const;
+
+              const renderCard = (c: Z2HStrikeCandidate) => {
+                const tm = TIER_META[c.tier];
+                const col = activeDir === 'PE' ? '#ff4d6d' : '#39d98a';
+                return (
+                  <div key={c.strike} className="rounded-xl p-4 border"
+                    style={{ background: activeDir === 'PE' ? '#1a0a0a' : '#0a1a0a', borderColor: `${col}33` }}>
+                    {/* Header */}
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <div className="text-base font-black" style={{ color: col }}>{c.strike} {c.optionType}</div>
+                        <div className="text-[10px] font-mono text-[#e8e8f0] mt-0.5">₹{c.ltp} <span className="text-[#6b6b85]">entry</span></div>
+                      </div>
+                      <span className="text-[9px] font-black px-2 py-0.5 rounded-full"
+                        style={{ background: tm.bg, color: tm.color, border: `1px solid ${tm.border}` }}>
+                        {tm.tag}
+                      </span>
+                    </div>
+
+                    {/* Signal grid */}
+                    <div className="grid grid-cols-2 gap-1.5 mb-3">
+                      <div className="bg-black/30 rounded-lg p-2">
+                        <div className="text-[9px] font-mono text-[#6b6b85]">Gamma Score</div>
+                        <div className="text-[11px] font-bold text-[#e8e8f0]">{c.gammaScore}</div>
+                      </div>
+                      <div className="bg-black/30 rounded-lg p-2">
+                        <div className="text-[9px] font-mono text-[#6b6b85]">Vol / OI</div>
+                        <div className={`text-[11px] font-bold ${c.volOiRatio > 0.2 ? 'text-[#39d98a]' : 'text-[#6b6b85]'}`}>
+                          {c.vol > 0 ? c.volOiRatio.toFixed(2) : '—'}
+                        </div>
+                      </div>
+                      <div className="bg-black/30 rounded-lg p-2">
+                        <div className="text-[9px] font-mono text-[#6b6b85]">OI Change</div>
+                        <div className={`text-[11px] font-bold ${c.oiChangePct > 0 ? 'text-[#39d98a]' : c.oiChangePct < 0 ? 'text-[#ff4d6d]' : 'text-[#6b6b85]'}`}>
+                          {c.oi930 > 0 ? `${c.oiChangePct > 0 ? '+' : ''}${c.oiChangePct}%` : '—'}
+                        </div>
+                      </div>
+                      <div className="bg-black/30 rounded-lg p-2">
+                        <div className="text-[9px] font-mono text-[#6b6b85]">Signals</div>
+                        <div className="flex gap-1.5 mt-0.5">
+                          <span className={`text-[9px] font-mono font-bold ${c.pcbBroken ? 'text-[#39d98a]' : 'text-[#3a3a4a]'}`}>PCB</span>
+                          <span className={`text-[9px] font-mono font-bold ${c.maxPainAligned ? 'text-[#39d98a]' : 'text-[#3a3a4a]'}`}>MP</span>
+                        </div>
                       </div>
                     </div>
-                  );
-                })()}
 
-                {/* Both PE and CE signal cards */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                  {(['peSetup', 'ceSetup'] as const).map(key => {
-                    const setup = result[key] as any;
-                    if (!setup) return null;
-                    const isPE = key === 'peSetup';
-                    const isPrimary = (isPE && result.direction === 'BEARISH') || (!isPE && result.direction === 'BULLISH');
-                    const col = isPE ? '#ff4d6d' : '#39d98a';
-                    const ltp = setup.entryLTP ?? 0;
-                    return (
-                      <div key={key} className="relative rounded-2xl overflow-hidden p-5"
-                        style={{
-                          background: isPE ? 'linear-gradient(135deg,#0a0a0f 0%,#1a0a0a 100%)' : 'linear-gradient(135deg,#0a0a0f 0%,#0a1a0a 100%)',
-                          border: `${isPrimary ? 2 : 1}px solid ${col}${isPrimary ? '80' : '33'}`,
-                          boxShadow: isPrimary ? `0 0 40px ${col}1a` : 'none',
-                        }}>
-                        {isPrimary && (
-                          <div className="absolute top-3 right-3 text-[9px] font-black font-mono px-2 py-0.5 rounded-full"
-                            style={{ background: `${col}33`, color: col }}>★ PRIMARY</div>
-                        )}
-                        {/* Strike & type */}
-                        <div className="mb-4">
-                          <div className="text-xs font-mono text-[#6b6b85] uppercase tracking-widest mb-1">{isPE ? '📉 Put Option' : '📈 Call Option'}</div>
-                          <div className="text-2xl font-black" style={{ color: col }}>
-                            {setup.strike > 0 ? `${setup.strike} ${isPE ? 'PE' : 'CE'}` : '—'}
-                          </div>
-                          <div className="text-xs font-mono text-[#6b6b85] mt-0.5">
-                            {setup.forces?.count ?? 0}/5 forces · LTP ref at 11:15 AM
-                          </div>
+                    {/* Targets */}
+                    <div className="grid grid-cols-4 gap-1 mb-2">
+                      {[
+                        { label: 'SL',   val: c.sl,      col: '#ff4d6d' },
+                        { label: '3×',   val: c.target1, col: '#f0c040' },
+                        { label: '5×',   val: c.target2, col: '#39d98a' },
+                        { label: '10×',  val: c.hero,    col: '#4d9fff' },
+                      ].map(r => (
+                        <div key={r.label} className="bg-black/30 rounded p-1.5 text-center">
+                          <div className="text-[8px] font-mono text-[#6b6b85]">{r.label}</div>
+                          <div className="text-[10px] font-black" style={{ color: r.col }}>₹{r.val}</div>
                         </div>
-                        {/* Price table */}
-                        <div className="rounded-xl overflow-hidden mb-3" style={{ border: `1px solid ${col}22` }}>
-                          <table className="w-full font-mono text-xs">
-                            <tbody>
-                              {ltp > 0 ? [
-                                { label: '💰 Entry Ref', val: `₹${ltp}`, color: col },
-                                { label: '🛑 Stop Loss', val: `₹${setup.sl} (−50%)`, color: '#ff4d6d' },
-                                { label: '🎯 Target 1',  val: `₹${setup.target1} (3×)`, color: '#f0c040' },
-                                { label: '🎯 Target 2',  val: `₹${setup.target2} (5×)`, color: '#39d98a' },
-                                { label: '💎 Hero',      val: `₹${setup.hero} (10×)`, color: '#4d9fff' },
-                              ] : [
-                                { label: 'Entry Ref', val: 'Check live LTP', color: col },
-                                { label: 'Stop Loss', val: '−50% of entry', color: '#ff4d6d' },
-                                { label: 'Target 1',  val: '3× entry', color: '#f0c040' },
-                                { label: 'Target 2',  val: '5× entry', color: '#39d98a' },
-                              ].map((r, i) => (
-                                <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                                  <td className="px-3 py-2 text-[#6b6b85]">{r.label}</td>
-                                  <td className="px-3 py-2 font-black" style={{ color: r.color }}>{r.val}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                        {/* Force pills */}
-                        <div className="flex flex-wrap gap-1">
-                          {[
-                            { label: 'Direction', ok: setup.forces?.direction },
-                            { label: 'OI', ok: setup.forces?.oi },
-                            { label: 'PCB', ok: setup.forces?.pcb },
-                            { label: 'MaxPain', ok: setup.forces?.maxPain },
-                            { label: 'VIX', ok: setup.forces?.vix },
-                          ].map(f => (
-                            <span key={f.label} className="text-[9px] font-mono px-1.5 py-0.5 rounded"
-                              style={{ background: f.ok ? '#39d98a22' : '#ff4d6d11', color: f.ok ? '#39d98a' : '#6b6b85' }}>
-                              {f.ok ? '✓' : '✗'} {f.label}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      ))}
+                    </div>
 
-                {/* Skip conditions for primary */}
-                {result.skipConditions?.length > 0 && (
-                  <div className="bg-black/20 border border-[#ff4d6d]/20 rounded-xl p-4 mb-4">
-                    <div className="text-xs font-mono text-[#ff4d6d] font-bold mb-2 uppercase tracking-widest">⚠️ Skip Primary Trade If</div>
-                    {result.skipConditions.map((c: string, i: number) => (
-                      <div key={i} className="text-xs font-mono text-[#6b6b85] mb-1">→ {c}</div>
-                    ))}
-                  </div>
-                )}
-
-                {isAdmin && (
-                  <div className="bg-black/20 border border-[#1e1e2e] rounded-xl p-4 mb-4">
-                    <div className="text-xs font-mono text-[#f0c040] font-bold mb-2 uppercase tracking-widest">📊 Market Context</div>
-                    <div className="grid grid-cols-3 gap-4 text-xs font-mono">
-                      <div>
-                        <div className="text-[#6b6b85] mb-1">Spot Move</div>
-                        <div className={`font-bold ${result.spotMove < 0 ? 'text-[#ff4d6d]' : 'text-[#39d98a]'}`}>{result.spotMove > 0 ? '+' : ''}{Math.round(result.spotMove)} pts</div>
-                      </div>
-                      <div>
-                        <div className="text-[#6b6b85] mb-1">Max Pain</div>
-                        <div className="font-bold">{result.maxPain1115?.toLocaleString()}</div>
-                      </div>
-                      <div>
-                        <div className="text-[#6b6b85] mb-1">VIX</div>
-                        <div className={`font-bold ${result.vix1115 >= 18 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>{result.vix1115}</div>
-                      </div>
+                    {/* Required spot level */}
+                    <div className="text-[9px] font-mono text-[#6b6b85] text-center">
+                      Needs {index} {c.optionType === 'PE' ? '↓' : '↑'} {c.requiredSpotLevel.toLocaleString('en-IN')} for 10×
                     </div>
                   </div>
-                )}
+                );
+              };
 
-                <div className="text-center text-xs font-mono text-[#6b6b85]">
-                  ⭐ Entry only between 1:15 PM – 2:00 PM · Not Financial Advice · God Particle ⚛
+              return (
+                <div>
+                  {/* Preliminary warning */}
+                  {result.isPreliminary && (
+                    <div className="bg-[#f0c040]/10 border border-[#f0c040]/30 rounded-xl px-4 py-3 text-xs font-mono text-[#f0c040] mb-4">
+                      ⚠ <span className="font-black">PRELIMINARY</span> — using 9:30 AM snapshot only. Upload the 11:15 AM CSV and re-run for final 5-force confirmation and refined candidate scores.
+                    </div>
+                  )}
+
+                  {/* Low-force warning */}
+                  {result.signal === 'NO_TRADE' && (
+                    <div className="bg-[#ff8c42]/10 border border-[#ff8c42]/30 rounded-xl px-4 py-3 text-xs font-mono text-[#ff8c42] mb-4">
+                      ⚠️ Only {result.forces?.count ?? 0}/5 forces aligned — below threshold for high-conviction trade. Review candidates carefully.
+                    </div>
+                  )}
+
+                  {/* Signal header */}
+                  <div className="text-center mb-5">
+                    <div className="text-[10px] font-mono tracking-[3px] mb-1 text-[#6b6b85]">🚀 ZERO TO HERO — {index} · {expiry}</div>
+                    <div className="mt-2 inline-flex items-center gap-3 px-4 py-2 rounded-full text-xs font-bold"
+                      style={{ background: `${dirCol}1a`, color: dirCol, border: `1px solid ${dirCol}4d` }}>
+                      {isPrimBull ? '📈 BULLISH' : '📉 BEARISH'} BIAS · {result.forces?.count ?? 0}/5 Forces
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-1 mt-2">
+                      {[
+                        { label: 'Direction', ok: result.forces?.direction },
+                        { label: 'OI', ok: result.forces?.oi },
+                        { label: 'PCB', ok: result.forces?.pcb },
+                        { label: 'MaxPain', ok: result.forces?.maxPain },
+                        { label: 'VIX', ok: result.forces?.vix },
+                      ].map(f => (
+                        <span key={f.label} className="text-[9px] font-mono px-1.5 py-0.5 rounded"
+                          style={{ background: f.ok ? '#39d98a22' : '#ff4d6d11', color: f.ok ? '#39d98a' : '#6b6b85' }}>
+                          {f.ok ? '✓' : '✗'} {f.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Direction toggle */}
+                  <div className="flex gap-2 mb-3">
+                    {(['PE', 'CE'] as const).map(dir => {
+                      const isPrim = (dir === 'PE' && result.direction === 'BEARISH') || (dir === 'CE' && result.direction === 'BULLISH');
+                      const col = dir === 'PE' ? '#ff4d6d' : '#39d98a';
+                      const count = dir === 'PE' ? (result.peCandidates?.length ?? 0) : (result.ceCandidates?.length ?? 0);
+                      return (
+                        <button key={dir} onClick={() => setActiveDir(dir)}
+                          className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all border ${
+                            activeDir === dir ? 'text-black' : 'bg-[#111118] text-[#6b6b85]'
+                          }`}
+                          style={activeDir === dir
+                            ? { background: col, borderColor: col }
+                            : { borderColor: '#1e1e2e' }}>
+                          {dir === 'PE' ? '📉 PE Candidates' : '📈 CE Candidates'}
+                          <span className="ml-1.5 text-[9px] opacity-70">{count} found</span>
+                          {isPrim && <span className="ml-1.5 text-[9px]">★ PRIMARY</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Tier filter */}
+                  <div className="flex gap-1.5 mb-4 flex-wrap">
+                    {([
+                      { tier: 0, label: 'All' },
+                      { tier: 1, label: '🎰 ₹2–50' },
+                      { tier: 2, label: '⚡ ₹50–150' },
+                      { tier: 3, label: '🎯 ₹150–350' },
+                    ] as const).map(({ tier, label }) => {
+                      const tCol = tier === 0 ? '#6b6b85' : tier === 1 ? '#f0c040' : tier === 2 ? '#ff8c42' : '#a855f7';
+                      const isActive = activeTier === tier;
+                      return (
+                        <button key={tier} onClick={() => setActiveTier(tier as 0|1|2|3)}
+                          className="px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border"
+                          style={isActive
+                            ? { background: `${tCol}22`, color: tCol, borderColor: `${tCol}55` }
+                            : { background: '#111118', color: '#6b6b85', borderColor: '#1e1e2e' }}>
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Tier sections or flat grid */}
+                  {activeTier === 0 ? (
+                    // Show tier headers when viewing all
+                    ([1, 2, 3] as const).map(tier => {
+                      const tm = TIER_META[tier];
+                      const tierCands = candidates.filter((c: Z2HStrikeCandidate) => c.tier === tier);
+                      if (tierCands.length === 0) return null;
+                      return (
+                        <div key={tier} className="mb-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: tm.color }}>{tm.label}</div>
+                            <div className="flex-1 h-px" style={{ background: `${tm.color}30` }} />
+                            <div className="text-[9px] font-mono text-[#6b6b85]">{tierCands.length} candidates</div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {tierCands.map(renderCard)}
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    // Flat grid when tier is filtered
+                    filtered.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
+                        {filtered.map(renderCard)}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 text-xs font-mono text-[#6b6b85]">
+                        No {activeDir} candidates in this tier. Try a different tier or direction.
+                      </div>
+                    )
+                  )}
+
+                  {candidates.length === 0 && (
+                    <div className="text-center py-8 text-xs font-mono text-[#6b6b85]">
+                      No OTM candidates found. Market data may be incomplete.
+                    </div>
+                  )}
+
+                  {/* Skip conditions */}
+                  {result.skipConditions?.length > 0 && (
+                    <div className="bg-black/20 border border-[#ff4d6d]/20 rounded-xl p-4 mb-4">
+                      <div className="text-xs font-mono text-[#ff4d6d] font-bold mb-2 uppercase tracking-widest">⚠️ Exit If Any of These Hit</div>
+                      {result.skipConditions.map((c: string, i: number) => (
+                        <div key={i} className="text-xs font-mono text-[#6b6b85] mb-1">→ {c}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  {isAdmin && (
+                    <div className="bg-black/20 border border-[#1e1e2e] rounded-xl p-4 mb-4">
+                      <div className="text-xs font-mono text-[#f0c040] font-bold mb-2 uppercase tracking-widest">📊 Market Context</div>
+                      <div className="grid grid-cols-3 gap-4 text-xs font-mono">
+                        <div>
+                          <div className="text-[#6b6b85] mb-1">Spot Move</div>
+                          <div className={`font-bold ${result.spotMove < 0 ? 'text-[#ff4d6d]' : 'text-[#39d98a]'}`}>{result.spotMove > 0 ? '+' : ''}{Math.round(result.spotMove)} pts</div>
+                        </div>
+                        <div>
+                          <div className="text-[#6b6b85] mb-1">Max Pain</div>
+                          <div className="font-bold">{result.maxPain1115?.toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <div className="text-[#6b6b85] mb-1">VIX</div>
+                          <div className={`font-bold ${result.vix1115 >= 18 ? 'text-[#39d98a]' : 'text-[#ff4d6d]'}`}>{result.vix1115}</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="text-center text-xs font-mono text-[#6b6b85]">
+                    ⭐ Entry only between 1:15 PM – 2:00 PM · Not Financial Advice · God Particle ⚛
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </>
         )}
       </div>

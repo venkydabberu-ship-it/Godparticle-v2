@@ -1,3 +1,5 @@
+import { bsGreeks } from './market';
+
 // ── NSE/BSE TRADING HOLIDAYS 2025–2026 ──
 // Source: NSE official calendar (approximate for 2026 — admin should override via DB if needed)
 export const NSE_HOLIDAYS = new Set([
@@ -276,6 +278,32 @@ export interface Z2HStrikeSetup {
   forces: Z2HForces;
 }
 
+export interface Z2HStrikeCandidate {
+  strike: number;
+  optionType: 'CE' | 'PE';
+  ltp: number;
+  ltp930: number;
+  ltpPrev: number;
+  oi: number;
+  oi930: number;
+  vol: number;
+  iv: number;
+  gamma: number;
+  gammaScore: number;
+  volOiRatio: number;
+  oiChangePct: number;
+  pcbBroken: boolean;
+  maxPainAligned: boolean;
+  distFromSpot: number;
+  tier: 1 | 2 | 3;
+  score: number;
+  sl: number;
+  target1: number;
+  target2: number;
+  hero: number;
+  requiredSpotLevel: number;
+}
+
 export interface Z2HAnalysis {
   signal: 'TRADE' | 'NO_TRADE';
   direction: 'BEARISH' | 'BULLISH' | 'UNCLEAR';
@@ -305,6 +333,10 @@ export interface Z2HAnalysis {
   // OI data
   topStrikes?: TopStrikeInfo[];
   pcbDetails?: PCBDetails;
+  // Tiered candidates (all OTM strikes ranked by score, up to 3 per tier)
+  isPreliminary: boolean;
+  peCandidates: Z2HStrikeCandidate[];
+  ceCandidates: Z2HStrikeCandidate[];
 }
 
 // Compute forces + best strike for ONE direction. Returns a Z2HStrikeSetup.
@@ -386,25 +418,134 @@ function computeSetupForDirection(
   };
 }
 
+// ── TIERED CANDIDATE RANKING ──
+// Scans ALL OTM strikes (₹2-350) and ranks by tier: T1=₹2-50, T2=₹50-150, T3=₹150-350.
+// Returns top 3 per tier (up to 9 candidates). Scores differently per tier:
+// T1 favors vol/OI activity (demand signal); T2/T3 favor gamma sensitivity.
+function rankStrikesByTier(
+  direction: 'BEARISH' | 'BULLISH',
+  sAnalysis: Record<string, any>,
+  s930: Record<string, any>,
+  sDayBefore: Record<string, any>,
+  spot: number,
+  maxPain: number,
+  vix: number,
+  indexKey: string,
+): Z2HStrikeCandidate[] {
+  const gap    = INDEX_CONFIG[indexKey]?.strikeGap ?? 50;
+  const ltpF   = direction === 'BEARISH' ? 'pe_ltp' : 'ce_ltp';
+  const oiF    = direction === 'BEARISH' ? 'pe_oi'  : 'ce_oi';
+  const volF   = direction === 'BEARISH' ? 'pe_vol' : 'ce_vol';
+  const optionType: 'PE' | 'CE' = direction === 'BEARISH' ? 'PE' : 'CE';
+  const scanRange = gap * 60;
+  const T      = 1.0 / 365;  // 1 trading day — stable baseline for relative gamma ranking
+  const sigma  = Math.max(0.10, (vix || 15) / 100);
+
+  const raw: Z2HStrikeCandidate[] = [];
+
+  for (const [sk, rawVal] of Object.entries(sAnalysis)) {
+    const strike = Number(sk);
+    if (isNaN(strike) || sk.startsWith('_')) continue;
+
+    const isOTM = direction === 'BEARISH' ? strike < spot : strike > spot;
+    if (!isOTM) continue;
+
+    const distFromSpot = Math.abs(strike - spot);
+    if (distFromSpot > scanRange) continue;
+
+    const d     = rawVal as any;
+    const d930  = (s930[sk]     as any) ?? {};
+    const dPrev = (sDayBefore[sk] as any) ?? {};
+
+    const ltp  = d[ltpF]  ?? 0;
+    if (ltp < 2 || ltp > 350) continue;
+
+    const ltp930  = d930[ltpF]  ?? 0;
+    const ltpPrev = dPrev[ltpF] ?? 0;
+    const oi      = d[oiF]      ?? 0;
+    const oi930   = d930[oiF]   ?? 0;
+    const vol     = d[volF]     ?? 0;
+
+    const { gamma } = bsGreeks(spot, strike, T, sigma, optionType);
+    const gammaScore = gamma * spot;  // delta sensitivity per 1pt spot move
+
+    const volOiRatio   = oi > 0 ? Math.min(10, vol / oi) : 0;
+    const oiChangePct  = oi930 > 0 ? ((oi - oi930) / oi930) * 100 : 0;
+    const pcbBroken    = ltpPrev > 0 && ltp > ltpPrev;
+    const maxPainAligned = direction === 'BEARISH' ? spot > maxPain : spot < maxPain;
+
+    const tier: 1 | 2 | 3 = ltp <= 50 ? 1 : ltp <= 150 ? 2 : 3;
+
+    // Normalize factors 0–100
+    const gammaFactor = Math.min(gammaScore * 2, 100);
+    const volOiFactor = Math.min(volOiRatio * 20, 100);
+    const oiChgFactor = Math.max(0, Math.min(oiChangePct / 2, 100));
+    const pcbFactor   = pcbBroken ? 100 : 0;
+    const mpFactor    = maxPainAligned ? 100 : 0;
+    const distPenalty = Math.min(distFromSpot / gap, 12) * 2;
+
+    let score: number;
+    if (tier === 1) {
+      // T1: fresh demand (vol/OI + OI build) matters most — cheap options need activity to explode
+      score = volOiFactor * 0.35 + oiChgFactor * 0.30 + gammaFactor * 0.15 + pcbFactor * 0.10 + mpFactor * 0.10 - distPenalty;
+    } else if (tier === 2) {
+      score = gammaFactor * 0.30 + volOiFactor * 0.25 + oiChgFactor * 0.25 + pcbFactor * 0.15 + mpFactor * 0.05 - distPenalty;
+    } else {
+      score = gammaFactor * 0.35 + volOiFactor * 0.20 + oiChgFactor * 0.20 + pcbFactor * 0.15 + mpFactor * 0.10 - distPenalty;
+    }
+
+    const sl      = Math.max(1, Math.round(ltp * 0.5));
+    const target1 = Math.round(ltp * 3);
+    const target2 = Math.round(ltp * 5);
+    const hero    = Math.round(ltp * 10);
+    // Spot level needed at expiry for the 10× trade (intrinsic = hero)
+    const requiredSpotLevel = direction === 'BEARISH'
+      ? Math.round(strike - hero)
+      : Math.round(strike + hero);
+
+    raw.push({
+      strike, optionType, ltp, ltp930, ltpPrev, oi, oi930, vol,
+      iv: sigma, gamma, gammaScore: Math.round(gammaScore * 10) / 10,
+      volOiRatio: Math.round(volOiRatio * 100) / 100,
+      oiChangePct: Math.round(oiChangePct),
+      pcbBroken, maxPainAligned, distFromSpot, tier, score,
+      sl, target1, target2, hero, requiredSpotLevel,
+    });
+  }
+
+  // Top 3 per tier, sorted by score descending
+  const byTier: Z2HStrikeCandidate[][] = [[], [], []];
+  for (const c of raw) byTier[c.tier - 1].push(c);
+  const result: Z2HStrikeCandidate[] = [];
+  for (const group of byTier) {
+    group.sort((a, b) => b.score - a.score);
+    result.push(...group.slice(0, 3));
+  }
+  return result;
+}
+
 export function computeZ2H(
   dayBefore: Z2HSnapshot | null,
   snap930: Z2HSnapshot,
-  snap1115: Z2HSnapshot,
+  snap1115: Z2HSnapshot | null,
   indexKey: string
 ): Z2HAnalysis {
-  const spot930 = snap930.spot_price;
-  const spot1115 = snap1115.spot_price;
-  const mp930 = snap930.max_pain;
-  const mp1115 = snap1115.max_pain;
-  const vix930 = snap930.vix || 0;
-  const vix1115 = snap1115.vix || 0;
+  const isPreliminary = !snap1115;
+  const snapForAnalysis = snap1115 ?? snap930;
 
-  const s930 = snap930.strike_data || {};
-  const s1115 = snap1115.strike_data || {};
-  const sDayBefore = dayBefore?.strike_data || {};
+  const spot930  = snap930.spot_price;
+  const spot1115 = snapForAnalysis.spot_price;
+  const mp930    = snap930.max_pain;
+  const mp1115   = snapForAnalysis.max_pain;
+  const vix930   = snap930.vix || 0;
+  const vix1115  = snapForAnalysis.vix || 0;
 
-  const spotMove = spot1115 - spot930;
-  const mpMove = mp1115 - mp930;
+  const s930       = snap930.strike_data        || {};
+  const s1115      = snapForAnalysis.strike_data || {};
+  const sDayBefore = dayBefore?.strike_data      || {};
+
+  const spotMove = isPreliminary ? 0 : spot1115 - spot930;
+  const mpMove   = mp1115 - mp930;
 
   // Always compute BOTH PE and CE setups so traders can see both options
   const peSetup = computeSetupForDirection(
@@ -416,26 +557,33 @@ export function computeZ2H(
     spot930, spot1115, spotMove, mp1115, vix930, vix1115, indexKey
   );
 
+  // Tiered candidates across all OTM strikes in both directions
+  const peCandidates = rankStrikesByTier(
+    'BEARISH', s1115, s930, sDayBefore, spot1115, mp1115, vix1115, indexKey
+  );
+  const ceCandidates = rankStrikesByTier(
+    'BULLISH', s1115, s930, sDayBefore, spot1115, mp1115, vix1115, indexKey
+  );
+
   // Primary direction: whichever has more forces. Spot move breaks ties.
   const primaryDir: 'BEARISH' | 'BULLISH' =
     peSetup.forces.count > ceSetup.forces.count ? 'BEARISH'
     : ceSetup.forces.count > peSetup.forces.count ? 'BULLISH'
     : spotMove <= 0 ? 'BEARISH' : 'BULLISH';
 
-  const primary = primaryDir === 'BEARISH' ? peSetup : ceSetup;
+  const primary   = primaryDir === 'BEARISH' ? peSetup : ceSetup;
   const direction = primaryDir;
 
   const oiAnalysis = analyzeOIAccumulation(s930, s1115, direction, spot1115, indexKey);
   const bestStrike = primary.strike || null;
-  const ltpF = direction === 'BEARISH' ? 'pe_ltp' : 'pe_ltp';
+  const lF = direction === 'BEARISH' ? 'pe_ltp' : 'ce_ltp';
 
   let pcbDetails: PCBDetails | undefined;
   if (bestStrike) {
     const sk = String(bestStrike);
-    const lF = direction === 'BEARISH' ? 'pe_ltp' : 'ce_ltp';
-    const pcb = (sDayBefore[sk] as any)?.[lF] ?? 0;
-    const ltp930v = (s930[sk] as any)?.[lF] ?? 0;
-    const ltp1115v = (s1115[sk] as any)?.[lF] ?? 0;
+    const pcb      = (sDayBefore[sk] as any)?.[lF] ?? 0;
+    const ltp930v  = (s930[sk]       as any)?.[lF] ?? 0;
+    const ltp1115v = (s1115[sk]      as any)?.[lF] ?? 0;
     pcbDetails = { strike: bestStrike, pcb, ltp930: ltp930v, ltp1115: ltp1115v, inProfit: primary.forces.pcb };
   }
 
@@ -460,6 +608,9 @@ export function computeZ2H(
     spot930, spot1115, spotMove, maxPain930: mp930, maxPain1115: mp1115, maxPainMove: mpMove,
     vix930, vix1115, pcbDetails,
     topStrikes: oiAnalysis.topStrikes.map(s => ({ ...s, isBest: s.strike === bestStrike })),
+    isPreliminary,
+    peCandidates,
+    ceCandidates,
   };
 }
 

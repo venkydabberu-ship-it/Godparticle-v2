@@ -44,7 +44,7 @@ export function bsPrice(S: number, K: number, T: number, sigma: number, type: 'C
     : K * df * normCdf(-d2) - S * normCdf(-d1);
 }
 
-function bsGreeks(S: number, K: number, T: number, sigma: number, type: 'CE' | 'PE') {
+export function bsGreeks(S: number, K: number, T: number, sigma: number, type: 'CE' | 'PE') {
   const r = 0.065;
   if (T <= 0 || sigma <= 0) return { delta: 0, gamma: 0, theta: 0, vega: 0 };
   const sqrtT = Math.sqrt(T);
