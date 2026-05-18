@@ -1552,13 +1552,15 @@ export default function Analysis() {
                   : actualGap < 0
                   ? Math.min(0.12, 0.025 * (Math.abs(actualGap) / 100))
                   : 0;
-                const ivAtOpen = Math.max(0.05, optionIV + openIvAdjust);
-                const optPts: OptPt[] = forecast.points.map((p, i) => {
+                // IV mean-reverts exponentially through the morning session (time constant 90 min).
+                // At open: full adjustment. By 11am (~105 min): ~31% remaining. By 2pm: essentially base.
+                const ivReverted = (minuteOffset: number) =>
+                  Math.max(0.05, optionIV + openIvAdjust * Math.exp(-minuteOffset / 90));
+
+                const optPts: OptPt[] = forecast.points.map((p) => {
                   const dteRemaining = Math.max(dte - p.minuteOffset / TOTAL_MIN, 0.001);
                   const T = dteRemaining / 365;
-                  // Opening (i=0): use gap-adjusted IV to match the scenario matrix openEst.
-                  // Subsequent checkpoints: base IV (IV mean-reverts after the first 30–60 min).
-                  const effectiveIV = i === 0 ? ivAtOpen : optionIV;
+                  const effectiveIV = ivReverted(p.minuteOffset);
                   const optC = bsPrice(p.central, strike, T, effectiveIV, isCE ? 'CE' : 'PE');
                   const optH = bsPrice(p.high,    strike, T, effectiveIV, isCE ? 'CE' : 'PE');
                   const optL = bsPrice(p.low,     strike, T, effectiveIV, isCE ? 'CE' : 'PE');
@@ -1577,18 +1579,20 @@ export default function Analysis() {
                 // T2 = option price when Nifty at eodTarget
                 // SL = option price when Nifty breaks 1 strike below nearSupport (CE) or above nearResistance (PE)
                 const strikeGapIdx = getGapStep(indexName);
-                const dipBuyOptPrice = Math.round(bsPrice(forecast.morningDipTarget, strike, Math.max(dte - 0.05, 0.001) / 365, optionIV, isCE ? 'CE' : 'PE'));
+                // Entry/SL: reached ~30 min into session (still elevated IV from gap).
+                // T1: ~105 min (IV ~31% reverted). T2: ~285 min (essentially base IV).
+                const dipBuyOptPrice = Math.round(bsPrice(forecast.morningDipTarget, strike, Math.max(dte - 0.05, 0.001) / 365, ivReverted(30), isCE ? 'CE' : 'PE'));
                 const t1NiftyLevel = isCE ? forecast.nearResistance : forecast.nearSupport;
-                const t1OptPrice = Math.round(bsPrice(t1NiftyLevel, strike, Math.max(dte - 0.35, 0.001) / 365, optionIV, isCE ? 'CE' : 'PE'));
+                const t1OptPrice = Math.round(bsPrice(t1NiftyLevel, strike, Math.max(dte - 0.35, 0.001) / 365, ivReverted(105), isCE ? 'CE' : 'PE'));
                 const eodNifty = Math.round(parseFloat(forecastOpen) + forecast.mpGravity * (forecast.maxPain - parseFloat(forecastOpen)));
                 const blendedEod = forecast.convictionScore > 20
                   ? Math.round(eodNifty * 0.6 + forecast.nearResistance * 0.4)
                   : forecast.convictionScore < -20
                   ? Math.round(eodNifty * 0.6 + forecast.nearSupport * 0.4)
                   : eodNifty;
-                const t2OptPrice = Math.round(bsPrice(isCE ? Math.max(blendedEod, t1NiftyLevel + strikeGapIdx) : Math.min(blendedEod, t1NiftyLevel - strikeGapIdx), strike, Math.max(dte - 0.8, 0.001) / 365, optionIV, isCE ? 'CE' : 'PE'));
+                const t2OptPrice = Math.round(bsPrice(isCE ? Math.max(blendedEod, t1NiftyLevel + strikeGapIdx) : Math.min(blendedEod, t1NiftyLevel - strikeGapIdx), strike, Math.max(dte - 0.8, 0.001) / 365, ivReverted(285), isCE ? 'CE' : 'PE'));
                 const slNiftyLevel = isCE ? forecast.nearSupport - strikeGapIdx : forecast.nearResistance + strikeGapIdx;
-                const slOptPrice = Math.round(bsPrice(slNiftyLevel, strike, Math.max(dte - 0.2, 0.001) / 365, optionIV, isCE ? 'CE' : 'PE'));
+                const slOptPrice = Math.round(bsPrice(slNiftyLevel, strike, Math.max(dte - 0.2, 0.001) / 365, ivReverted(20), isCE ? 'CE' : 'PE'));
                 const targetLines = [
                   { price: Math.max(t2OptPrice, t1OptPrice + 1), label: 'T2', color: '#f0c040', dash: '6,3' },
                   { price: t1OptPrice, label: 'T1', color: '#39d98a', dash: '6,3' },

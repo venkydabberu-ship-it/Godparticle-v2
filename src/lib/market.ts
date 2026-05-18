@@ -529,7 +529,7 @@ export function parseNSESnapshotCSV(
     return parseFloat(s.replace(/[,'" ]/g, ''));
   }
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  const results: { indexName: string; date: string; open: number; high: number; low: number; close: number }[] = [];
+  const seen = new Map<string, { indexName: string; date: string; open: number; high: number; low: number; close: number }>();
   for (const line of lines) {
     const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
     if (cols.length < 5) continue;
@@ -541,9 +541,12 @@ export function parseNSESnapshotCSV(
     const low   = parseNum(cols[3]);
     const close = parseNum(cols[4]);
     if ([open, high, low, close].some(v => isNaN(v) || v <= 0)) continue;
-    results.push({ indexName, date, open, high, low, close });
+    // Deduplicate: multiple raw names can map to the same index (e.g. "Nifty Fin Service"
+    // and "Nifty Financial Services" both → FINNIFTY). Sending both to Supabase in one
+    // upsert causes "ON CONFLICT DO UPDATE command cannot affect row a second time".
+    if (!seen.has(indexName)) seen.set(indexName, { indexName, date, open, high, low, close });
   }
-  return results;
+  return [...seen.values()];
 }
 
 // Bulk upsert OHLC rows for multiple indices in one call.
