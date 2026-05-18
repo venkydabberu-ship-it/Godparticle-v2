@@ -2,7 +2,7 @@
 // Triggered by pg_cron at 9:30 AM IST (4:00 AM UTC) and 11:15 AM IST (5:45 AM UTC) every weekday
 // Secrets required: UPSTOX_ACCESS_TOKEN, UPSTOX_URL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
