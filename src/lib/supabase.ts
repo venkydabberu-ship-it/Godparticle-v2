@@ -7,8 +7,31 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
+// Wrap fetch to enforce a hard 12s timeout on every Supabase HTTP request.
+// Without this, timed-out requests stay open as zombies. The browser allows only
+// 6 concurrent HTTP/1.1 connections per domain — once all 6 are occupied by zombies,
+// every new query queues silently and the app appears completely frozen.
+// AbortController actually cancels the TCP connection, freeing the slot immediately.
+function fetchWithTimeout(url: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  const signal = init?.signal
+    ? combineSignals(init.signal, controller.signal)
+    : controller.signal;
+  return fetch(url, { ...init, signal }).finally(() => clearTimeout(timeoutId));
+}
+
+function combineSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
+  const c = new AbortController();
+  const abort = () => c.abort();
+  a.addEventListener('abort', abort, { once: true });
+  b.addEventListener('abort', abort, { once: true });
+  return c.signal;
+}
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: { persistSession: true, autoRefreshToken: true },
+  global: { fetch: fetchWithTimeout },
 });
 
 // Session-safe edge function caller: uses direct fetch, refreshes token on 401, redirects to login if session gone
