@@ -50,13 +50,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(cached);
   const [loading, setLoading] = useState(!cached);
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const fetchingRef = useRef(false);
 
   function subscribeToProfileChanges(userId: string) {
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
       channelRef.current = null;
     }
-    // When admin updates this user's role/credits, reflect it live
     channelRef.current = supabase
       .channel(`profile-live:${userId}`)
       .on('postgres_changes',
@@ -71,49 +71,68 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function fetchProfile(currentUser: User) {
+    if (fetchingRef.current) return; // never run two fetches at once
+    fetchingRef.current = true;
+
+    // Show metadata-derived profile immediately while DB fetch runs
     const metaProfile = profileFromMetadata(currentUser);
     setProfile(prev => {
       if (!prev || prev.id !== currentUser.id) return metaProfile;
-      const roleRank: Record<string, number> = { free: 0, basic: 1, premium: 2, admin: 3 };
-      const prevRank = roleRank[prev.role] ?? 0;
-      const metaRank = roleRank[metaProfile.role] ?? 0;
-      return metaRank > prevRank ? { ...prev, role: metaProfile.role } : prev;
+      const rank: Record<string, number> = { free: 0, basic: 1, premium: 2, admin: 3 };
+      return (rank[metaProfile.role] ?? 0) > (rank[prev.role] ?? 0)
+        ? { ...prev, role: metaProfile.role } : prev;
     });
 
-    (async () => { try { await supabase.rpc('refresh_monthly_credits', { p_user_id: currentUser.id }); } catch {} })();
+    // Credits refresh — fire-and-forget, never blocks profile load
+    supabase.rpc('refresh_monthly_credits', { p_user_id: currentUser.id }).catch(() => {});
 
-    for (let attempt = 0; attempt < 4; attempt++) {
-      try {
-        const p = await getProfile(currentUser.id);
-        if (p) {
-          const roleRank: Record<string, number> = { free: 0, basic: 1, premium: 2, admin: 3 };
-          const dbRank = roleRank[(p as Profile).role] ?? 0;
-          const metaRank = roleRank[metaProfile.role] ?? 0;
-          const merged: Profile = {
-            ...(p as Profile),
-            role: metaRank > dbRank ? metaProfile.role : (p as Profile).role,
-          };
-          setProfile(merged);
-          try { localStorage.setItem(CACHE_KEY, JSON.stringify(merged)); } catch {}
-          setLoading(false);
-          subscribeToProfileChanges(currentUser.id);
-          return;
-        }
-      } catch {}
-      if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+    try {
+      // Single attempt, 5s timeout — no 9-second retry loop
+      const p = await Promise.race([
+        getProfile(currentUser.id),
+        new Promise<null>(res => setTimeout(() => res(null), 5000)),
+      ]);
+
+      if (p) {
+        const rank: Record<string, number> = { free: 0, basic: 1, premium: 2, admin: 3 };
+        const merged: Profile = {
+          ...(p as Profile),
+          role: (rank[metaProfile.role] ?? 0) > (rank[(p as Profile).role] ?? 0)
+            ? metaProfile.role : (p as Profile).role,
+        };
+        setProfile(merged);
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify(merged)); } catch {}
+      }
+      // If timed out (p === null), metaProfile is already shown — silent background retry
+      if (!p) {
+        setTimeout(async () => {
+          try {
+            const retry = await getProfile(currentUser.id);
+            if (retry) {
+              setProfile(retry as Profile);
+              try { localStorage.setItem(CACHE_KEY, JSON.stringify(retry)); } catch {}
+            }
+          } catch {}
+        }, 4000);
+      }
+    } catch {
+      // Keep metaProfile on error
+    } finally {
+      fetchingRef.current = false;
+      setLoading(false);
+      subscribeToProfileChanges(currentUser.id);
     }
-
-    setProfile(metaProfile);
-    setLoading(false);
-    subscribeToProfileChanges(currentUser.id);
   }
 
   async function refreshProfile() {
-    if (user) await fetchProfile(user);
+    if (!user) return;
+    fetchingRef.current = false; // allow forced refresh
+    await fetchProfile(user);
   }
 
   useEffect(() => {
-    const safetyTimer = setTimeout(() => setLoading(false), 8000);
+    // Hard cap: never show spinner more than 4 seconds
+    const safetyTimer = setTimeout(() => setLoading(false), 4000);
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       const currentUser = session?.user ?? null;
@@ -127,26 +146,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    // Refresh Supabase session when user returns to the tab after being away.
-    // Prevents "stale" state where the JWT has expired silently in the background.
-    let hiddenAt = 0;
-    function onVisibility() {
-      if (document.visibilityState === 'hidden') {
-        hiddenAt = Date.now();
-      } else if (Date.now() - hiddenAt > 3 * 60 * 1000) { // away > 3 min
-        supabase.auth.getSession(); // triggers onAuthStateChange if token was refreshed
-      }
-    }
-    document.addEventListener('visibilitychange', onVisibility);
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
         const currentUser = session?.user ?? null;
         setUser(currentUser);
+
         if (currentUser) {
-          try { localStorage.removeItem(CACHE_KEY); } catch {}
-          await fetchProfile(currentUser);
+          if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+            // Real sign-in: clear stale cache and fetch fresh profile
+            try { localStorage.removeItem(CACHE_KEY); } catch {}
+            fetchingRef.current = false;
+            await fetchProfile(currentUser);
+          } else if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
+            // Token refresh or initial load: NEVER wipe cache — just ensure profile loaded
+            if (!readCachedProfile()) await fetchProfile(currentUser);
+            else setLoading(false);
+          }
         } else {
+          // Signed out
           try { localStorage.removeItem(CACHE_KEY); } catch {}
           setProfile(null);
           setLoading(false);
@@ -161,7 +178,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       clearTimeout(safetyTimer);
       subscription.unsubscribe();
-      document.removeEventListener('visibilitychange', onVisibility);
       if (channelRef.current) supabase.removeChannel(channelRef.current);
     };
   }, []);
